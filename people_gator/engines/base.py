@@ -17,10 +17,10 @@ class BaseEngine(ABC):
 
 class PageProcessingEngine(BaseEngine):
     @abstractmethod
-    def process_page(self, page_image, page_layout: PeopleGatorPageLayout):
+    def process_page(self, page_image, page_layout: PeopleGatorPageLayout) -> PeopleGatorPageLayout:
         pass
 
 class DocumentProcessingEngine(BaseEngine):
     @abstractmethod
-    def process_document(self, document: PeopleGatorDocument):
+    def process_document(self, document: PeopleGatorDocument) -> PeopleGatorDocument:
         pass
