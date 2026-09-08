@@ -50,8 +50,8 @@ def create_document_parser(config, device):
     return document_parser
 
 
-def load_document(input_xml_path=None, input_alto_path=None):
-    document = PeopleGatorDocument()
+def load_document(input_images_path, input_xml_path=None, input_alto_path=None):
+    document = PeopleGatorDocument(page_images_dir=input_images_path)
     if input_alto_path:
         document.from_altoxml(input_alto_path)
     elif input_xml_path:
@@ -75,7 +75,7 @@ def main():
     config = load_config(args.config)
     document_parser = create_document_parser(config, device)
 
-    document = load_document(input_xml_path=args.input_xml_path, input_alto_path=args.input_alto_path)
+    document = load_document(input_images_path=args.input_image_path, input_xml_path=args.input_xml_path, input_alto_path=args.input_alto_path)
 
     document = document_parser.process_document(document)
 
