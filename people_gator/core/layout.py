@@ -5,7 +5,7 @@ import numpy as np
 from xml import etree as ET
 from typing import Optional, Tuple
 
-from pero_ocr.core.layout import RegionLayout, ALTOVersion, create_ocr_processing_element
+from pero_ocr.core.layout import RegionLayout, TextLine, ALTOVersion, create_ocr_processing_element
 from anno_page.core.layout import AnnoPagePageLayout
 
 from people_gator import globals
@@ -28,7 +28,7 @@ class PeopleGatorFaceRegionLayout(Regionlayout):
                          category=category,
                          detection_confidence=detection_confidence)
 
-        self.face_metadata: Optional[FaceMetadata] = face_metadata
+        self.face_metadata: FaceMetadata|None = face_metadata
 
     def to_altoxml(self, print_space_element, tags, mods_namespace, arabic_helper, min_line_confidence,
                    print_space_coords: Tuple[int, int, int, int], version: ALTOVersion, word_splitters=["-"]) -> Tuple[int, int, int, int]:
@@ -92,9 +92,18 @@ class PeopleGatorFaceRegionLayout(Regionlayout):
         return region
 
 
+class PeopleGatorTextEntity:
+    def __init__(self, text: str, line: TextLine, span: tuple[int, int]):
+        self.text: str = text
+        self.line: TextLine = line
+        self.span: tuple[int, int] = span
+
+
 class PeopleGatorPageLayout(AnnoPagePageLayout):
     def __init__(self, id, page_size):
         super().__init__(id, page_size)
+
+        self.text_entities: list[PeopleGatorTextEntity] = []
 
         self.from_altoxml_ended += altoxml_load_regions
         self.from_pagexml_ended += pagexml_load_regions
@@ -103,15 +112,28 @@ class PeopleGatorPageLayout(AnnoPagePageLayout):
         self.to_altoxml_regions_ended += altoxml_postprocess_lines
         self.to_pagexml_processing_added += pagexml_add_processing_step
 
+    @property
+    def faces(self):
+        return [region for region in self.regions if isinstance(region, PeopleGatorFaceRegionLayout)]
+
+
+class PeopleGatorTextEntityCluster:
+    def __init__(self, text_entities: list[PeopleGatorTextEntity], text: str|None = None, description: str|None = None):
+        self.text_entities: list[PeopleGatorTextEntity] = text_entities
+        self.text: str|None = text
+        self.description: str|None = description
+
 
 class PeopleGatorDocument:
     def __init__(self,
                  page_layouts: list[PeopleGatorPageLayout]|None = None,
+                 text_entity_clusters: list[PeopleGatorTextEntityCluster]|None = None,
                  page_images: dict[str, np.ndarray]|None = None,
                  page_images_dir: str|None = None,
                  load_images: bool = False,
                  keep_images_in_memory: bool = False):
         self.page_layouts: list[PeopleGatorPageLayout] = page_layouts if page_layouts is not None else []
+        self.text_entity_clusters: list[PeopleGatorTextEntityCluster] = text_entity_clusters if text_entity_clusters is not None else []
 
         self.page_images = page_images if page_images is not None else {}
         self.page_images_dir: str|None = page_images_dir
@@ -127,6 +149,20 @@ class PeopleGatorDocument:
             for page_layout in self.page_layouts:
                 page_image = self.get_page_image(page_layout)
                 yield page_image, page_layout
+
+    @property
+    def text_entities(self):
+        text_entities = []
+        for page_layout in self.page_layouts:
+            text_entities.extend(page_layout.text_entities)
+        return text_entities
+
+    @property
+    def faces(self):
+        faces = []
+        for page_layout in self.page_layouts:
+            faces.extend(page_layout.faces)
+        return faces
 
     def load_page_images(self):
         if self.page_images_dir:
