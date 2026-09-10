@@ -8,6 +8,8 @@ from openai import OpenAI
 from jinja2 import Template
 from jsonschema import validate, ValidationError
 
+from people_gator.engines import BaseEngine
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +30,7 @@ class LLMPrompter:
         self.json_schema = json_schema
         self.max_attempts = max_attempts
 
-    def __call__(self, data: dict, images: list):
+    def __call__(self, data: dict, images: list|None = None):
         messages = []
 
         if self.prompt_template_system:
@@ -39,11 +41,12 @@ class LLMPrompter:
             user_prompt = self.eval_prompt_template(self.prompt_template_user, data)
             messages.append({"role": "user", "content": [{"type": "text", "text": user_prompt}]})
 
-        for image in images:
-            if type(image) == np.ndarray:
-                image = encode_image_to_base64(image)    
+        if images is not None:
+            for image in images:
+                if type(image) == np.ndarray:
+                    image = encode_image_to_base64(image)
 
-            messages[-1]["content"].append({"type": "image_url", "image_url": image})
+                messages[-1]["content"].append({"type": "image_url", "image_url": image})
             
         request_args = {
             "model": self.model_name,
@@ -75,6 +78,50 @@ class LLMPrompter:
 
     def eval_prompt_template(self, template: Template, data: dict):
         return template.render(**data)
+
+
+class LLMBasedEngine(BaseEngine):
+    def __init__(self, config, device, config_path):
+        super().__init__(config, device, config_path)
+
+        self.prompt_template_path = self.config.get("prompt_template_path")
+        self.json_schema_path = self.config.get("json_schema_path")
+
+        self.prompt_template_system = None
+        self.prompt_template_user = None
+        self.json_schema = None
+
+        self.load_prompt_template()
+        self.load_json_schema()
+
+        self.api_url = self.config.get("api_url")
+        self.api_key = self.config.get("api_key")
+        self.model_name = self.config.get("model_name")
+
+        self.llm_prompter = LLMPrompter(
+            api_url=self.api_url,
+            api_key=self.api_key,
+            model_name=self.model_name,
+            prompt_template_system=self.prompt_template_system,
+            prompt_template_user=self.prompt_template_user,
+            json_schema=self.json_schema
+        )
+
+    def load_prompt_template(self):
+        if self.prompt_template_path:
+            with open(self.prompt_template_path, "r") as f:
+                prompt_template = json.load(f)
+
+            if "system" in prompt_template:
+                self.prompt_template_system = prompt_template["system"]
+
+            if "user" in prompt_template:
+                self.prompt_template_user = prompt_template["user"]
+
+    def load_json_schema(self):
+        if self.json_schema_path:
+            with open(self.json_schema_path, "r") as f:
+                self.json_schema = json.load(f)
 
 
 def strip_markdown(text):
