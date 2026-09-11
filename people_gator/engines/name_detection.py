@@ -63,3 +63,5 @@ class LLMNameDetectionEngine(DocumentProcessingEngine, PageProcessingEngine, LLM
                     logger.warning(f"Name '{person.name_in_text}' not found in line transcription '{line.transcription}'")
             else:
                 logger.warning(f"Line number {person.line} is out of range for page layout with {len(lines)} lines.")
+
+        return page_layout
