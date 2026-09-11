@@ -14,6 +14,13 @@ from people_gator.core.metadata import FaceMetadata
 from people_gator.core.services import DateTimeService
 
 
+class PeopleGatorIdentity:
+    def __init__(self, name: str, peoplegator_id: str, other_ids: dict[str, str]|None = None):
+        self.name: str = name
+        self.peoplegator_id: str = peoplegator_id
+        self.other_ids: dict[str, str]|None = other_ids
+
+
 class PeopleGatorFaceRegionLayout(Regionlayout):
     def __init__(self,
                  id: str,
@@ -118,9 +125,14 @@ class PeopleGatorPageLayout(AnnoPagePageLayout):
 
 
 class PeopleGatorTextEntityCluster:
-    def __init__(self, text_entities: list[PeopleGatorTextEntity], text: str|None = None, description: str|None = None):
+    def __init__(self,
+                 text_entities: list[PeopleGatorTextEntity],
+                 identity: PeopleGatorIdentity|None = None,
+                 name: str|None = None,
+                 description: str|None = None):
         self.text_entities: list[PeopleGatorTextEntity] = text_entities
-        self.text: str|None = text
+        self.identity: PeopleGatorIdentity|None = identity
+        self.name: str|None = name
         self.description: str|None = description
 
 
