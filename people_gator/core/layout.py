@@ -10,7 +10,6 @@ from anno_page.core.layout import AnnoPagePageLayout
 
 from people_gator import globals
 from people_gator.core.utils import load_image
-from people_gator.core.metadata import FaceMetadata
 from people_gator.core.services import DateTimeService
 
 
@@ -21,6 +20,18 @@ class PeopleGatorIdentity:
         self.other_ids: dict[str, str]|None = other_ids
 
 
+class PeopleGatorFaceMetadata:
+    def __init__(self, identity: PeopleGatorIdentity|None = None):
+        self.identity: PeopleGatorIdentity|None = identity
+
+    def to_dict(self):
+        return {}
+
+    @classmethod
+    def from_dict(cls, data: dict, page_layout=None):
+        return cls()
+
+
 class PeopleGatorFaceRegionLayout(Regionlayout):
     def __init__(self,
                  id: str,
@@ -28,14 +39,14 @@ class PeopleGatorFaceRegionLayout(Regionlayout):
                  region_type: str|None = None,
                  category: str|None = None,
                  detection_confidence: float|None = None,
-                 face_metadata: FaceMetadata|None = None):
+                 face_metadata: PeopleGatorFaceMetadata|None = None):
         super().__init__(id=id,
                          polygon=polygon,
                          region_type=region_type,
                          category=category,
                          detection_confidence=detection_confidence)
 
-        self.face_metadata: FaceMetadata|None = face_metadata
+        self.face_metadata: PeopleGatorFaceMetadata|None = face_metadata
 
     def to_altoxml(self, print_space_element, tags, mods_namespace, arabic_helper, min_line_confidence,
                    print_space_coords: Tuple[int, int, int, int], version: ALTOVersion, word_splitters=["-"]) -> Tuple[int, int, int, int]:
@@ -87,7 +98,7 @@ class PeopleGatorFaceRegionLayout(Regionlayout):
             detection_confidence = custom.get("detection_confidence", None)
             metadata_dict = custom.get("metadata", None)
             if metadata_dict is not None:
-                face_metadata = FaceMetadata.from_dict(metadata_dict, page_layout)
+                face_metadata = PeopleGatorFaceMetadata.from_dict(metadata_dict, page_layout)
 
         region = cls(region_id,
                      polygon=polygon,
