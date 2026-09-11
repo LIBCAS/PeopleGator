@@ -9,6 +9,7 @@ from jinja2 import Template
 from jsonschema import validate, ValidationError
 
 from people_gator.engines import BaseEngine
+from people_gator.core.utils import compose_path
 
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ class LLMPrompter:
                  prompt_template_user: str|None = None,
                  json_schema = None,
                  max_attempts: int = 3):
-        self.client = OpenAI(api_key=api_key, api_base=api_url)
+        self.client = OpenAI(base_url=api_url, api_key=api_key)
         self.model_name = model_name
         self.prompt_template_system = Template(prompt_template_system) if prompt_template_system else None
         self.prompt_template_user = Template(prompt_template_user) if prompt_template_user else None
@@ -109,7 +110,8 @@ class LLMBasedEngine(BaseEngine):
 
     def load_prompt_template(self):
         if self.prompt_template_path:
-            with open(self.prompt_template_path, "r") as f:
+            prompt_template_path = compose_path(self.prompt_template_path, self.config_path)
+            with open(prompt_template_path, "r") as f:
                 prompt_template = json.load(f)
 
             if "system" in prompt_template:
@@ -120,7 +122,8 @@ class LLMBasedEngine(BaseEngine):
 
     def load_json_schema(self):
         if self.json_schema_path:
-            with open(self.json_schema_path, "r") as f:
+            json_schema_path = compose_path(self.json_schema_path, self.config_path)
+            with open(json_schema_path, "r") as f:
                 self.json_schema = json.load(f)
 
 
