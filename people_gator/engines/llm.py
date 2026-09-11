@@ -4,6 +4,7 @@ import base64
 import logging
 import numpy as np
 
+from typing import Any
 from openai import OpenAI
 from jinja2 import Template
 from jsonschema import validate, ValidationError
@@ -31,16 +32,16 @@ class LLMPrompter:
         self.json_schema = json_schema
         self.max_attempts = max_attempts
 
-    def __call__(self, data: dict, images: list|None = None):
+    def __call__(self, data: dict, images: list|None = None, response_model=None):
         messages = []
 
         if self.prompt_template_system:
             system_prompt = self.eval_prompt_template(self.prompt_template_system, data)
-            messages.append({"role": "system", "content": [{"type": "text", "text": system_prompt}]})
+            messages.append({"role": "system", "content": [{"type": "input_text", "text": system_prompt}]})
 
         if self.prompt_template_user:
             user_prompt = self.eval_prompt_template(self.prompt_template_user, data)
-            messages.append({"role": "user", "content": [{"type": "text", "text": user_prompt}]})
+            messages.append({"role": "user", "content": [{"type": "input_text", "text": user_prompt}]})
 
         if images is not None:
             for image in images:
@@ -48,11 +49,34 @@ class LLMPrompter:
                     image = encode_image_to_base64(image)
 
                 messages[-1]["content"].append({"type": "image_url", "image_url": image})
-            
-        request_args = {
+
+        request_args: dict[str, Any]  = {
             "model": self.model_name,
             "input": messages,
+            "reasoning": {"effort": "low"},
+            "max_output_tokens": 1000
         }
+
+        output_schema = None
+        schema_name = None
+
+        if response_model is not None:
+            output_schema = response_model.model_json_schema()
+            schema_name = response_model.__name__
+
+        elif self.json_schema is not None:
+            output_schema = self.json_schema
+            schema_name = "response"
+
+        if output_schema is not None:
+            request_args["text"] = {
+                "format": {
+                    "type": "json_schema",
+                    "name": schema_name,
+                    "schema": output_schema,
+                    "strict": True,
+                }
+            }
 
         result = None
 
@@ -60,9 +84,13 @@ class LLMPrompter:
             try:
                 response = self.client.responses.create(**request_args)
                 parsed_json = json.loads(strip_markdown(response.output_text))
-                if self.json_schema:
-                    validate(instance=parsed_json, schema=self.json_schema)
+
                 result = parsed_json
+
+                if response_model:
+                    result = response_model.model_validate(parsed_json)
+                elif self.json_schema:
+                    validate(instance=parsed_json, schema=self.json_schema)
 
             except ValidationError as e:
                 logger.error(f"Attempt {attempt + 1} failed to validate JSON response: {e}")
