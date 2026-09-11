@@ -3,7 +3,7 @@ import json
 import numpy as np
 
 from xml import etree as ET
-from typing import Optional, Tuple
+from typing import Tuple
 
 from pero_ocr.core.layout import RegionLayout, TextLine, ALTOVersion, create_ocr_processing_element
 from anno_page.core.layout import AnnoPagePageLayout
