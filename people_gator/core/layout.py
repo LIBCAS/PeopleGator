@@ -32,7 +32,7 @@ class PeopleGatorFaceMetadata:
         return cls()
 
 
-class PeopleGatorFaceRegionLayout(Regionlayout):
+class PeopleGatorFaceRegionLayout(RegionLayout):
     def __init__(self,
                  id: str,
                  polygon: np.ndarray,
@@ -56,7 +56,7 @@ class PeopleGatorFaceRegionLayout(Regionlayout):
     def from_altoxml(cls, element):
         return None
 
-    def to_pagexml(self, page_element: ET.SubElement, validate_id: bool = False):
+    def to_pagexml(self, page_element, validate_id: bool = False):
         custom = {
             "category": self.category,
             "detection_confidence": round(self.detection_confidence, 3),
@@ -74,7 +74,7 @@ class PeopleGatorFaceRegionLayout(Regionlayout):
         coords.attrib["points"] = " ".join([f"{int(x)},{int(y)}" for x, y in self.polygon])
 
     @classmethod
-    def from_pagexml(cls, region_element: ET.SubElement, page_layout=None):
+    def from_pagexml(cls, region_element, page_layout=None):
         region_id = region_element.attrib["id"]
         region_type = region_element.attrib.get("type", None)
 
@@ -118,8 +118,8 @@ class PeopleGatorTextEntity:
 
 
 class PeopleGatorPageLayout(AnnoPagePageLayout):
-    def __init__(self, id, page_size):
-        super().__init__(id, page_size)
+    def __init__(self, id: str|None = None, page_size: tuple[int, int] = (0, 0), file: str|None = None):
+        super().__init__(id, page_size, file)
 
         self.text_entities: list[PeopleGatorTextEntity] = []
 
@@ -220,7 +220,8 @@ class PeopleGatorDocument:
 
         for file in files:
             file_path = os.path.join(alto_dir, file)
-            page_layout = PeopleGatorPageLayout.from_altoxml(file_path)
+            page_layout = PeopleGatorPageLayout()
+            page_layout.from_altoxml(file_path)
             page_layouts.append(page_layout)
 
         self.page_layouts = page_layouts
@@ -230,13 +231,13 @@ class PeopleGatorDocument:
             for page in self.page_layouts:
                 page.to_altoxml(output_dir, alto_version=alto_version)
 
-    def from_pagexml(self, pagexml_dir):
+    def from_pagexml(self, pagexml_dir: str):
         files = [file for file in os.listdir(pagexml_dir) if file.lower().endswith('.xml')]
         page_layouts = []
 
         for file in files:
             file_path = os.path.join(pagexml_dir, file)
-            page_layout = PeopleGatorPageLayout.from_pagexml(file_path)
+            page_layout = PeopleGatorPageLayout(file=file_path)
             page_layouts.append(page_layout)
 
         self.page_layouts = page_layouts
@@ -269,7 +270,7 @@ def altoxml_add_processing_step(page_layout, description_element, alto_version=A
     description_element.append(processing_element)
 
 
-def pagexml_add_processing_step(page_layout, metadata: ET.Element):
+def pagexml_add_processing_step(page_layout, metadata):
     metadata_item = ET.SubElement(metadata, "MetadataItem")
     metadata_item.set("type", "processingStep")
     metadata_item.set("name", "Face detection and analysis and named entity recognition")
