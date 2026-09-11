@@ -1,3 +1,4 @@
+import os
 import torch
 import argparse
 import configparser
@@ -45,8 +46,8 @@ def load_config(config_path):
     return config
 
 
-def create_document_parser(config, device):
-    document_parser = DocumentParser(config, device)
+def create_document_parser(config, device, config_path):
+    document_parser = DocumentParser(config, device, config_path)
     return document_parser
 
 
@@ -73,7 +74,7 @@ def main():
     device = get_device(args.device)
 
     config = load_config(args.config)
-    document_parser = create_document_parser(config, device)
+    document_parser = create_document_parser(config, device, config_path=os.path.dirname(args.config))
 
     document = load_document(input_images_path=args.input_image_path, input_xml_path=args.input_xml_path, input_alto_path=args.input_alto_path)
 
