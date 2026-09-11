@@ -19,6 +19,9 @@ class PeopleGatorIdentity:
         self.peoplegator_id: str = peoplegator_id
         self.other_ids: dict[str, str]|None = other_ids
 
+    def __repr__(self):
+        return f"PeopleGatorIdentity(name={self.name}, peoplegator_id={self.peoplegator_id}, other_ids={self.other_ids})"
+
 
 class PeopleGatorFaceMetadata:
     def __init__(self, identity: PeopleGatorIdentity|None = None):
@@ -111,10 +114,14 @@ class PeopleGatorFaceRegionLayout(RegionLayout):
 
 
 class PeopleGatorTextEntity:
-    def __init__(self, text: str, line: TextLine, span: tuple[int, int]):
+    def __init__(self, name: str, text: str, line: TextLine, span: tuple[int, int]):
+        self.name: str = name
         self.text: str = text
         self.line: TextLine = line
         self.span: tuple[int, int] = span
+
+    def __repr__(self):
+        return f"PeopleGatorTextEntity(name={self.name}, text={self.text}, line_id={self.line.id}, span={self.span})"
 
 
 class PeopleGatorPageLayout(AnnoPagePageLayout):
@@ -145,6 +152,9 @@ class PeopleGatorTextEntityCluster:
         self.identity: PeopleGatorIdentity|None = identity
         self.name: str|None = name
         self.description: str|None = description
+
+    def __repr__(self):
+        return f"PeopleGatorTextEntityCluster(name={self.name}, identity_id={self.identity.peoplegator_id if self.identity else None}, num_entities={len(self.text_entities)})"
 
 
 class PeopleGatorDocument:
