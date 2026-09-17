@@ -2,8 +2,9 @@ import numpy as np
 
 from ultralytics import YOLO
 
-from people_gator.core.layout import PeopleGatorFaceRegionLayout
+from people_gator.core.layout import PeopleGatorFaceRegionLayout, PeopleGatorFaceMetadata
 from people_gator.core.utils import compose_path, config_get_list
+from people_gator.core.services import UuidService
 from people_gator.engines import PageProcessingEngine, DocumentProcessingEngine
 
 
@@ -18,6 +19,8 @@ class FaceDetectionYoloEngine(PageProcessingEngine, DocumentProcessingEngine):
                                      agnostic_nms=self.config.getboolean("AGNOSTIC_NMS", False))
 
         self.categories = config_get_list(self.config, key="categories", fallback=None, make_lowercase=True)
+
+        self.uuid_service = UuidService()
 
     def process_document(self, document):
         for page_image, page_layout in document.pages_iterator():
@@ -58,10 +61,21 @@ class FaceDetectionYoloEngine(PageProcessingEngine, DocumentProcessingEngine):
                                          [face_x_max, face_y_min],
                                          [face_x_min, face_y_min]])
 
-                face_region = PeopleGatorFaceRegionLayout(id=self.get_next_region_id(page_layout, prefix="face"),
+                region_id = self.get_next_region_id(page_layout, prefix="face")
+
+                mods_id = self.get_next_mods_id(page_layout)
+                face_metadata = PeopleGatorFaceMetadata(tag_id=region_id,
+                                                        mods_id=mods_id,
+                                                        mods_uuid=str(self.uuid_service()),
+                                                        used_ai_models={"model.face-detection": "yolo"},
+                                                        confidence=face_conf)
+
+                face_region = PeopleGatorFaceRegionLayout(id=region_id,
                                                           polygon=face_polygon,
                                                           category="face",
-                                                          detection_confidence=face_conf)
+                                                          detection_confidence=face_conf,
+                                                          source_region=region,
+                                                          face_metadata=face_metadata)
 
                 page_layout.regions.append(face_region)
 
@@ -78,6 +92,20 @@ class FaceDetectionYoloEngine(PageProcessingEngine, DocumentProcessingEngine):
         new_id = f"{prefix}_{str(index).zfill(padding)}"
 
         while new_id in existing_region_ids:
+            index += 1
+            new_id = f"{prefix}_{str(index).zfill(padding)}"
+
+        return new_id
+
+    @staticmethod
+    def get_next_mods_id(page_layout, prefix="MODS_PERSON", padding=4):
+        regions = [region for region in page_layout.regions if isinstance(region, PeopleGatorFaceRegionLayout)]
+        existing_mods_ids = set([region.face_metadata.mods_id for region in regions if region.face_metadata and region.face_metadata.mods_id])
+
+        index = 1
+        new_id = f"{prefix}_{str(index).zfill(padding)}"
+
+        while new_id in existing_mods_ids:
             index += 1
             new_id = f"{prefix}_{str(index).zfill(padding)}"
 
