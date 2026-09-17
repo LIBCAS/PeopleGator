@@ -3,7 +3,7 @@ import logging
 from pydantic import BaseModel, ConfigDict, Field
 
 from people_gator.engines import DocumentProcessingEngine, LLMBasedEngine, PageProcessingEngine
-from people_gator.core.layout import PeopleGatorDocument, PeopleGatorPageLayout, PeopleGatorTextEntity
+from people_gator.core.layout import PeopleGatorDocument, PeopleGatorPageLayout, PeopleGatorTextEntityMention
 
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ class LLMNameDetectionEngine(DocumentProcessingEngine, PageProcessingEngine, LLM
                 if person.name_in_text in line.transcription:
                     start_index = line.transcription.index(person.name_in_text)
                     end_index = start_index + len(person.name_in_text)
-                    page_layout.text_entities.append(PeopleGatorTextEntity(
+                    page_layout.text_entities.append(PeopleGatorTextEntityMention(
                         name=person.normalized_name,
                         text=person.name_in_text,
                         line=line,
