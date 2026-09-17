@@ -52,11 +52,7 @@ def create_document_parser(config, device, config_path):
 
 
 def load_document(input_images_path, input_xml_path=None, input_alto_path=None):
-    document = PeopleGatorDocument(page_images_dir=input_images_path)
-    if input_alto_path:
-        document.from_altoxml(input_alto_path)
-    elif input_xml_path:
-        document.from_pagexml(input_xml_path)
+    document = PeopleGatorDocument(page_images_dir=input_images_path, page_xmls_dir=input_xml_path, alto_xmls_dir=input_alto_path)
     return document
 
 
