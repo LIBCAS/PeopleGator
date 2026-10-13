@@ -2,13 +2,15 @@ import numpy as np
 
 from ultralytics import YOLO
 
-from people_gator.core.layout import PeopleGatorFaceRegionLayout, PeopleGatorFaceMetadata
+from people_gator.core.layout import (PeopleGatorFaceRegionLayout, PeopleGatorFaceMetadata, Position,
+                                      PeopleGatorPageIdentity, PeopleGatorIdentity, get_next_mods_id,
+                                      get_next_region_id)
 from people_gator.core.utils import compose_path, config_get_list
 from people_gator.core.services import UuidService
-from people_gator.engines import PageProcessingEngine, DocumentProcessingEngine
+from people_gator.engines import DocumentProcessingEngine
 
 
-class FaceDetectionYoloEngine(PageProcessingEngine, DocumentProcessingEngine):
+class FaceDetectionYoloEngine(DocumentProcessingEngine):
     def __init__(self, config, device, config_path):
         super().__init__(config, device, config_path)
 
@@ -33,7 +35,7 @@ class FaceDetectionYoloEngine(PageProcessingEngine, DocumentProcessingEngine):
         regions_images = []
 
         for region in page_layout.regions:
-            if self.categories is None or region.category.lower() in self.categories:
+            if self.categories is None or region.category is not None and region.category.lower() in self.categories:
                 x_min, y_min, x_max, y_max = region.get_polygon_bounding_box()
                 region_image = page_image[y_min:y_max, x_min:x_max]
 
@@ -43,17 +45,38 @@ class FaceDetectionYoloEngine(PageProcessingEngine, DocumentProcessingEngine):
                 regions.append(region)
                 regions_images.append(region_image)
 
+        if len(regions_images) == 0:
+            return page_layout
+
         face_detections = self.detect_faces(regions_images)
 
         for region, region_image, region_face_detections in zip(regions, regions_images, face_detections):
             boxes = region_face_detections.boxes.data.cpu()
-            for box in boxes:
-                region_face_x_min, region_face_y_min, region_face_x_max, region_face_y_max, face_conf, face_class_id = box.tolist()
+            keypoints = region_face_detections.keypoints.data.cpu()
+            for face_box, face_keypoints in zip(boxes, keypoints):
+                region_face_x_min, region_face_y_min, region_face_x_max, region_face_y_max, face_conf, face_class_id = face_box.tolist()
                 region_x_min, region_y_min, _, _ = region.get_polygon_bounding_box()
                 face_x_min = region_x_min + region_face_x_min
                 face_y_min = region_y_min + region_face_y_min
                 face_x_max = region_x_min + region_face_x_max
                 face_y_max = region_y_min + region_face_y_max
+
+                left_eye_x, left_eye_y, left_eye_conf = face_keypoints[0].tolist()
+                right_eye_x, right_eye_y, right_eye_conf = face_keypoints[1].tolist()
+                nose_x, nose_y, nose_conf = face_keypoints[2].tolist()
+                left_mouth_corner_x, left_mouth_corner_y, left_mouth_corner_conf = face_keypoints[3].tolist()
+                right_mouth_corner_x, right_mouth_corner_y, right_mouth_corner_conf = face_keypoints[4].tolist()
+
+                left_eye_x += region_x_min
+                left_eye_y += region_y_min
+                right_eye_x += region_x_min
+                right_eye_y += region_y_min
+                nose_x += region_x_min
+                nose_y += region_y_min
+                left_mouth_corner_x += region_x_min
+                left_mouth_corner_y += region_y_min
+                right_mouth_corner_x += region_x_min
+                right_mouth_corner_y += region_y_min
 
                 face_polygon = np.array([[face_x_min, face_y_min],
                                          [face_x_min, face_y_max],
@@ -61,16 +84,30 @@ class FaceDetectionYoloEngine(PageProcessingEngine, DocumentProcessingEngine):
                                          [face_x_max, face_y_min],
                                          [face_x_min, face_y_min]])
 
-                region_id = self.get_next_region_id(page_layout, prefix="face")
+                face_region_id = get_next_region_id(page_layout, prefix="face")
+                person_region_id = get_next_region_id(page_layout, prefix="person")
 
-                mods_id = self.get_next_mods_id(page_layout)
-                face_metadata = PeopleGatorFaceMetadata(tag_id=region_id,
-                                                        mods_id=mods_id,
+                face_mods_id = get_next_mods_id(page_layout, prefix="MODS_FACE")
+                person_mods_id = get_next_mods_id(page_layout, prefix="MODS_PERSON")
+
+                page_identity = PeopleGatorPageIdentity(tag_id=person_region_id,
+                                                        mods_id=person_mods_id,
+                                                        identity=PeopleGatorIdentity(peoplegator_id=None,
+                                                                                     name=None))
+
+                face_metadata = PeopleGatorFaceMetadata(tag_id=face_region_id,
+                                                        mods_id=face_mods_id,
+                                                        page_identity=page_identity,
+                                                        left_eye_position=Position(x=left_eye_x, y=left_eye_y),
+                                                        right_eye_position=Position(x=right_eye_x, y=right_eye_y),
+                                                        nose_position=Position(x=nose_x, y=nose_y),
+                                                        left_mouth_corner_position=Position(x=left_mouth_corner_x, y=left_mouth_corner_y),
+                                                        right_mouth_corner_position=Position(x=right_mouth_corner_x, y=right_mouth_corner_y),
                                                         mods_uuid=str(self.uuid_service()),
                                                         used_ai_models={"model.face-detection": "yolo"},
                                                         confidence=face_conf)
 
-                face_region = PeopleGatorFaceRegionLayout(id=region_id,
+                face_region = PeopleGatorFaceRegionLayout(id=face_region_id,
                                                           polygon=face_polygon,
                                                           category="face",
                                                           detection_confidence=face_conf,
@@ -83,33 +120,6 @@ class FaceDetectionYoloEngine(PageProcessingEngine, DocumentProcessingEngine):
 
     def detect_faces(self, images):
         return self.detector(images)
-
-    @staticmethod
-    def get_next_region_id(page_layout, prefix, padding=3):
-        existing_region_ids = set([region.id for region in page_layout.regions])
-
-        index = 1
-        new_id = f"{prefix}_{str(index).zfill(padding)}"
-
-        while new_id in existing_region_ids:
-            index += 1
-            new_id = f"{prefix}_{str(index).zfill(padding)}"
-
-        return new_id
-
-    @staticmethod
-    def get_next_mods_id(page_layout, prefix="MODS_PERSON", padding=4):
-        regions = [region for region in page_layout.regions if isinstance(region, PeopleGatorFaceRegionLayout)]
-        existing_mods_ids = set([region.face_metadata.mods_id for region in regions if region.face_metadata and region.face_metadata.mods_id])
-
-        index = 1
-        new_id = f"{prefix}_{str(index).zfill(padding)}"
-
-        while new_id in existing_mods_ids:
-            index += 1
-            new_id = f"{prefix}_{str(index).zfill(padding)}"
-
-        return new_id
 
 
 class YoloDetector:
