@@ -20,19 +20,23 @@ class LLMPrompter:
     def __init__(self, 
                  api_url: str, 
                  api_key: str, 
-                 model_name: str, 
+                 model_name: str,
+                 reasoning_effort: str = "low",
+                 max_output_tokens: int = 1000,
                  prompt_template_system: str|None = None, 
                  prompt_template_user: str|None = None,
                  json_schema = None,
                  max_attempts: int = 3):
         self.client = OpenAI(base_url=api_url, api_key=api_key)
         self.model_name = model_name
+        self.reasoning_effort = reasoning_effort
+        self.max_output_tokens = max_output_tokens
         self.prompt_template_system = Template(prompt_template_system) if prompt_template_system else None
         self.prompt_template_user = Template(prompt_template_user) if prompt_template_user else None
         self.json_schema = json_schema
         self.max_attempts = max_attempts
 
-    def __call__(self, data: dict, images: list|None = None, response_model=None):
+    def __call__(self, data: dict, images: list|dict|None = None, response_model=None):
         messages = []
 
         if self.prompt_template_system:
@@ -44,17 +48,25 @@ class LLMPrompter:
             messages.append({"role": "user", "content": [{"type": "input_text", "text": user_prompt}]})
 
         if images is not None:
-            for image in images:
-                if type(image) == np.ndarray:
-                    image = encode_image_to_base64(image)
+            if isinstance(images, dict):
+                for key, image in images.items():
+                    if type(image) == np.ndarray:
+                        image = encode_image_to_base64(image)
 
-                messages[-1]["content"].append({"type": "image_url", "image_url": image})
+                    messages.append({"role": "user", "content": [{"type": "input_text", "text": key}, {"type": "input_image", "image_url": image}]})
+
+            else:
+                for image in images:
+                    if type(image) == np.ndarray:
+                        image = encode_image_to_base64(image)
+
+                    messages[-1]["content"].append({"type": "input_image", "image_url": image})
 
         request_args: dict[str, Any]  = {
             "model": self.model_name,
             "input": messages,
-            "reasoning": {"effort": "low"},
-            "max_output_tokens": 1000
+            "reasoning": {"effort": self.reasoning_effort},
+            "max_output_tokens": self.max_output_tokens
         }
 
         output_schema = None
@@ -103,7 +115,7 @@ class LLMPrompter:
             if result:
                 break
 
-        return result
+        return result, messages
 
     def eval_prompt_template(self, template: Template, data: dict):
         return template.render(**data)
@@ -126,11 +138,15 @@ class LLMBasedEngine(BaseEngine):
         self.api_url = self.config.get("api_url")
         self.api_key = self.config.get("api_key")
         self.model_name = self.config.get("model_name")
+        self.reasoning_effort = self.config.get("reasoning_effort", "low")
+        self.max_output_tokens = self.config.getint("max_output_tokens", 1000)
 
         self.llm_prompter = LLMPrompter(
             api_url=self.api_url,
             api_key=self.api_key,
             model_name=self.model_name,
+            reasoning_effort=self.reasoning_effort,
+            max_output_tokens=self.max_output_tokens,
             prompt_template_system=self.prompt_template_system,
             prompt_template_user=self.prompt_template_user,
             json_schema=self.json_schema
