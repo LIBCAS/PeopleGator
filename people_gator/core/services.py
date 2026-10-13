@@ -1,6 +1,7 @@
 from uuid import uuid4
 from datetime import datetime, timezone as tz
 
+
 class UuidService:
     def __call__(self):
         return self.generate_uuid()
