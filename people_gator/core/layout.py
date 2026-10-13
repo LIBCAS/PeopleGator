@@ -1,4 +1,5 @@
 import os
+import cv2
 import json
 import numpy as np
 
@@ -6,12 +7,13 @@ from lxml import etree as ET
 from typing import Tuple
 
 from pero_ocr.core.layout import RegionLayout, TextLine, ALTOVersion, create_ocr_processing_element
-from anno_page.core.layout import AnnoPagePageLayout
+from anno_page.core.layout import AnnoPagePageLayout, set_position_and_size, get_next_id, get_page_element, get_print_space_coords, update_print_space_and_margins
 from anno_page.core.metadata import BaseMetadata as AnnoPageBaseMetadata
+from anno_page.core.utils import find_or_create_tags_element, get_root_element, find_or_create_element
 from anno_page.enums import Language
 
 from people_gator import globals
-from people_gator.core.utils import load_image
+from people_gator.core.utils import load_image, find_source_region_by_bounding_box
 from people_gator.core.services import DateTimeService
 
 
@@ -33,26 +35,8 @@ class Position:
         return cls(x, y)
 
 
-class PeopleGatorIdentity(AnnoPageBaseMetadata):
-    def __init__(self,
-                 tag_id: str,
-                 mods_id: str,
-                 name: str|None,
-                 peoplegator_id: str|None,
-                 other_ids: dict[str, str]|None = None,
-                 mods_uuid: str | None = None,
-                 record_identifier: str | None = None,
-                 used_ai_models: dict | None = None,
-                 creation_date_time=None,
-                 confidence: float | None = None):
-        super().__init__(tag_id,
-                         mods_id,
-                         mods_uuid,
-                         record_identifier,
-                         used_ai_models,
-                         creation_date_time,
-                         confidence)
-
+class PeopleGatorIdentity:
+    def __init__(self, name: str|None, peoplegator_id: str|None, other_ids: dict[str, str]|None = None):
         self.name: str|None = name
         self.peoplegator_id: str|None = peoplegator_id
         self.other_ids: dict[str, str]|None = other_ids
@@ -60,28 +44,24 @@ class PeopleGatorIdentity(AnnoPageBaseMetadata):
     def __repr__(self):
         return f"PeopleGatorIdentity(name={self.name}, peoplegator_id={self.peoplegator_id}, other_ids={self.other_ids})"
 
-    def to_altoxml(self, tags, mods_namespace=None):
-        layout_tag = ET.SubElement(tags, "NamedEntityTag")
-        xml_data = ET.SubElement(layout_tag, "XmlData")
-        mods = ET.SubElement(xml_data, f"{{{mods_namespace}}}mods")
+    def to_altoxml(self, mods, mods_namespace):
+        self._add_name_element(mods, mods_namespace, self.name, self.peoplegator_id, self.other_ids)    
 
-        mods.set("ID", self.mods_id)
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "peoplegator_id": self.peoplegator_id,
+            "other_ids": self.other_ids
+        }
 
-        self._add_name_element(mods, mods_namespace, self.name, self.peoplegator_id, self.other_ids)
+    @classmethod
+    def from_dict(cls, data: dict):
+        name: str|None = data.get("name")
+        peoplegator_id: str|None = data.get("peoplegator_id")
+        other_ids: dict[str, str]|None = data.get("other_ids")
 
-        if self.creation_date_time is not None:
-            creation_date_time = self.creation_date_time
-        else:
-            creation_date_time = DateTimeService.get_datetime_now().isoformat(timespec='seconds')
-
-        self._add_record_info_element(mods,
-                                      mods_namespace,
-                                      content_source=globals.software_name,
-                                      creation_date_time=creation_date_time,
-                                      record_identifier=self.record_identifier,
-                                      confidence=self.confidence,
-                                      used_ai_models=self.used_ai_models)
-
+        return cls(name=name, peoplegator_id=peoplegator_id, other_ids=other_ids)
+    
     @staticmethod
     def _add_name_element(mods, mods_namespace, name: str|None, peoplegator_id: str|None, other_ids: dict[str, str]|None = None):
         name_element = ET.SubElement(mods, f"{{{mods_namespace}}}name")
@@ -103,17 +83,66 @@ class PeopleGatorIdentity(AnnoPageBaseMetadata):
                 name_identifier_other.attrib["type"] = id_type
                 name_identifier_other.text = id_value
 
+
+class PeopleGatorPageIdentity(AnnoPageBaseMetadata):
+    def __init__(self,
+                 tag_id: str,
+                 mods_id: str,
+                 identity: PeopleGatorIdentity,
+                 mods_uuid: str | None = None,
+                 record_identifier: str | None = None,
+                 used_ai_models: dict | None = None,
+                 creation_date_time=None,
+                 confidence: float | None = None):
+        super().__init__(tag_id,
+                         mods_id,
+                         mods_uuid,
+                         record_identifier,
+                         used_ai_models,
+                         creation_date_time,
+                         confidence)
+
+        self.identity = identity
+
+    def __repr__(self):
+        return f"PeopleGatorPageIdentity(identity={self.identity}, tag_id={self.tag_id}, mods_id={self.mods_id}, mods_uuid={self.mods_uuid}, record_identifier={self.record_identifier}, used_ai_models={self.used_ai_models}, creation_date_time={self.creation_date_time}, confidence={self.confidence})"
+
+    def to_altoxml(self, tags):
+        named_entity_tag = ET.SubElement(tags, "NamedEntityTag")
+        xml_data = ET.SubElement(named_entity_tag, "XmlData")
+
+        named_entity_tag.set("ID", self.tag_id)
+        named_entity_tag.set("LABEL", "person")
+
+        mods_namespace = globals.mods_xml_namespace
+        mods_xmlns = {globals.mods_xml_prefix: mods_namespace}
+        mods = ET.SubElement(xml_data, f"{{{mods_namespace}}}mods", nsmap=mods_xmlns)
+
+        mods.set("ID", self.mods_id)
+
+        self.identity.to_altoxml(mods, mods_namespace)
+
+        if self.creation_date_time is not None:
+            creation_date_time = self.creation_date_time
+        else:
+            creation_date_time = DateTimeService.get_datetime_now().isoformat(timespec='seconds')
+
+        self._add_record_info_element(mods,
+                                      mods_namespace,
+                                      content_source=globals.software_name,
+                                      creation_date_time=creation_date_time,
+                                      record_identifier=self.record_identifier,
+                                      confidence=self.confidence,
+                                      used_ai_models=self.used_ai_models)
+
     @classmethod
     def from_altoxml(cls):
         raise NotImplementedError("Not implemented yet.")
 
     def to_dict(self):
         result = super().to_dict()
-
         result.update({
-            "name": self.name,
-            "peoplegator_id": self.peoplegator_id,
-            "other_ids": self.other_ids
+            "identity": self.identity.to_dict() if self.identity is not None else None
         })
 
         return result
@@ -127,6 +156,12 @@ class PeopleGatorIdentity(AnnoPageBaseMetadata):
         mods_id: str|None = data.get("mods_id")
         if mods_id is None:
             raise ValueError("Missing 'mods_id' in data.")
+
+        identity_data: dict|None = data.get("identity")
+        if identity_data is None:
+            raise ValueError("Missing 'identity' in data.")
+
+        identity: PeopleGatorIdentity = PeopleGatorIdentity.from_dict(identity_data)
 
         name: str|None = data.get("name")
         if name is None:
@@ -143,26 +178,24 @@ class PeopleGatorIdentity(AnnoPageBaseMetadata):
                    used_ai_models=data.get("used_ai_models"),
                    creation_date_time=data.get("creation_date_time"),
                    confidence=data.get("confidence"),
-                   name=name,
-                   peoplegator_id=peoplegator_id,
-                   other_ids=data.get("other_ids"))
+                   identity=identity)
 
 
 class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
     def __init__(self,
                  tag_id: str,
                  mods_id: str,
+                 page_identity: PeopleGatorPageIdentity,
+                 left_eye_position: Position,
+                 right_eye_position: Position,
+                 nose_position: Position,
+                 left_mouth_corner_position: Position,
+                 right_mouth_corner_position: Position,
                  mods_uuid: str|None = None,
                  record_identifier: str|None = None,
                  used_ai_models: dict|None = None,
                  creation_date_time=None,
-                 confidence: float|None = None,
-                 left_eye_position: Position|None = None,
-                 right_eye_position: Position|None = None,
-                 nose_position: Position|None = None,
-                 left_mouth_corner_position: Position|None = None,
-                 right_mouth_corner_position: Position|None = None,
-                 identity: PeopleGatorIdentity|None = None):
+                 confidence: float|None = None):
         super().__init__(tag_id,
                          mods_id,
                          mods_uuid,
@@ -171,13 +204,20 @@ class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
                          creation_date_time,
                          confidence)
 
-        self.left_eye_position: Position|None = left_eye_position
-        self.right_eye_position: Position|None = right_eye_position
-        self.nose_position: Position|None = nose_position
-        self.left_mouth_corner_position: Position|None = left_mouth_corner_position
-        self.right_mouth_corner_position: Position|None = right_mouth_corner_position
+        self.page_identity: PeopleGatorPageIdentity = page_identity
 
-        self.identity: PeopleGatorIdentity|None = identity
+        self.left_eye_position: Position = left_eye_position
+        self.right_eye_position: Position = right_eye_position
+        self.nose_position: Position = nose_position
+        self.left_mouth_corner_position: Position = left_mouth_corner_position
+        self.right_mouth_corner_position: Position = right_mouth_corner_position
+
+    def __repr__(self):
+        return f"PeopleGatorFaceMetadata(tag_id={self.tag_id}, mods_id={self.mods_id}, page_identity={repr(self.page_identity)}, left_eye_position={repr(self.left_eye_position)}, right_eye_position={repr(self.right_eye_position)}, nose_position={repr(self.nose_position)}, left_mouth_corner_position={repr(self.left_mouth_corner_position)}, right_mouth_corner_position={repr(self.right_mouth_corner_position)})"
+
+    @property
+    def identity_name(self):
+        return self.page_identity.identity.name
 
     def to_dict(self):
         result = super().to_dict()
@@ -188,78 +228,63 @@ class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
             "nose_position": self.nose_position.to_json() if self.nose_position is not None else None,
             "left_mouth_corner_position": self.left_mouth_corner_position.to_json() if self.left_mouth_corner_position is not None else None,
             "right_mouth_corner_position": self.right_mouth_corner_position.to_json() if self.right_mouth_corner_position is not None else None,
-            "identity": self.identity.to_dict() if self.identity is not None else None
+            "page_identity": self.page_identity.to_dict() if self.page_identity is not None else None
         })
 
         return result
 
     @classmethod
     def from_dict(cls, data: dict):
-        identity_data: dict|None = data.get("identity", None)
-        identity = PeopleGatorIdentity.from_dict(identity_data) if identity_data is not None else None
+        page_identity = PeopleGatorPageIdentity.from_dict(data["page_identity"])
 
-        left_eye_position = None
-        right_eye_position = None
-        nose_position = None
-        left_mouth_corner_position = None
-        right_mouth_corner_position = None
-
-        left_eye_position_data: dict|None = data.get("left_eye_position", None)
-        if left_eye_position_data is not None:
-            left_eye_position = Position.from_json(left_eye_position_data)
-
-        right_eye_position_data: dict|None = data.get("right_eye_position", None)
-        if right_eye_position_data is not None:
-            right_eye_position = Position.from_json(right_eye_position_data)
-
-        nose_position_data: dict|None = data.get("nose_position", None)
-        if nose_position_data is not None:
-            nose_position = Position.from_json(nose_position_data)
-
-        left_mouth_corner_position_data: dict|None = data.get("left_mouth_corner_position", None)
-        if left_mouth_corner_position_data is not None:
-            left_mouth_corner_position = Position.from_json(left_mouth_corner_position_data)
-
-        right_mouth_corner_position_data: dict|None = data.get("right_mouth_corner_position", None)
-        if right_mouth_corner_position_data is not None:
-            right_mouth_corner_position = Position.from_json(right_mouth_corner_position_data)
+        left_eye_position = Position.from_json(data["left_eye_position"])
+        right_eye_position = Position.from_json(data["right_eye_position"])
+        nose_position = Position.from_json(data["nose_position"])
+        left_mouth_corner_position = Position.from_json(data["left_mouth_corner_position"])
+        right_mouth_corner_position = Position.from_json(data["right_mouth_corner_position"])
 
         return cls(tag_id=data["tag_id"],
                    mods_id=data["mods_id"],
-                   mods_uuid=data.get("mods_uuid", None),
-                   record_identifier=data.get("record_identifier", None),
-                   used_ai_models=data.get("used_ai_models", None),
-                   creation_date_time=data.get("creation_date_time", None),
-                   confidence=data.get("confidence", None),
+                   page_identity=page_identity,
                    left_eye_position=left_eye_position,
                    right_eye_position=right_eye_position,
                    nose_position=nose_position,
                    left_mouth_corner_position=left_mouth_corner_position,
                    right_mouth_corner_position=right_mouth_corner_position,
-                   identity=identity)
+                   mods_uuid=data.get("mods_uuid", None),
+                   record_identifier=data.get("record_identifier", None),
+                   used_ai_models=data.get("used_ai_models", None),
+                   creation_date_time=data.get("creation_date_time", None),
+                   confidence=data.get("confidence", None))
 
-    def to_altoxml(self, tags, bounding_box, source_region=None, mods_namespace=None):
-        self.to_altoxml_layout(tags, bounding_box, source_region, mods_namespace)
+    def to_altoxml(self, print_space, bounding_box, source_region=None):
+        tags = find_or_create_tags_element(print_space)
+        self.to_altoxml_layout(tags, bounding_box, source_region)
+        self.to_altoxml_identity(tags)
 
-        if self.identity is not None:
-            self.to_altoxml_identity(tags, mods_namespace)
-
-    def to_altoxml_layout(self, tags, bounding_box, source_region=None, mods_namespace=None):
+    def to_altoxml_layout(self, tags, bounding_box, source_region=None):
         layout_tag = ET.SubElement(tags, "LayoutTag")
         xml_data = ET.SubElement(layout_tag, "XmlData")
-        mods = ET.SubElement(xml_data, f"{{{mods_namespace}}}mods")
+
+        layout_tag.set("ID", self.tag_id)
+        layout_tag.set("TYPE", "Structural")
+        layout_tag.set("LABEL", "face")
+
+        mods_namespace = globals.mods_xml_namespace
+        mods_xmlns = {globals.mods_xml_prefix: mods_namespace}
+        mods = ET.SubElement(xml_data, f"{{{mods_namespace}}}mods", nsmap=mods_xmlns)
 
         mods.set("ID", self.mods_id)
 
         self._add_size_element(mods, mods_namespace, bounding_box)
-        self._add_type_of_resource_element(mods, mods_namespace, "person faces")  # TODO: is this OK?
+        self._add_type_of_resource_element(mods, mods_namespace, "person faces")
 
         self._add_genre_element(mods, mods_namespace, language=None, content="face")
         self._add_genre_element(mods, mods_namespace, str(Language.ENGLISH), content="face")
         self._add_genre_element(mods, mods_namespace, str(Language.CZECH), content="obličej")
 
-        if self.identity is not None:
-            self._add_related_item_element(mods, mods_namespace, item_type=None, item_other_type="info", item_id=self.identity.mods_id)
+        if self.page_identity is not None:
+            self._add_related_item_element(mods, mods_namespace, item_type=None, item_other_type="info", item_id=self.page_identity.mods_id)
 
         if source_region is not None and source_region.graphical_metadata is not None:
             self._add_related_item_element(mods, mods_namespace, item_type="host", item_id=source_region.graphical_metadata.mods_id)
@@ -279,30 +304,29 @@ class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
                                       confidence=self.confidence,
                                       used_ai_models=self.used_ai_models)
 
-        peoplegator_namespace = self._add_namespace(tags, globals.xml_prefix, globals.xml_namespace)
+        peoplegator_namespace = globals.peoplegator_xml_namespace
+        pg_xmlns = {globals.peoplegator_xml_prefix: peoplegator_namespace}
 
-        peoplegator = ET.SubElement(xml_data, f"{{{peoplegator_namespace}}}peoplegator")
+        peoplegator = ET.SubElement(xml_data, f"{{{peoplegator_namespace}}}peoplegator", nsmap=pg_xmlns)
         key_points = ET.SubElement(peoplegator, f"{{{peoplegator_namespace}}}key-points")
 
-        if self.left_eye_position is not None:
-            self._add_point(key_points, "left-eye", self.left_eye_position)
+        self._add_point(key_points, peoplegator_namespace, "left-eye", self.left_eye_position)
+        self._add_point(key_points, peoplegator_namespace, "right-eye", self.right_eye_position)
+        self._add_point(key_points, peoplegator_namespace, "nose", self.nose_position)
+        self._add_point(key_points, peoplegator_namespace, "left-mouth-corner", self.left_mouth_corner_position)
+        self._add_point(key_points, peoplegator_namespace, "right-mouth-corner", self.right_mouth_corner_position)
 
-        if self.right_eye_position is not None:
-            self._add_point(key_points, "right-eye", self.right_eye_position)
+    def to_altoxml_identity(self, tags):
+        namespaces = tags.nsmap
 
-        if self.nose_position is not None:
-            self._add_point(key_points, "nose", self.nose_position)
+        ns = {
+            "alto": namespaces[None],
+            globals.mods_xml_prefix: globals.mods_xml_namespace
+        }
 
-        if self.left_mouth_corner_position is not None:
-            self._add_point(key_points, "left-mouth-corner", self.left_mouth_corner_position)
-
-        if self.right_mouth_corner_position is not None:
-            self._add_point(key_points, "right-mouth-corner", self.right_mouth_corner_position)
-
-    def to_altoxml_identity(self, tags, mods_namespace=None):
-        named_entity_tag = tags.xpath(f"./NamedEntityTag[XmlData/mods:mods[@ID='{self.identity.mods_id}']]", namespaces={"mods": mods_namespace})
+        named_entity_tag = tags.xpath(f"./alto:NamedEntityTag[alto:XmlData/mods:mods[@ID='{self.page_identity.mods_id}']]", namespaces=ns)
         if not named_entity_tag:
-            self.identity.to_altoxml(tags, mods_namespace)
+            self.page_identity.to_altoxml(tags)
 
     @staticmethod
     def _add_size_element(mods, mods_namespace, bounding_box):
@@ -316,8 +340,8 @@ class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
         extent.attrib["unit"] = "pixels"
 
     @staticmethod
-    def _add_point(parent, key: str, position: Position, unit: str = "pixels"):
-        point = ET.SubElement(parent, f"pg:points")
+    def _add_point(parent, peoplegator_namespace:str, key: str, position: Position, unit: str = "pixels"):
+        point = ET.SubElement(parent, f"{{{peoplegator_namespace}}}points")
         point.attrib["key"] = key
         point.attrib["x"] = f"{position.x:.2f}"
         point.attrib["y"] = f"{position.y:.2f}"
@@ -327,7 +351,9 @@ class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
     def _add_namespace(element, prefix: str, uri: str):
         root_element = get_root_element(element)
         if prefix not in root_element.nsmap:
-            root_element.set(f"xmlns:{prefix}", uri)
+            nsmap = dict(root_element.nsmap)
+            nsmap[prefix] = uri
+            root_element.nsmap = nsmap
 
         namespace = root_element.nsmap[prefix]
 
@@ -342,21 +368,24 @@ class PeopleGatorFaceRegionLayout(RegionLayout):
     def __init__(self,
                  id: str,
                  polygon: np.ndarray,
+                 face_metadata: PeopleGatorFaceMetadata,
+                 source_region: RegionLayout|None,
                  region_type: str|None = None,
                  category: str|None = None,
-                 detection_confidence: float|None = None,
-                 source_region: RegionLayout|None = None,
-                 face_metadata: PeopleGatorFaceMetadata|None = None):
+                 detection_confidence: float|None = None):
         super().__init__(id=id,
                          polygon=polygon,
                          region_type=region_type,
                          category=category,
                          detection_confidence=detection_confidence)
 
+        self.face_metadata: PeopleGatorFaceMetadata = face_metadata
         self.source_region: RegionLayout|None = source_region
-        self.face_metadata: PeopleGatorFaceMetadata|None = face_metadata
 
-    def to_altoxml(self, print_space, tags, mods_namespace, arabic_helper, min_line_confidence,
+    def __repr__(self):
+        return f"PeopleGatorFaceRegionLayout(id={self.id}, polygon={self.polygon.tolist()}, region_type={self.region_type}, category={self.category}, detection_confidence={self.detection_confidence}, source_region_id={self.source_region.id if self.source_region else None}, face_metadata={repr(self.face_metadata)})"
+
+    def to_altoxml(self, print_space, arabic_helper, min_line_confidence,
                    print_space_coords: Tuple[int, int, int, int], version: ALTOVersion, word_splitters=["-"]) -> Tuple[int, int, int, int]:
         page_element = get_page_element(print_space)
         page_id = page_element.attrib["ID"]
@@ -386,23 +415,25 @@ class PeopleGatorFaceRegionLayout(RegionLayout):
         print_space_width = print_space_width - print_space_hpos
 
         if self.face_metadata is not None:
-            self.face_metadata.to_altoxml(tags,
+            self.face_metadata.to_altoxml(print_space,
                                           bounding_box=bounding_box,
-                                          source_region=self.source_region,
-                                          mods_namespace=mods_namespace)
+                                          source_region=self.source_region)
+
+            composed_block_element.set("TAGREFS", self.face_metadata.tag_id)
 
         return print_space_height, print_space_width, print_space_vpos, print_space_hpos
 
 
     @classmethod
-    def from_altoxml(cls, element):
+    def from_altoxml(cls, text_block, schema, generated_block_id=None):
         raise NotImplementedError("Not implemented yet.")
 
     def to_pagexml(self, page_element, validate_id: bool = False):
         custom = {
             "category": self.category,
             "detection_confidence": round(self.detection_confidence, 3) if self.detection_confidence is not None else None,
-            "metadata": self.face_metadata.to_dict() if self.face_metadata is not None else None
+            "metadata": self.face_metadata.to_dict() if self.face_metadata is not None else None,
+            "source_region": self.source_region.id if self.source_region is not None else None
         }
 
         region_element = ET.SubElement(page_element, "ImageRegion")
@@ -416,7 +447,7 @@ class PeopleGatorFaceRegionLayout(RegionLayout):
         coords.attrib["points"] = " ".join([f"{int(x)},{int(y)}" for x, y in self.polygon])
 
     @classmethod
-    def from_pagexml(cls, region_element):
+    def from_pagexml(cls, region_element, schema, page_layout=None):
         region_id = region_element.attrib["id"]
         region_type = region_element.attrib.get("type", None)
 
@@ -430,24 +461,84 @@ class PeopleGatorFaceRegionLayout(RegionLayout):
 
         polygon = np.array(polygon)
 
-        category = None
-        detection_confidence = None
-        face_metadata = None
+        custom = json.loads(region_element.attrib["custom"])
+        category = custom.get("category", None)
+        detection_confidence = custom.get("detection_confidence", None)
+        source_region_id = custom.get("source_region", None)
 
-        if "custom" in region_element.attrib:
-            custom = json.loads(region_element.attrib["custom"])
-            category = custom.get("category", None)
-            detection_confidence = custom.get("detection_confidence", None)
-            metadata_dict = custom.get("metadata", None)
-            if metadata_dict is not None:
-                face_metadata = PeopleGatorFaceMetadata.from_dict(metadata_dict)
+        source_region = None
+        if source_region_id is not None and page_layout is not None:
+            for region in page_layout.regions:
+                if region.id == source_region_id:
+                    source_region = region
+                    break
+
+        face_metadata = PeopleGatorFaceMetadata.from_dict(custom["metadata"])
 
         region = cls(region_id,
                      polygon=polygon,
                      region_type=region_type,
                      category=category,
                      detection_confidence=detection_confidence,
+                     source_region=source_region,
                      face_metadata=face_metadata)
+
+        return region
+
+    @classmethod
+    def from_app_dict(cls, db_face, db_entity, page_layout):
+        region_id = db_face["identifier"]
+        bounding_box = db_face["bounding_box"]
+        confidence = db_face["confidence"]
+
+        x = bounding_box["x"]
+        y = bounding_box["y"]
+        width = bounding_box["width"]
+        height = bounding_box["height"]
+
+        polygon = np.array([[x, y],
+                            [x + width, y],
+                            [x + width, y + height],
+                            [x, y + height],
+                            [x, y]])
+
+        left_eye = Position.from_json([keypoint for keypoint in db_face["keypoints"] if keypoint["type"] == "left_eye"][0])
+        right_eye = Position.from_json([keypoint for keypoint in db_face["keypoints"] if keypoint["type"] == "right_eye"][0])
+        nose = Position.from_json([keypoint for keypoint in db_face["keypoints"] if keypoint["type"] == "nose"][0])
+        left_mouth_corner = Position.from_json([keypoint for keypoint in db_face["keypoints"] if keypoint["type"] == "left_mouth_corner"][0])
+        right_mouth_corner = Position.from_json([keypoint for keypoint in db_face["keypoints"] if keypoint["type"] == "right_mouth_corner"][0])
+
+        source_region = find_source_region_by_bounding_box(page_layout, (x, y, x + width, y + height))
+
+        identity_name = None
+        peoplegator_id = None
+
+        if db_entity is not None:
+            identity_name = db_entity.get("name")
+            peoplegator_id = db_entity.get("entity_id")
+
+        identity = PeopleGatorIdentity(name=identity_name, peoplegator_id=peoplegator_id)
+
+        person_region_id = get_next_region_id(page_layout, prefix="person")
+        page_identity = PeopleGatorPageIdentity(tag_id=person_region_id,
+                                                mods_id=get_next_mods_id(page_layout, prefix="MODS_PERSON"),
+                                                identity=identity)
+
+        face_metadata = PeopleGatorFaceMetadata(tag_id=region_id,
+                                                mods_id=get_next_mods_id(page_layout, prefix="MODS_FACE"),
+                                                page_identity=page_identity,
+                                                left_eye_position=left_eye,
+                                                right_eye_position=right_eye,
+                                                nose_position=nose,
+                                                left_mouth_corner_position=left_mouth_corner,
+                                                right_mouth_corner_position=right_mouth_corner,)
+
+        region = cls(id=region_id,
+                     polygon=polygon,
+                     face_metadata=face_metadata,
+                     source_region=source_region,
+                     category="face",
+                     detection_confidence=confidence)
 
         return region
 
@@ -458,15 +549,19 @@ class PeopleGatorTextEntityMention:
                  text: str,
                  line: TextLine,
                  span: tuple[int, int],
-                 identity: PeopleGatorIdentity|None = None):
+                 page_identity: PeopleGatorPageIdentity):
         self.name: str = name
         self.text: str = text
         self.line: TextLine = line
         self.span: tuple[int, int] = span
-        self.identity: PeopleGatorIdentity|None = identity
+        self.page_identity: PeopleGatorPageIdentity = page_identity
+
+    @property
+    def identity_name(self):
+        return self.page_identity.identity.name
 
     def __repr__(self):
-        return f"PeopleGatorTextEntityMention(name={self.name}, text={self.text}, line_id={self.line.id}, span={self.span}, identity={repr(self.identity) if self.identity else None})"
+        return f"PeopleGatorTextEntityMention(name={self.name}, text={self.text}, line_id={self.line.id}, span={self.span}, identity={repr(self.page_identity) if self.page_identity else None})"
 
 
 class PeopleGatorPageLayout(AnnoPagePageLayout):
@@ -486,15 +581,52 @@ class PeopleGatorPageLayout(AnnoPagePageLayout):
     def faces(self):
         return [region for region in self.regions if isinstance(region, PeopleGatorFaceRegionLayout)]
 
+    def to_app_dict(self):
+        regions = []
+        for region in self.regions:
+            if region.category not in {'text', None}:
+                continue
+
+            lines = []
+            for line in region.lines:
+                line_data = {
+                    "id": line.id,
+                    "polygon": line.polygon.tolist(),
+                    "heights": line.heights.tolist(),
+                    "baseline": line.baseline.tolist(),
+                    "transcription": line.transcription,
+                    "transcription_confidence": 1
+                }
+
+                lines.append(line_data)
+
+            region_data = {
+                "id": region.id,
+                "polygon": region.polygon,
+                "transcription": "",
+                "lines": lines
+            }
+
+            regions.append(region_data)
+
+        data = {
+            "id": self.id,
+            "page_size": [self.page_size[0], self.page_size[1]],
+            "regions": regions,
+            "reading_order": {}
+        }
+
+        return data
+
 
 class PeopleGatorTextEntityCluster:
     def __init__(self,
                  text_entities: list[PeopleGatorTextEntityMention],
-                 identity: PeopleGatorIdentity|None = None,
+                 identity: PeopleGatorIdentity,
                  name: str|None = None,
                  description: str|None = None):
         self.text_entities: list[PeopleGatorTextEntityMention] = text_entities
-        self.identity: PeopleGatorIdentity|None = identity
+        self.identity: PeopleGatorIdentity = identity
         self.name: str|None = name
         self.description: str|None = description
 
@@ -503,18 +635,28 @@ class PeopleGatorTextEntityCluster:
 
 
 class PeopleGatorDocument:
+
     def __init__(self,
+                 id: str|None = None,
+                 name: str|None = None,
+                 library: str|None = None,
                  page_layouts: list[PeopleGatorPageLayout]|None = None,
                  page_xmls_dir: str|None = None,
                  alto_xmls_dir: str|None = None,
+                 metadata_path: str|None = None,
                  text_entity_clusters: list[PeopleGatorTextEntityCluster]|None = None,
                  page_images: dict[str, np.ndarray]|None = None,
                  page_images_dir: str|None = None,
                  load_images: bool = False,
                  keep_images_in_memory: bool = False):
+        self.id = id
+        self.name = name
+        self.library = library
+
         self.page_layouts: list[PeopleGatorPageLayout] = page_layouts if page_layouts is not None else []
         self.page_xmls_dir: str|None = page_xmls_dir
         self.alto_xmls_dir: str|None = alto_xmls_dir
+        self.metadata_path: str|None = metadata_path
 
         self.text_entity_clusters: list[PeopleGatorTextEntityCluster] = text_entity_clusters if text_entity_clusters is not None else []
 
@@ -536,6 +678,9 @@ class PeopleGatorDocument:
 
         if self.load_images:
             self.load_page_images()
+
+        if self.metadata_path:
+            self.load_metadata()
 
     def pages_iterator(self):
         if self.page_layouts:
@@ -573,6 +718,20 @@ class PeopleGatorDocument:
             return image
         else:
             raise Exception(f"Cannot load page image for page '{page_layout.id}': no page_images_dir specified.")
+
+    def load_metadata(self):
+        if self.metadata_path:
+            with open(self.metadata_path, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+
+            self.id = metadata["document"]["id"] if "document" in metadata and "id" in metadata["document"] else None
+            self.name = metadata["document"]["name"] if "document" in metadata and "name" in metadata["document"] else None
+            self.library = metadata["document"]["library"] if "document" in metadata and "library" in metadata["document"] else None
+
+            pages_metadata = metadata.get("pages_metadata", {})
+            for page_layout in self.page_layouts:
+                if page_layout.id in pages_metadata:
+                    page_layout.metadata["people_gator_metadata"] = pages_metadata[page_layout.id]
 
     def get_page_image(self, page_layout, force_reload=False):
         if force_reload or page_layout.id not in self.page_images:
@@ -643,89 +802,39 @@ class PeopleGatorDocument:
         identity_to_cluster = {}
         for page_layout in self.page_layouts:
             for text_entity in page_layout.text_entities:
-                if text_entity.identity is not None:
-                    identity_id = text_entity.identity.peoplegator_id
+                identity_id = text_entity.page_identity.identity.peoplegator_id
+                if identity_id is None and not create_clusters_without_identity:
+                    continue
 
-                    if identity_id in identity_to_cluster:
-                        cluster = identity_to_cluster[identity_id]
-                        cluster.text_entities.append(text_entity)
-                    else:
-                        cluster = PeopleGatorTextEntityCluster(text_entities=[text_entity], identity=text_entity.identity)
-                        clusters.append(cluster)
-                        identity_to_cluster[identity_id] = cluster
-
-                    if drop_mentions_identities:
-                        text_entity.identity = None
-
-                elif create_clusters_without_identity:
-                    cluster = PeopleGatorTextEntityCluster(text_entities=[text_entity])
+                if identity_id in identity_to_cluster:
+                    cluster = identity_to_cluster[identity_id]
+                    cluster.text_entities.append(text_entity)
+                else:
+                    cluster = PeopleGatorTextEntityCluster(text_entities=[text_entity], identity=text_entity.page_identity.identity)
                     clusters.append(cluster)
+                    identity_to_cluster[identity_id] = cluster
+
+                if drop_mentions_identities:
+                    text_entity.page_identity.identity = None
 
         self.text_entity_clusters = clusters
 
     def distribute_text_entity_identities(self):
         for cluster in self.text_entity_clusters:
             for text_entity in cluster.text_entities:
-                text_entity.identity = cluster.identity
-
-
-def get_root_element(element):
-    root_element = element
-    while root_element.getparent() is not None:
-        root_element = root_element.getparent()
-
-    return root_element
-
-
-def get_page_element(print_space_element):
-    page_element = print_space_element
-    while not (page_element.tag == "Page" or page_element.tag.endswith("}Page")):
-        page_element = page_element.getparent()
-
-    return page_element
-
-
-def get_next_id(parent_element, element_tag, prefix="", padding=4):
-    existing_elements = parent_element.findall(f".//{element_tag}")
-    existing_ids = set([element.attrib["ID"] for element in existing_elements if "ID" in element.attrib])
-    index = 1
-
-    new_id = f"{prefix}{str(index).zfill(padding)}"
-
-    while new_id in existing_ids:
-        index += 1
-        new_id = f"{prefix}{str(index).zfill(padding)}"
-
-    return new_id
-
-
-def set_position_and_size(block, bounding_box):
-    x_min, y_min, x_max, y_max = bounding_box
-    height = y_max - y_min
-    width = x_max - x_min
-
-    block.set("HEIGHT", str(round(height)))
-    block.set("WIDTH", str(round(width)))
-    block.set("VPOS", str(round(y_min)))
-    block.set("HPOS", str(round(x_min)))
+                text_entity.page_identity.identity = cluster.identity
 
 
 def remove_peoplegator_elements(alto_root):
     return alto_root
 
 
-def add_page_layout_to_alto(page_layout: PeopleGatorPageLayout, alto_root, alto_version=ALTOVersion.ALTO_v4_4):
-    namespaces = alto_root.nsmap
-    mods_namespace = namespaces.get("mods", None)
-    if mods_namespace is None:
-        mods_namespace = "http://www.loc.gov/mods/v3"
-        namespaces["mods"] = mods_namespace
-
-    description_element = find_or_create_element(alto_root, "Description", namespaces)
-    tags_element = find_or_create_element(alto_root, "Tags", namespaces)
-    layout_element = find_or_create_element(alto_root, "Layout", namespaces)
-    page_element = find_or_create_element(layout_element, "Page", namespaces)
-    print_space_element = find_or_create_element(page_element, "PrintSpace", namespaces)
+def add_page_layout_to_alto(page_layout: AnnoPagePageLayout, alto_root, alto_version=ALTOVersion.ALTO_v4_4):
+    description_element = find_or_create_element(alto_root, "Description")
+    tags_element = find_or_create_element(alto_root, "Tags")
+    layout_element = find_or_create_element(alto_root, "Layout")
+    page_element = find_or_create_element(layout_element, "Page")
+    print_space_element = find_or_create_element(page_element, "PrintSpace")
 
     altoxml_add_processing_step(page_layout, description_element, alto_version)
 
@@ -733,73 +842,13 @@ def add_page_layout_to_alto(page_layout: PeopleGatorPageLayout, alto_root, alto_
 
     for region in page_layout.regions:
         if isinstance(region, PeopleGatorFaceRegionLayout):
-            print_space_coords = region.to_altoxml(print_space_element, tags_element, mods_namespace, None, 0.0, print_space_coords, alto_version)
+            print_space_coords = region.to_altoxml(print_space_element, None, 0.0, print_space_coords, alto_version)
 
     update_print_space_and_margins(page_layout, page_element, print_space_coords)
 
     altoxml_postprocess_lines(page_layout, print_space_element, alto_version)
 
     return alto_root
-
-
-def get_print_space_coords(page_layout, print_space_element):
-    print_space_height = print_space_element.attrib.get("HEIGHT", 0)
-    print_space_width = print_space_element.attrib.get("WIDTH", 0)
-    print_space_vpos = print_space_element.attrib.get("VPOS", page_layout.page_size[0])
-    print_space_hpos = print_space_element.attrib.get("HPOS", page_layout.page_size[1])
-
-    print_space_height = int(print_space_height)
-    print_space_width = int(print_space_width)
-    print_space_vpos = int(print_space_vpos)
-    print_space_hpos = int(print_space_hpos)
-
-    return print_space_height, print_space_width, print_space_vpos, print_space_hpos
-
-
-def update_print_space_and_margins(page_layout, page_element, print_space_coords):
-    print_space_height, print_space_width, print_space_vpos, print_space_hpos = print_space_coords
-
-    top_margin = find_or_create_element(page_element, "TopMargin")
-    left_margin = find_or_create_element(page_element, "LeftMargin")
-    right_margin = find_or_create_element(page_element, "RightMargin")
-    bottom_margin = find_or_create_element(page_element, "BottomMargin")
-    print_space = find_or_create_element(page_element, "PrintSpace")
-
-    top_margin.set("HEIGHT", "{}".format(int(print_space_vpos)))
-    top_margin.set("WIDTH", "{}".format(int(page_layout.page_size[1])))
-    top_margin.set("VPOS", "0")
-    top_margin.set("HPOS", "0")
-
-    left_margin.set("HEIGHT", "{}".format(int(page_layout.page_size[0])))
-    left_margin.set("WIDTH", "{}".format(int(print_space_hpos)))
-    left_margin.set("VPOS", "0")
-    left_margin.set("HPOS", "0")
-
-    right_margin.set("HEIGHT", "{}".format(int(page_layout.page_size[0])))
-    right_margin.set("WIDTH", "{}".format(int(page_layout.page_size[1] - (print_space_hpos + print_space_width))))
-    right_margin.set("VPOS", "0")
-    right_margin.set("HPOS", "{}".format(int(print_space_hpos + print_space_width)))
-
-    bottom_margin.set("HEIGHT", "{}".format(int(page_layout.page_size[0] - (print_space_vpos + print_space_height))))
-    bottom_margin.set("WIDTH", "{}".format(int(page_layout.page_size[1])))
-    bottom_margin.set("VPOS", "{}".format(int(print_space_vpos + print_space_height)))
-    bottom_margin.set("HPOS", "0")
-
-    print_space.set("HEIGHT", str(int(print_space_height)))
-    print_space.set("WIDTH", str(int(print_space_width)))
-    print_space.set("VPOS", str(int(print_space_vpos)))
-    print_space.set("HPOS", str(int(print_space_hpos)))
-
-
-def find_or_create_element(parent_element, tag, namespaces=None):
-    if namespaces is None:
-        namespaces = parent_element.nsmap
-
-    element = parent_element.find(tag, namespaces)
-    if element is None:
-        element = ET.SubElement(parent_element, tag)
-
-    return element
 
 
 def altoxml_load_regions(page_layout, root):
@@ -834,3 +883,57 @@ def pagexml_add_processing_step(page_layout, metadata):
 
 def altoxml_postprocess_lines(page_layout, print_space_element, alto_version=ALTOVersion.ALTO_v4_4):
     pass
+
+
+def get_next_mods_id(page_layout, prefix="MODS_FACE", padding=4):
+    regions = [region for region in page_layout.regions if isinstance(region, PeopleGatorFaceRegionLayout)]
+    existing_mods_ids = set([region.face_metadata.mods_id for region in regions if region.face_metadata and region.face_metadata.mods_id])
+
+    index = 1
+    new_id = f"{prefix}_{str(index).zfill(padding)}"
+
+    while new_id in existing_mods_ids:
+        index += 1
+        new_id = f"{prefix}_{str(index).zfill(padding)}"
+
+    return new_id
+
+
+def get_next_region_id(page_layout, prefix, padding=3):
+    existing_region_ids = set([region.id for region in page_layout.regions])
+
+    index = 1
+    new_id = f"{prefix}_{str(index).zfill(padding)}"
+
+    while new_id in existing_region_ids:
+        index += 1
+        new_id = f"{prefix}_{str(index).zfill(padding)}"
+
+    return new_id
+
+
+def render_to_image(image, page_layout):
+    render = np.copy(image)
+
+    for region in page_layout.regions:
+        if isinstance(region, PeopleGatorFaceRegionLayout):
+            x_min, y_min, x_max, y_max = region.get_polygon_bounding_box()
+            cv2.rectangle(render, (round(x_min), round(y_min)), (round(x_max), round(y_max)), (255, 0, 0), 3)
+
+            name = None
+            if region.face_metadata:
+                name = region.face_metadata.identity_name
+
+            if name is not None:
+                cv2.putText(render, name, (round(x_min), round(y_min) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 0, 0), 1)
+
+            if region.face_metadata:
+                for position, color in [(region.face_metadata.left_eye_position, (75, 180, 60)),
+                                        (region.face_metadata.right_eye_position, (200, 130, 0)),
+                                        (region.face_metadata.nose_position, (48, 130, 245)),
+                                        (region.face_metadata.left_mouth_corner_position, (75, 25, 230)),
+                                        (region.face_metadata.right_mouth_corner_position, (230, 50, 240))]:
+                    if position is not None:
+                        cv2.circle(render, (round(position.x), round(position.y)), radius=3, color=color, thickness=-1)
+
+    return render
