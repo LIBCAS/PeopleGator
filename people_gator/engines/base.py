@@ -14,12 +14,6 @@ class BaseEngine(ABC):
         self.logger = logging.getLogger(self.__class__.__name__)
 
 
-class PageProcessingEngine(BaseEngine):
-    @abstractmethod
-    def process_page(self, page_image, page_layout: PeopleGatorPageLayout) -> PeopleGatorPageLayout:
-        pass
-
-
 class DocumentProcessingEngine(BaseEngine):
     @abstractmethod
     def process_document(self, document: PeopleGatorDocument) -> PeopleGatorDocument:
