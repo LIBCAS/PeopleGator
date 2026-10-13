@@ -1,10 +1,7 @@
-from .base import BaseEngine, PageProcessingEngine, DocumentProcessingEngine
+from .base import BaseEngine, DocumentProcessingEngine
 from .llm import LLMBasedEngine
 
-from .face_matching import FaceMatchingEngine
-from .face_detection import FaceDetectionYoloEngine
+from .entity_matching import EntityMatchingEngine
 
-from .name_matching import LLMNameMatchingEngine
-from .name_detection import LLMNameDetectionEngine
-from .name_clustering import NameClusteringEngine, LLMNameClusteringCheckEngine
-from .name_description import LLMNameDescriptionEngine
+from .face_detection import FaceDetectionYoloEngine
+from .face_assignment import LLMFaceAssignmentEngine, LLMBatchFaceAssignmentEngine
