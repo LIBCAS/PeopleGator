@@ -131,6 +131,7 @@ class DatabaseApiService:
 
         payload = {
             "source_id": source_id,
+            "entity_link_state": "automatic",
 
             "identifier": face_region.id,
             "bounding_box": {
