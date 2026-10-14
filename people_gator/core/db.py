@@ -76,11 +76,12 @@ class DatabaseApiService:
 
         return result
 
-    def create_document(self, document_id, library, route="/api/v1/documents", response_model=None):
+    def create_document(self, document_id, document_name, library, route="/api/v1/documents", response_model=None):
         url = self.compose_url(route)
         payload = {
             "library": library,
             "document_id": str(document_id),
+            "name": document_name,
         }
 
         response = self.connector.post(url, json=payload)
