@@ -9,8 +9,9 @@ from anno_page.core.layout import AnnoPageRegionLayout
 from anno_page.enums.language import Language
 
 from people_gator.core.utils import find_text_in_bounding_box
-from people_gator.core.layout import PeopleGatorFaceRegionLayout, PeopleGatorPageIdentity, PeopleGatorIdentity
+from people_gator.core.layout import PeopleGatorFaceRegionLayout
 from people_gator.engines import DocumentProcessingEngine, LLMBasedEngine
+from people_gator.enums import ProcessingMode
 
 
 logger = logging.getLogger(__name__)
@@ -139,23 +140,6 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
 
         return page_layout
 
-    @staticmethod
-    def get_next_mods_id(page_layout, prefix="MODS_PERSON", padding=4):
-        regions = [region for region in page_layout.regions if isinstance(region, PeopleGatorFaceRegionLayout)]
-        existing_mods_ids = set([region.face_metadata.page_identity.mods_id for region in regions
-                                 if region.face_metadata is not None
-                                 and region.face_metadata.page_identity is not None
-                                 and region.face_metadata.page_identity.mods_id is not None])
-
-        index = 1
-        new_id = f"{prefix}_{str(index).zfill(padding)}"
-
-        while new_id in existing_mods_ids:
-            index += 1
-            new_id = f"{prefix}_{str(index).zfill(padding)}"
-
-        return new_id
-
 
 class BatchFaceAssignmentResultItem(BaseModel):
     id: int
@@ -179,6 +163,13 @@ class BatchFaceAssignmentData:
         self.face_regions = face_regions
         self.result = result
 
+    def to_dict(self):
+        return {
+            "faces": self.faces,
+            "context_text": self.context_text,
+            "caption_text": self.caption_text,
+        }
+
     def __repr__(self):
         return f"BatchFaceAssignmentData(context_text={self.context_text}, caption_text={self.caption_text}, context_image={self.context_image}, faces={self.faces}, face_regions={self.face_regions}, result={self.result})"
 
@@ -200,25 +191,55 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         self.vertical_offset = self.config.getint("vertical_offset", 0)
         self.horizontal_offset = self.config.getint("horizontal_offset", 0)
 
+        self.processing_mode = ProcessingMode.from_string(self.config.get("processing_mode", "sequential"))
+
     def process_document(self, document):
-        for page_image, page_layout in document.pages_iterator():
-            self.process_page(page_image, page_layout)
+        if self.processing_mode == ProcessingMode.DOCUMENT_PARALLEL:
+            self.process_document_parallel(document)
+        else:
+            for page_image, page_layout in document.pages_iterator():
+                self.process_page(page_image, page_layout)
 
         return document
 
-    def process_page(self, page_image, page_layout):
-        face_data = self.prepare_face_data(page_image, page_layout)
-        for face_item in face_data:
-            result, messages = self.llm_prompter(data={
-                                                     "faces": face_item.faces,
-                                                     "context_text": face_item.context_text,
-                                                     "caption_text": face_item.caption_text
-                                                 },
-                                                 images=[face_item.context_image],
-                                                 response_model=BatchFaceAssignmentResult)
+    def process_document_parallel(self, document):
+        all_face_data = []
+        for page_image, page_layout in document.pages_iterator():
+            face_data = self.prepare_face_data(page_image, page_layout)
+            all_face_data.extend(face_data)
+
+        data = [face_item.to_dict() for face_item in all_face_data]
+        images = [[face_item.context_image] for face_item in all_face_data]
+        results = self.llm_prompter.process_parallel(data_list=data,
+                                                     images_list=images,
+                                                     response_model=BatchFaceAssignmentResult)
+
+        for face_item, result in zip(all_face_data, results):
             face_item.result = result
 
-        page_layout = self.update_layout(page_layout, face_data)
+        self.update_layout(all_face_data)
+
+    def process_page(self, page_image, page_layout):
+        face_data = self.prepare_face_data(page_image, page_layout)
+
+        if self.processing_mode == ProcessingMode.PAGE_PARALLEL:
+            data = [face_item.to_dict() for face_item in face_data]
+            images = [[face_item.context_image] for face_item in face_data]
+            results = self.llm_prompter.process_parallel(data_list=data,
+                                                         images_list=images,
+                                                         response_model=BatchFaceAssignmentResult)
+
+            for face_item, result in zip(face_data, results):
+                face_item.result = result
+
+        else:
+            for face_item in face_data:
+                result = self.llm_prompter.process(data=face_item.to_dict(),
+                                                   images=[face_item.context_image],
+                                                   response_model=BatchFaceAssignmentResult)
+                face_item.result = result
+
+        self.update_layout(face_data)
 
         return page_layout
 
@@ -309,7 +330,7 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
 
         return face_data
 
-    def update_layout(self, page_layout, face_data: list[BatchFaceAssignmentData]):
+    def update_layout(self, face_data: list[BatchFaceAssignmentData]):
         for face_item in face_data:
             if face_item.result is not None:
                 for face_result in face_item.result.faces:
@@ -328,22 +349,3 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                         continue
 
                     target_face_region.face_metadata.page_identity.identity.name = face_result.name_normalized
-
-        return page_layout
-
-    @staticmethod
-    def get_next_mods_id(page_layout, prefix="MODS_PERSON", padding=4):
-        regions = [region for region in page_layout.regions if isinstance(region, PeopleGatorFaceRegionLayout)]
-        existing_mods_ids = set([region.face_metadata.page_identity.mods_id for region in regions
-                                 if region.face_metadata is not None
-                                 and region.face_metadata.page_identity is not None
-                                 and region.face_metadata.page_identity.mods_id is not None])
-
-        index = 1
-        new_id = f"{prefix}_{str(index).zfill(padding)}"
-
-        while new_id in existing_mods_ids:
-            index += 1
-            new_id = f"{prefix}_{str(index).zfill(padding)}"
-
-        return new_id

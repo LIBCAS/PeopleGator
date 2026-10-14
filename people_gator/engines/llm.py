@@ -3,10 +3,12 @@ import json
 import base64
 import logging
 import numpy as np
+import multiprocessing
 
 from typing import Any
 from openai import OpenAI
 from jinja2 import Template
+from functools import partial
 from jsonschema import validate, ValidationError
 
 from people_gator.engines import BaseEngine
@@ -26,8 +28,10 @@ class LLMPrompter:
                  prompt_template_system: str|None = None, 
                  prompt_template_user: str|None = None,
                  json_schema = None,
-                 max_attempts: int = 3):
-        self.client = OpenAI(base_url=api_url, api_key=api_key)
+                 max_attempts: int = 3,
+                 num_processes: int = 4):
+        self.api_url = api_url
+        self.api_key = api_key
         self.model_name = model_name
         self.reasoning_effort = reasoning_effort
         self.max_output_tokens = max_output_tokens
@@ -35,8 +39,59 @@ class LLMPrompter:
         self.prompt_template_user = Template(prompt_template_user) if prompt_template_user else None
         self.json_schema = json_schema
         self.max_attempts = max_attempts
+        self.num_processes = num_processes
 
     def __call__(self, data: dict, images: list|dict|None = None, response_model=None):
+        return self.process(data, images, response_model)
+
+    def process_parallel(self, data_list: list[dict], images_list: list[list|dict|None]|None = None, response_model=None):
+        if images_list is None:
+            images_list = [None] * len(data_list)
+
+        request_args = [self._prepare_request_args(data, images, response_model) for data, images in zip(data_list, images_list)]
+
+        with multiprocessing.Pool(processes=self.num_processes) as pool:
+            results = pool.starmap(self._send_request, [(self.api_url, self.api_key, args, self.max_attempts, self.json_schema, response_model) for args in request_args])
+
+        return results
+
+    def process(self, data: dict, images: list|dict|None = None, response_model=None):
+        request_args = self._prepare_request_args(data, images, response_model)
+        result = self._send_request(self.api_url, self.api_key, request_args, self.max_attempts, self.json_schema, response_model)
+
+        return result
+
+    @staticmethod
+    def _send_request(api_url, api_key, request_args: dict, max_attempts: int, json_schema, response_model=None):
+        result = None
+        client = OpenAI(base_url=api_url, api_key=api_key)
+
+        for attempt in range(max_attempts):
+            try:
+                response = client.responses.create(**request_args)
+                parsed_json = json.loads(strip_markdown(response.output_text))
+
+                result = parsed_json
+
+                if response_model:
+                    result = response_model.model_validate(parsed_json)
+                elif json_schema:
+                    validate(instance=parsed_json, schema=json_schema)
+
+            except ValidationError as e:
+                logger.error(f"Attempt {attempt + 1} failed to validate JSON response: {e}")
+                continue
+
+            except Exception as e:
+                logger.error(f"Attempt {attempt + 1} failed to get a valid response: {e}")
+                continue
+
+            if result:
+                break
+
+        return result
+
+    def _prepare_request_args(self, data: dict, images: list|dict|None = None, response_model=None):
         messages = []
 
         if self.prompt_template_system:
@@ -90,35 +145,11 @@ class LLMPrompter:
                 }
             }
 
-        result = None
-
-        for attempt in range(self.max_attempts):
-            try:
-                response = self.client.responses.create(**request_args)
-                parsed_json = json.loads(strip_markdown(response.output_text))
-
-                result = parsed_json
-
-                if response_model:
-                    result = response_model.model_validate(parsed_json)
-                elif self.json_schema:
-                    validate(instance=parsed_json, schema=self.json_schema)
-
-            except ValidationError as e:
-                logger.error(f"Attempt {attempt + 1} failed to validate JSON response: {e}")
-                continue
-
-            except Exception as e:
-                logger.error(f"Attempt {attempt + 1} failed to get a valid response: {e}")
-                continue
-
-            if result:
-                break
-
-        return result, messages
+        return request_args
 
     def eval_prompt_template(self, template: Template, data: dict):
         return template.render(**data)
+
 
 
 class LLMBasedEngine(BaseEngine):
