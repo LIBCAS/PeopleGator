@@ -131,7 +131,6 @@ class DatabaseApiService:
 
         payload = {
             "source_id": source_id,
-            "entity_link_state": "automatic",
 
             "identifier": face_region.id,
             "bounding_box": {
@@ -178,6 +177,7 @@ class DatabaseApiService:
 
         if face_region.face_metadata.page_identity.identity.peoplegator_id is not None:
             payload["entity_id"] = face_region.face_metadata.page_identity.identity.peoplegator_id
+            payload["entity_link_state"] = "automatic"
 
         response = self.connector.post(url, json=payload)
 
