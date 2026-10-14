@@ -133,7 +133,11 @@ def export_document(document: PeopleGatorDocument, db_api_service: DatabaseApiSe
         logger.error("Document ID is not specified, cannot export to PeopleGator App")
         return
 
-    db_document = db_api_service.create_document(document.id, library=document.library)
+    if document.name is None:
+        logger.error("Document name is not specified, cannot export to PeopleGator App")
+        return
+
+    db_document = db_api_service.create_document(document.id, document.name, library=document.library)
     if not db_document:
         logger.error("Failed to create document in PeopleGator App")
         return
