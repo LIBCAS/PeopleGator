@@ -68,12 +68,12 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
 
     def match_entity(self, name, caption, db_entities):
         entities = self.prepare_entities(db_entities)
-        result, messages = self.llm_prompter(data={
-                                                 "name": name,
-                                                 "context": caption,
-                                                 "entities": entities
-                                             },
-                                             response_model=EntityMatchingResult)
+        result = self.llm_prompter(data={
+                                       "name": name,
+                                       "context": caption,
+                                       "entities": entities
+                                   },
+                                   response_model=EntityMatchingResult)
 
         entities = self.postprocess_entities(entities, result)
         return entities
