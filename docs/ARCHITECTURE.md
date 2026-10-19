@@ -1,33 +1,34 @@
 # Architecture
 
-PeopleGator provides the document-processing component of a system for recognizing people in digitized documents. It analyses page imagery and existing OCR/layout information, associates detected occurrences with person entities, and produces annotations for downstream digital-library use.
+This document describes the current repository and the PeopleGator system design and the core principles guiding its development. The key points for future development are described in [TODO.md](TODO.md). 
 
-This guide draws on the current repository and the attached PeopleGator system design. The sections marked **Current implementation** describe code in this repository; sections marked **Planned** describe the processing workflow proposed in the design.
+## Processing API
+
+TODO: 
+- The processing API is based on DocAPI.
+- Simple schema client -> API -> worker -> processing -> result -> API -> client.
+
+## Database API
+
+TODO:
+- The database API is implemented in PeopleGatorApp.
+- The processing tool can import and export data from/to database through the API.
 
 ## Processing architecture
 
-```text
-Client (page images, ALTO/PAGE XML, document metadata)
-          |
-PeopleGator Processing API (DocAPI)
-          |
-Worker (job polling, inputs, engine configuration)
-          |
-PeopleGatorDocument + DocumentParser
-          |---- configured face detector
-          |---- LLM face/name assignment
-          |---- person entity matching
-          |
-PeopleGatorApp / DB API <----> person + face records
-          |
-ALTO/PAGE XML and optional rendered pages
-          |
-Worker -> Processing API -> Client
-```
+TODO:
+- Load processing configuration.
+- Load document from ALTO/PAGE XML and images.
+- Create DocumentParser which takes the document and configuration and orchestrates the processing engines.
+- If set, import data from the database API.
+- Execute the processing pipeline.
+- If set, export data to the database API.
+- Save the results to ALTO/PAGE XML.
 
-**Current implementation:** The CLI in `user_scripts/parse_folder.py` loads page layouts and images, invokes `DocumentParser`, then writes ALTO XML, PAGE XML and optional visualizations. The `processing_api/` directory integrates DocAPI's server, worker and client wrappers. The worker starts the processing program for a retrieved job. The application adapter communicates with PeopleGatorApp over authenticated HTTP.
+## Data model
 
-**Planned processing lifecycle:** the client submits document pages and OCR XML as a job, the worker obtains the data and configured models, and it returns processed XML and additional results through the Processing API. Person/face annotations are also stored via the PeopleGatorApp API and support analysis of subsequent documents.
+TODO:
+- Schema of the data model.
 
 ## Repository responsibilities
 
@@ -53,21 +54,3 @@ Worker -> Processing API -> Client
 - The configured YOLO and LLM engines supply detection and contextual identification.
 
 The broader data model includes **Entity** (a person), **Face** (a detected face occurrence), **Source** (document/page reference), and planned person mentions in text at page/document level. An occurrence is linked to source material and may refer to an entity. The [Processing](PROCESSING.md) guide describes the matching stages.
-
-## Planned correction and re-export flow
-
-The system design describes a feedback loop:
-
-1. Process page images and ALTO and store detected occurrences with provisional identity assignments.
-2. A librarian reviews and corrects identities using PeopleGatorApp.
-3. The client submits a re-export request and supplies the relevant original ALTO.
-4. Processing imports the corrected associations through the app API and writes updated ALTO annotations.
-5. The Processing API returns the regenerated results to the client.
-
-The current `DocumentParser.process_document()` provides the underlying `import_from_app` and `export_to_app` switches. Completing the entire re-export job path, including reliable round-tripping of face metadata, is a planned integration task.
-
-## Processing and delivery milestones
-
-Current face processing uses source regions from ALTO/PAGE XML; engine sections determine stage order. The intended pipeline also covers person mentions extracted from text, embeddings for comparing face occurrences with stored faces, and reuse of reviewed associations. The PDF describes ALTO XML as an exchange format for Kramerius/ČDK and describes a future searchable, authority-enriched person database; these are downstream integration requirements.
-
-See [Output formats](OUTPUT_FORMATS.md) for the serialized contracts and [Testing](TESTING.md) for validation priorities.
