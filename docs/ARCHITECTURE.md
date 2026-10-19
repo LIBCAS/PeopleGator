@@ -1,34 +1,82 @@
 # Architecture
 
-This document describes the current repository and the PeopleGator system design and the core principles guiding its development. The key points for future development are described in [TODO.md](TODO.md). 
+PeopleGator processes digitized pages to detect faces, associate them with person identities, and export enriched document annotations. Planned development work is tracked in [TODO.md](TODO.md).
 
 ## Processing API
 
-TODO: 
-- The processing API is based on DocAPI.
-- Simple schema client -> API -> worker -> processing -> result -> API -> client.
+The processing API uses [DocAPI](https://github.com/DCGM/DocAPI). The client submits page images, ALTO/PAGE XML, and optional document metadata. A worker polls for jobs, obtains the inputs and processing configuration, runs PeopleGator, and returns the resulting files through the API.
+
+```mermaid
+flowchart LR
+    C["Client"] -->|"Submit document"| A["Processing API (DocAPI)"]
+    A -->|"Job + inputs"| W["Worker"]
+    W -->|"Run processing"| P["PeopleGator"]
+    P -->|"Result files"| W
+    W -->|"Upload results"| A
+    A -->|"Download results"| C
+```
+
+The entry points are `processing_api/client.py`, `processing_api/api.py`, and `processing_api/worker.py`.
 
 ## Database API
 
-TODO:
-- The database API is implemented in PeopleGatorApp.
-- The processing tool can import and export data from/to database through the API.
+The database API is implemented in [PeopleGatorApp](https://github.com/DCGM/PeopleGatorApp). PeopleGator communicates with it over HTTP through `DatabaseApiService` in `people_gator/core/db.py`.
+
+| Operation | Purpose |
+| --- | --- |
+| Import | Load previously stored face occurrences and assigned identities before processing. |
+| Search and match | Find person entities using names proposed by the processing engines. |
+| Export | Create document, page, and face records and upload page images and layout data. |
+
+The `[DB_API]` configuration defines the connection. The CLI switches `--import-from-app` and `--export-to-app` enable the corresponding stages.
 
 ## Processing architecture
 
-TODO:
-- Load processing configuration.
-- Load document from ALTO/PAGE XML and images.
-- Create DocumentParser which takes the document and configuration and orchestrates the processing engines.
-- If set, import data from the database API.
-- Execute the processing pipeline.
-- If set, export data to the database API.
-- Save the results to ALTO/PAGE XML.
+The local script loads the INI configuration and constructs a `PeopleGatorDocument` from page images, source ALTO/PAGE XML, and optional JSON metadata. `DocumentParser` creates and runs the configured engines in INI section order.
+
+```mermaid
+flowchart TD
+    CFG["INI configuration"] --> DP["DocumentParser"]
+    IN["ALTO/PAGE XML + page images + metadata"] --> DOC["PeopleGatorDocument"]
+    DOC --> IMP{"Import from app?"}
+    IMP -->|Yes| LOAD["Import faces and identities"]
+    IMP -->|No| DP
+    LOAD --> DP
+    DP --> ENG["Run configured engines"]
+    ENG --> EXP{"Export to app?"}
+    EXP -->|Yes| SAVE["Export document, pages and faces"]
+    EXP -->|No| XML["Write ALTO/PAGE XML"]
+    SAVE --> XML
+```
+
+The available engines perform face detection, LLM-assisted naming, and entity matching. See [Processing](PROCESSING.md).
 
 ## Data model
 
-TODO:
-- Schema of the data model.
+The main in-memory objects and their relationships are:
+
+```mermaid
+flowchart TD
+    D["PeopleGatorDocument"] -->|"pages"| P["PeopleGatorPageLayout"]
+    P -->|"regions"| S["Source region / photograph"]
+    P -->|"regions"| F["PeopleGatorFaceRegionLayout"]
+    F -->|"source_region"| S
+    F -->|"face_metadata"| M["PeopleGatorFaceMetadata"]
+    M -->|"page_identity"| I["PeopleGatorPageIdentity"]
+    I -->|"identity"| N["PeopleGatorIdentity"]
+    N -.->|"optional peoplegator_id"| E["Person entity (PeopleGatorApp)"]
+```
+
+| Object | Important fields |
+| --- | --- |
+| Document | `id`, `name`, `library`, page layouts, text-entity clusters |
+| Page layout | Page ID, image size, regions, text-entity mentions |
+| Face region | Polygon, confidence, source-region reference |
+| Face metadata | Five landmarks, MODS/tag identifiers, provenance, page identity |
+| Person identity | Proposed name, optional app entity ID, other identifiers |
+
+The broader system design also includes occurrences of person names in OCR text. `PeopleGatorTextEntityMention` and `PeopleGatorTextEntityCluster` represent related information in the current document model.
+
 
 ## Repository responsibilities
 
