@@ -1,47 +1,55 @@
 # Processing pipeline
 
-This is a description of the **current implementation**, not a guarantee of face identification accuracy.
+PeopleGator analyses scanned pages using a configurable sequence of processing engines. The processing pipeline detects face occurrences, proposes associated person names from visual/textual context, resolves candidate people through an API, and enriches document XML.
 
-## Inputs
+## Inputs and document model
 
-`user_scripts/parse_folder.py` accepts:
-- `--config`: INI file specifying `ENGINE_*` sections;
-- `--input-image-path`: directory containing `<page-id>.jpg`;
-- **either** `--input-alto-path` (ALTO XML) **or** `--input-xml-path` (PAGE XML), providing the page layouts;
-- optional `--input-metadata-path`: JSON containing `document.id`, `document.name`, `document.library` and/or `pages_metadata`.
+`user_scripts/parse_folder.py` accepts an INI file (`--config`), page images (`--input-image-path`), source layout in ALTO XML (`--input-alto-path`) or PAGE XML (`--input-xml-path`), and optional JSON metadata (`--input-metadata-path`). Page images are located as `<page-id>.jpg`. `PeopleGatorDocument` builds its page list from the source XML and attaches images and optional document metadata.
 
-The XML layout is essential to discover document pages and source regions. The metadata fields `document.id`, `document.name` and `document.library` are required for the current PeopleGatorApp export path.
+Document metadata may include `document.id`, `document.name`, `document.library` and `pages_metadata`. The first three fields identify records during PeopleGatorApp export.
 
-## Engine execution
+## Configured engines (current implementation)
 
-`DocumentParser` instantiates `[ENGINE_*]` INI sections in their listed order. Each engine's `METHOD` determines its implementation:
+`DocumentParser` processes `[ENGINE_*]` sections in INI order. Each section selects an implementation through `METHOD`:
 
-| METHOD | What it currently does |
+| METHOD | Processing step |
 | --- | --- |
-| `FACE_DETECTION_YOLO` | Runs a configured YOLO model over selected source-region crops, converts boxes/landmarks to page coordinates, and creates `PeopleGatorFaceRegionLayout` entries. |
-| `LLM_FACE_ASSIGNMENT` | Uses one face crop, marked context image, nearby OCR text and optional AnnoPage caption to propose a normalized person name. |
-| `LLM_BATCH_FACE_ASSIGNMENT` | Groups faces by source region and asks the LLM about multiple faces together. Supports `sequential`, `page_parallel`, `document_parallel`; skips source regions with more than `max_people` faces. |
-| `ENTITY_MATCHING` | Searches the PeopleGatorApp person API using a proposed name, asks the LLM to distinguish multiple candidates, and assigns or creates an entity. |
+| `FACE_DETECTION_YOLO` | Detects faces in source-region image crops with a configured YOLO model; creates face regions with bounding boxes, five landmarks and confidence. |
+| `LLM_FACE_ASSIGNMENT` | Uses a face crop, contextual image, nearby OCR and optional AnnoPage caption to propose a normalized name for each face. |
+| `LLM_BATCH_FACE_ASSIGNMENT` | Processes groups of faces sharing a source region; offers `sequential`, `page_parallel` and `document_parallel` modes and a configurable `max_people` limit. |
+| `ENTITY_MATCHING` | Searches person entities through the PeopleGatorApp API, disambiguates candidates using an LLM and assigns or creates person records. |
 
-Detection requires a compatible model returning bounding boxes and five landmark points (left/right eyes, nose, left/right mouth corners). Config options include `MODEL_PATH`, `DETECTION_THRESHOLD`, `IMAGE_SIZE`, `AGNOSTIC_NMS`, and a source-region `categories` filter. Faces are initially unassigned.
+The detector supports `MODEL_PATH`, `DETECTION_THRESHOLD`, `IMAGE_SIZE`, `AGNOSTIC_NMS` and a source-region `categories` filter. It maps crop-relative bounding boxes and eye/nose/mouth keypoints to full-page coordinates.
 
-Assignment engines use an OpenAI-compatible Responses API via `people_gator/engines/llm.py`. Relevant options include `api_url`, `api_key`, `model_name`, `prompt_template_path`, optional `json_schema_path`, and generation settings. Visual context is derived from the face and parent/source region; text and captions are used when available.
+LLM-based stages use a configured OpenAI-compatible Responses endpoint, prompt-template JSON, optional response schemas, and structured return models. The prompt may contain text recognized by OCR and an AnnoPage caption identifying a person near a photograph.
 
-**Identity policy currently implemented:** no normalized name means no entity lookup. One search result is selected; multiple are LLM-disambiguated. If the resulting candidate list is empty (including failed/declined disambiguation), the engine tries to **create a new person**. A proposed name therefore is not verified identity evidence. Changes to this risky behavior require an explicit issue, acceptance criteria and tests.
+## Entity and occurrence terminology
 
-## Optional app import/export
+The system design distinguishes **Entity** (a person) from **occurrence** (an appearance of that person in a document). An image occurrence is represented by a face region; a textual occurrence is a name/span on the page. An entity can be associated with multiple occurrences.
 
-If `[DB_API]` is configured, `DatabaseApiService` uses the PeopleGatorApp HTTP API. `--import-from-app` imports existing faces **before** engines. `--export-to-app` exports document/page/face data **after** engines. Without the config, those optional steps are skipped. See [Output formats](OUTPUT_FORMATS.md) for payload and vector limitations.
+The intended entity lifecycle includes identification of occurrences, linking them to existing person entities or creating provisional entities, and librarian verification/correction. The broader database model includes `Entity`, `Face`, `DocumentMention`, `PageMention` and `Source`.
 
-## Example: local detection-only run
+**Current behavior:** `PeopleGatorFaceRegionLayout` and `PeopleGatorPageIdentity` store faces, their proposed names and optional PeopleGatorApp IDs. `PeopleGatorDocument` includes text-entity mention/cluster data structures inherited from the supplied layouts.
 
-The repository does not currently include packaging metadata, a model checkpoint, or a ready-to-use sample INI. After installing dependencies and providing your own compatible model, a minimal config has this shape:
+**Planned processing:** recognize person-name occurrences across OCR text, associate mentions and detected faces with person entities, use face embeddings for cross-document similarity and incorporate librarian-verified identity assignments. The implementation currently uses names and contextual LLM judgments in the `ENTITY_MATCHING` engine.
+
+## Matching and verification
+
+With a proposed name, `ENTITY_MATCHING` searches the app API. One result is accepted directly; multiple results are disambiguated with contextual LLM input. When the resulting candidate list is empty, the current engine creates a new person entity. Faces with no proposed name retain their unassigned identity state.
+
+The intended database supports provisional entities originating in processing and reviewed/verified entities managed by librarians. Agent-authored changes to the matching policy should include precise confidence and verification requirements in the issue and regression tests for ambiguous names.
+
+## Local and managed execution
+
+A detection-only example INI:
 
 ~~~ini
 [ENGINE_FACE_DETECTION]
 METHOD = FACE_DETECTION_YOLO
 MODEL_PATH = /absolute/path/to/compatible-face-model.pt
 ~~~
+
+Run local processing after preparing dependencies, input pages and a compatible detector:
 
 ~~~bash
 python -m user_scripts.parse_folder \
@@ -52,8 +60,10 @@ python -m user_scripts.parse_folder \
   --device cpu
 ~~~
 
-To use PAGE instead, select `--input-xml-path` and `--output-xml-path`. Optional annotated renderings use `--output-render-path`. The example describes the CLI, **not a verified turnkey installation**.
+Use `--input-xml-path` and `--output-xml-path` for PAGE XML. `--output-render-path` produces annotated preview images.
 
-## Failure behavior to address in later changes
+The DocAPI-based client submits a job with images/layout/metadata; the worker obtains inputs and runs the processing command. `DocumentParser` performs optional PeopleGatorApp import before the engines and export after them, controlled by `--import-from-app`, `--export-to-app` and `[DB_API]`.
 
-Missing/mismatched source regions, invalid metadata, unavailable model/provider or malformed provider responses can disrupt or degrade processing. App import/export currently logs some failures and continues. The DocAPI worker currently returns an OK result without checking the spawned process's exit status. Do not assume atomic export, safe retries, or successful job propagation until these are tested or fixed.
+## Planned processing improvements
+
+The complete workflow will verify subprocess exit status and result delivery, propagate API/storage failures, support repeatable imports and exports, and regenerate XML after identity corrections. See [Architecture](ARCHITECTURE.md#planned-correction-and-re-export-flow), [Output formats](OUTPUT_FORMATS.md) and [Testing](TESTING.md).
