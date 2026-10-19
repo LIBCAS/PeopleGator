@@ -41,10 +41,10 @@ The processing path combines client submission, managed worker execution, config
                                  |
                                Worker
                                  |
-                  PeopleGator document processing
-                    |            |            |
-                  Face        LLM name      Entity
-                detection    assignment    matching
+                   PeopleGator document processing
+                         (Face detection, 
+                        LLM name assignment, 
+                          Entity matching)
                                  |
                          PeopleGatorApp API
                                  |
