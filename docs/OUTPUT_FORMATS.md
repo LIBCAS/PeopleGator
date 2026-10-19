@@ -1,36 +1,44 @@
 # Output formats
 
-Face annotations are represented by `PeopleGatorFaceRegionLayout` and `PeopleGatorFaceMetadata` in `people_gator/core/layout.py`. Each face carries a polygon and confidence, source-region reference, five facial landmarks, an optional proposed person name and PeopleGatorApp entity ID, tag/MODS IDs, and optional model provenance. Geometry and landmarks use page-image pixel coordinates.
+PeopleGator writes enriched document annotations and communicates face/person records to the PeopleGatorApp API. The XML representation supports page-level coordinates and links image occurrences to their identities.
 
-## ALTO XML
+## Face and identity data
 
-`PeopleGatorDocument.to_altoxml()` writes one `<page-id>.xml` file per page, defaulting to `ALTOVersion.ALTO_v4_4`. For a face the writer creates:
-- `ComposedBlock TYPE="Face"` containing `GraphicalElement`, with its bounding rectangle;
-- a `LayoutTag` labeled `face`, attached with `TAGREFS`, containing MODS size, relations, provenance and landmarks;
-- a `NamedEntityTag` labeled `person` with MODS identity metadata, including person name and optional `peoplegator` identifier.
+`PeopleGatorFaceRegionLayout` holds a face polygon, detection confidence and source-region reference. `PeopleGatorFaceMetadata` records five landmarks (left/right eyes, nose and left/right mouth corners), tag/MODS identifiers, model provenance and an associated `PeopleGatorPageIdentity`. A person identity can contain a proposed name, a `peoplegator_id` and other identifiers. Current in-memory landmark coordinates are page-image pixels.
 
-MODS uses `http://www.loc.gov/mods/v3`; landmark data uses `https://orbis.lib.cas.cz/ns/people-gator` (`pg`). A PeopleGator processing record is appended. When a source ALTO document is available, the writer edits its XML tree and should preserve unrelated OCR and AnnoPage content; this preservation is not yet backed by repository tests.
+The broader system design also describes `Entity`, `Face`, `Source`, `DocumentMention` and `PageMention` records. Face occurrences link to at most one person; text occurrences refer to their source document/page and person identity. The occurrence and source relationships should be preserved when exchanging results with the app API.
 
-## PAGE XML
+## ALTO XML (current implementation)
 
-`PeopleGatorFaceRegionLayout.to_pagexml()` writes an `ImageRegion` containing `Coords points`. Its `custom` attribute is JSON with `category`, `detection_confidence`, serialized `metadata` (including identity/landmarks), and source-region ID. A processing-step metadata entry is also added. The output is a description of **current writer behavior**, not a guarantee of external PAGE compatibility or successful readback.
+`PeopleGatorDocument.to_altoxml()` writes `<page-id>.xml` for each page, defaulting to `ALTOVersion.ALTO_v4_4`. Each face is serialized through:
+- a `ComposedBlock` with `TYPE="Face"`, including `GraphicalElement` with face bounds;
+- a `LayoutTag` labeled `face`, referenced by `TAGREFS`, with MODS face description, provenance and five landmarks;
+- a `NamedEntityTag` labeled `person` containing MODS identity data.
 
-## Files and app export
+MODS uses `http://www.loc.gov/mods/v3`; PeopleGator landmark extensions use `https://orbis.lib.cas.cz/ns/people-gator`. The writer adds processing metadata and appends face annotations to the source ALTO tree. The intended consumer contract preserves existing text and AnnoPage annotations while enriching the page.
 
-The folder CLI supports:
-- `--output-alto-path`: `<page-id>.xml` ALTO files;
-- `--output-xml-path`: `<page-id>.xml` PAGE files;
-- `--output-render-path`: optional `<page-id>.jpg` annotated images.
+The system design identifies ALTO XML as the interchange format for person occurrences to downstream digital libraries, including Kramerius/ČDK. XML metadata should retain stable links to identities and face regions across processing and review.
 
-With `--export-to-app`, the HTTP adapter sends documents, pages containing faces, face records, page JPEGs and selected layout data to the separate PeopleGatorApp API, provided document ID, name and library are available. The adapter passes the person entity ID if one exists. This is API persistence, **not a local PeopleGator database**.
+## PAGE XML (current implementation)
 
-**Current placeholder:** `DatabaseApiService.create_face()` includes model identifier `vit_small_patch8_gap_112.cosface_ms1mv3` with a **512-element zero vector**. It does *not* compute or export a real face embedding. Do not document embedding-based recognition as implemented based on this field.
+`PeopleGatorFaceRegionLayout.to_pagexml()` writes an `ImageRegion` with a polygon in `Coords points`. The `custom` attribute contains JSON with `category`, `detection_confidence`, full face `metadata` and `source_region`. The writer also adds page processing-step metadata.
 
-## Known implementation limitations
+## File and API outputs
 
-- `PeopleGatorFaceMetadata.from_altoxml()` and `PeopleGatorFaceRegionLayout.from_altoxml()` raise `NotImplementedError`; the ALTO face-region load hook is empty. Existing PeopleGator faces are not reliably read from ALTO.
-- The PAGE writer emits `ImageRegion`, but the current PAGE face import hook searches for `CustomRegion[@type='face']`. **PAGE face round trips are not established.**
-- `remove_peoplegator_elements()` currently returns the ALTO tree unchanged. Re-processing ALTO output could duplicate annotations; idempotent export is not implemented.
-- XML schema validation, uniqueness on reruns, geometry/identity preservation and application export consistency require synthetic regression tests.
+The local CLI writes `<page-id>.xml` under `--output-alto-path` or `--output-xml-path`, plus optional annotated `<page-id>.jpg` under `--output-render-path`.
 
-When changing any format, explicitly review compatibility and add before/after XML fixtures and structural assertions. See [Testing](TESTING.md).
+With `--export-to-app`, `DatabaseApiService` sends document, page and face records and uploads page images/layouts to the PeopleGatorApp API. The document metadata must contain an ID, name and library for this export. Existing person-entity IDs are included with faces when available.
+
+The current face POST payload includes the model identifier `vit_small_patch8_gap_112.cosface_ms1mv3` and a **512-element zero vector** as a placeholder embedding. Generating face embeddings and similarity-based identification are planned processing improvements.
+
+**Planned additional outputs:** the system design calls for accompanying structured data (including JSON), results packaged for client download, and re-exported XML reflecting librarian corrections. Their exact sidecar/ZIP contracts will be specified alongside implementation.
+
+## Planned XML compatibility and re-export work
+
+- Complete ALTO face metadata and face-region readers, whose corresponding `from_altoxml()` methods currently raise `NotImplementedError`, and implement the `altoxml_load_regions` hook.
+- Align PAGE face serialization (`ImageRegion`) with the existing reader hook looking for `CustomRegion[@type='face']`, and exercise read–write–read tests.
+- Make ALTO enrichment repeatable: `remove_peoplegator_elements()` currently returns the source unchanged, so duplicate prevention requires implementation and tests.
+- Define XML schema validation, identifier stability and preservation of source OCR and AnnoPage metadata across consecutive processing runs.
+- Support the planned re-export pipeline: ingest corrected entity links from the PeopleGatorApp API and generate revised ALTO annotations from the client's original ALTO and stored results.
+
+See [Testing](TESTING.md) for synthetic fixture cases.
