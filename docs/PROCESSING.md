@@ -69,7 +69,8 @@ Searches PeopleGatorApp for a person using a proposed name. Selects a single mat
 | `json_schema_path` | False | `None` | Optional JSON response schema. |
 | `reasoning_effort` | False | `low` | Reasoning effort requested from the model. |
 | `max_output_tokens` | False | `1000` | Maximum response token count. |
-| `[DB_API]` (global section) | True | — | PeopleGatorApp connection needed for person search and creation; configured outside the engine section. |
+
+**Database dependency:** `ENTITY_MATCHING` also needs a separate `[DB_API]` section to connect to PeopleGatorApp. `DocumentParser` skips entity matching when that service is unavailable.
 
 The LLM settings come from `LLMBasedEngine` in `people_gator/engines/llm.py`. Run detection before face assignment, and face assignment before entity matching when using all three stages.
 
