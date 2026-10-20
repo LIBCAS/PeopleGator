@@ -61,6 +61,7 @@ See [Architecture](docs/ARCHITECTURE.md) for module boundaries and data flow.
 ## Documentation
 
 - [AGENTS.md](AGENTS.md) — instructions for Codex and other coding agents.
+- [Creating issues](docs/ISSUE_WORKFLOW.md) — turning a plain-language request into a reviewable GitHub issue.
 - [Architecture](docs/ARCHITECTURE.md) — modules, data flow and service boundaries.
 - [Processing](docs/PROCESSING.md) — input assumptions, engines and configuration.
 - [Output formats](docs/OUTPUT_FORMATS.md) — XML/app output and current gaps.
