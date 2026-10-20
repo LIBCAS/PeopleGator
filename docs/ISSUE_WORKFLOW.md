@@ -13,6 +13,8 @@ PeopleGator issues describe **what should change and how the result will be veri
 
 If an important decision is still unresolved, keep a `[Draft]` title and list the open questions. A draft can be refined in the same issue once requirements are settled.
 
+**Implementation readiness:** Before assigning an issue to a coding agent, confirm that its intended outcome, scope, acceptance criteria and required decisions are clear enough to implement and verify. The agent should refine an issue with material open questions before beginning work, then follow the [implementation workflow](../AGENTS.md#github-development-workflow).
+
 ## What a complete issue contains
 
 | Section | What to include |
