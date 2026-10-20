@@ -102,6 +102,23 @@ These parameters are needed for the authenticated connection; the code does not 
 | `--device`, `--gpu-id` | CPU or GPU choice and optional GPU index; CPU is the default |
 | `--logging-level` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 
+### `[PARSE_FOLDER]` configuration
+
+The document input/output paths and import/export flags can also be set in the INI file under `[PARSE_FOLDER]`. Use the corresponding uppercase names without the CLI prefix, as in this example:
+
+```ini
+[PARSE_FOLDER]
+INPUT_IMAGE_PATH = ./input/images
+INPUT_ALTO_PATH = ./input/alto
+OUTPUT_ALTO_PATH = ./output/alto
+IMPORT_FROM_APP = no
+EXPORT_TO_APP = no
+```
+
+Supported keys are `INPUT_IMAGE_PATH`, `INPUT_ALTO_PATH`, `INPUT_XML_PATH`, `INPUT_METADATA_PATH`, `OUTPUT_ALTO_PATH`, `OUTPUT_XML_PATH`, `OUTPUT_RENDER_PATH`, `IMPORT_FROM_APP`, and `EXPORT_TO_APP`. Choose one input XML format. CLI path options override the corresponding configured values; passing an import/export flag enables it. `--config`, `--device`, `--gpu-id`, and `--logging-level` are CLI-only options in the current script.
+
+The script can therefore run with just `--config ./config.ini` when the remaining processing paths and options are defined in that file.
+
 ### Example
 
 Provide an INI file with a compatible face/keypoint model:
