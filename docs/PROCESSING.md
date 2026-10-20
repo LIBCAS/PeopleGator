@@ -70,9 +70,21 @@ Searches PeopleGatorApp for a person using a proposed name. Selects a single mat
 | `reasoning_effort` | False | `low` | Reasoning effort requested from the model. |
 | `max_output_tokens` | False | `1000` | Maximum response token count. |
 
-**Database dependency:** `ENTITY_MATCHING` also needs a separate `[DB_API]` section to connect to PeopleGatorApp. `DocumentParser` skips entity matching when that service is unavailable.
+`ENTITY_MATCHING` uses the connection described in [Database API](#database-api).
 
 The LLM settings come from `LLMBasedEngine` in `people_gator/engines/llm.py`. Run detection before face assignment, and face assignment before entity matching when using all three stages.
+
+## Database API
+
+The `[DB_API]` section configures the PeopleGatorApp database connection. `DatabaseApiService` reads these parameters:
+
+| name | required | default value | description |
+| --- | --- | --- | --- |
+| `api_url` | True | — | Base URL of the PeopleGatorApp API. |
+| `username` | True | — | Account name used to log in to the API. |
+| `password` | True | — | Account password used to log in to the API. |
+
+These parameters are needed for the authenticated connection; the code does not define defaults. `DocumentParser` initializes this connection when `[DB_API]` is present. Entity matching and the optional `--import-from-app` / `--export-to-app` stages use it.
 
 ## Processing script
 

@@ -28,7 +28,7 @@ The database API is implemented in [PeopleGatorApp](https://github.com/DCGM/Peop
 | Search and match | Find person entities using names proposed by the processing engines. |
 | Export | Create document, page, and face records and upload page images and layout data. |
 
-The `[DB_API]` configuration defines the connection. The CLI switches `--import-from-app` and `--export-to-app` enable the corresponding stages.
+The `[DB_API]` configuration defines the connection. The CLI switches `--import-from-app` and `--export-to-app` enable the corresponding stages. See [Database API](PROCESSING.md#database-api) for the connection settings.
 
 ## Processing architecture
 
