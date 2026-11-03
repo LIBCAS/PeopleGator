@@ -27,6 +27,7 @@ def parse_arguments():
 
     parser.add_argument("--import-from-app", action="store_true", help="Import the document from the People Gator app instead of processing it locally.")
     parser.add_argument("--export-to-app", action="store_true", help="Export the processed document to the People Gator app.")
+    parser.add_argument("--drop-existing-annotations", action="store_true", help="Drop existing annotations in the document before exporting.")
 
     parser.add_argument("--device", choices=["gpu", "cpu"], default="cpu", help="Device to use for processing (default: cpu).")
     parser.add_argument("--gpu-id", type=int, default=None, help="GPU index to use (if device is gpu).")
@@ -136,6 +137,9 @@ def main():
     if args.export_to_app:
         config['PARSE_FOLDER']['EXPORT_TO_APP'] = 'yes'
 
+    if args.drop_existing_annotations:
+        config['PARSE_FOLDER']['DROP_EXISTING_ANNOTATIONS'] = 'yes'
+
     device = get_device(args.device, args.gpu_id, logger)
 
     config_dir = os.path.dirname(config_path)
@@ -152,6 +156,7 @@ def main():
 
     import_from_app = get_value_or_none(config, 'PARSE_FOLDER', 'IMPORT_FROM_APP', getboolean=True)
     export_to_app = get_value_or_none(config, 'PARSE_FOLDER', 'EXPORT_TO_APP', getboolean=True)
+    drop_existing_annotations = get_value_or_none(config, 'PARSE_FOLDER', 'DROP_EXISTING_ANNOTATIONS', getboolean=True)
 
     if import_from_app is None:
         import_from_app = False
@@ -159,12 +164,15 @@ def main():
     if export_to_app is None:
         export_to_app = False
 
+    if drop_existing_annotations is None:
+        drop_existing_annotations = False
+
     document = load_document(input_images_path=input_image_path,
                              input_xml_path=input_xml_path,
                              input_alto_path=input_alto_path,
                              input_metadata_path=input_metadata_path)
 
-    document = document_parser.process_document(document, import_from_app=import_from_app, export_to_app=export_to_app)
+    document = document_parser.process_document(document, import_from_app=import_from_app, export_to_app=export_to_app, drop_existing_annotations=drop_existing_annotations)
 
 
     if output_xml_path and not os.path.exists(output_xml_path):

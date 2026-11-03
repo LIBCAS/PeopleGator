@@ -37,6 +37,7 @@ class DatabaseApiService:
         response = self.connector.get(url, params=params)
 
         if response.status_code != HTTPStatus.OK:
+            logger.warning(f"Failed to search entities for query {query}. Status code: {response.status_code}, Response: {response.text}")
             return None
 
         result = response.json()
@@ -64,6 +65,7 @@ class DatabaseApiService:
         response = self.connector.post(url, json=payload)
 
         if response.status_code != HTTPStatus.CREATED:
+            logger.warning(f"Failed to create entity for name {name}. Status code: {response.status_code}, Response: {response.text}")
             return None
 
         result = response.json()
@@ -87,6 +89,7 @@ class DatabaseApiService:
         response = self.connector.post(url, json=payload)
 
         if response.status_code != HTTPStatus.CREATED:
+            logger.warning(f"Failed to create document for document_id {document_id}. Status code: {response.status_code}, Response: {response.text}")
             return None
 
         result = response.json()
@@ -110,6 +113,7 @@ class DatabaseApiService:
         response = self.connector.post(url, json=payload)
 
         if response.status_code != HTTPStatus.CREATED:
+            logger.warning(f"Failed to create page for page_id {page_id}. Status code: {response.status_code}, Response: {response.text}")
             return None
 
         result = response.json()
@@ -182,6 +186,7 @@ class DatabaseApiService:
         response = self.connector.post(url, json=payload)
 
         if response.status_code != HTTPStatus.CREATED:
+            logger.warning(f"Failed to create face for source_id {source_id}. Status code: {response.status_code}, Response: {response.text}")
             return None
 
         result = response.json()
@@ -206,6 +211,7 @@ class DatabaseApiService:
         response = self.connector.put(url, files=files)
 
         if response.status_code != HTTPStatus.OK:
+            logger.warning(f"Failed to put page image for page_id {page_id}. Status code: {response.status_code}, Response: {response.text}")
             return None
 
         result = response.json()
@@ -224,6 +230,7 @@ class DatabaseApiService:
         response = self.connector.put(url, json=page_layout_dict)
 
         if response.status_code != HTTPStatus.OK:
+            logger.warning(f"Failed to put page layout for page_id {page_id}. Status code: {response.status_code}, Response: {response.text}")
             return None
 
         result = response.json()
@@ -246,6 +253,7 @@ class DatabaseApiService:
         response = self.connector.get(url, params=params)
 
         if response.status_code != HTTPStatus.OK:
+            logger.warning(f"Failed to get document info for document_id {document_id} in library {library}. Status code: {response.status_code}. Response: {response.text}")
             return None
 
         result = response.json()
@@ -269,6 +277,7 @@ class DatabaseApiService:
         response = self.connector.get(url, params=params)
 
         if response.status_code != HTTPStatus.OK:
+            logger.warning(f"Failed to get page info for document_id {document_id}, page_id {page_id} in library {library}. Status code: {response.status_code}. Response: {response.text}")
             return None
 
         result = response.json()
@@ -291,12 +300,128 @@ class DatabaseApiService:
         response = self.connector.get(url, params=params)
 
         if response.status_code != HTTPStatus.OK:
+            logger.warning(f"Failed to get faces for page with source_id {source_id}. Status code: {response.status_code}. Response: {response.text}")
             return None
 
         result = response.json()
         if response_model:
             try:
-                result = [response_model(**item) for item in result]
+                result = response_model(**result)
+            except Exception as e:
+                logger.error(f"Error parsing response into model {response_model}: {e}")
+                return None
+
+        return result
+
+    def get_text_mentions_for_page(self, source_id, route="/api/v1/text-mentions", response_model=None):
+        url = self.compose_url(route)
+        params = {
+            "filter.source_id": str(source_id),
+            "limit": 1_000_000,
+        }
+
+        response = self.connector.get(url, params=params)
+
+        if response.status_code != HTTPStatus.OK:
+            logger.warning(f"Failed to get text mentions for page with source_id {source_id}. Status code: {response.status_code}. Response: {response.text}")
+            return None
+
+        result = response.json()
+        if response_model:
+            try:
+                result = response_model(**result)
+            except Exception as e:
+                logger.error(f"Error parsing response into model {response_model}: {e}")
+                return None
+
+        return result
+
+    def get_entities_for_page(self, source_id, route="/api/v1/entities", response_model=None):
+        url = self.compose_url(route)
+        params = {
+            "filter.source_id": str(source_id),
+            "limit": 1_000_000,
+        }
+
+        response = self.connector.get(url, params=params)
+
+        if response.status_code != HTTPStatus.OK:
+            logger.warning(f"Failed to get entities for page with source_id {source_id}. Status code: {response.status_code}. Response: {response.text}")
+            return None
+
+        result = response.json()
+        if response_model:
+            try:
+                result = response_model(**result)
+            except Exception as e:
+                logger.error(f"Error parsing response into model {response_model}: {e}")
+                return None
+
+        return result
+
+    def get_text_mentions_for_document(self, source_id, route="/api/v1/text-mentions", response_model=None):
+        url = self.compose_url(route)
+        params = {
+            "filter.document_source_id": str(source_id),
+            "limit": 1_000_000,
+        }
+
+        response = self.connector.get(url, params=params)
+
+        if response.status_code != HTTPStatus.OK:
+            logger.warning(f"Failed to get text mentions for document with source_id {source_id}. Status code: {response.status_code}. Response: {response.text}")
+            return None
+
+        result = response.json()
+        if response_model:
+            try:
+                result = response_model(**result)
+            except Exception as e:
+                logger.error(f"Error parsing response into model {response_model}: {e}")
+                return None
+
+        return result
+
+    def get_faces_for_document(self, source_id, route="/api/v1/faces", response_model=None):
+        url = self.compose_url(route)
+        params = {
+            "filter.document_source_id": str(source_id),
+            "limit": 1_000_000,
+        }
+
+        response = self.connector.get(url, params=params)
+
+        if response.status_code != HTTPStatus.OK:
+            logger.warning(f"Failed to get faces for document with source_id {source_id}. Status code: {response.status_code}. Response: {response.text}")
+            return None
+
+        result = response.json()
+        if response_model:
+            try:
+                result = response_model(**result)
+            except Exception as e:
+                logger.error(f"Error parsing response into model {response_model}: {e}")
+                return None
+
+        return result
+
+    def get_entities_for_document(self, source_id, route="/api/v1/entities", response_model=None):
+        url = self.compose_url(route)
+        params = {
+            "filter.document_source_id": str(source_id),
+            "limit": 1_000_000,
+        }
+
+        response = self.connector.get(url, params=params)
+
+        if response.status_code != HTTPStatus.OK:
+            logger.warning(f"Failed to get entities for document with source_id {source_id}. Status code: {response.status_code}. Response: {response.text}")
+            return None
+
+        result = response.json()
+        if response_model:
+            try:
+                result = response_model(**result)
             except Exception as e:
                 logger.error(f"Error parsing response into model {response_model}: {e}")
                 return None
@@ -309,6 +434,110 @@ class DatabaseApiService:
         response = self.connector.get(url)
 
         if response.status_code != HTTPStatus.OK:
+            logger.warning(f"Failed to get entity info for entity_id {entity_id}. Status code: {response.status_code}. Response: {response.text}")
+            return None
+
+        result = response.json()
+        if response_model:
+            try:
+                result = response_model(**result)
+            except Exception as e:
+                logger.error(f"Error parsing response into model {response_model}: {e}")
+                return None
+
+        return result
+
+    def get_document_pages(self, document_id, library, route="/api/v1/pages", response_model=None):
+        url = self.compose_url(route)
+        params = {
+            "filter.library": library,
+            "filter.document_id": str(document_id),
+            "limit": 1_000_000,
+        }
+
+        response = self.connector.get(url, params=params)
+
+        if response.status_code != HTTPStatus.OK:
+            logger.warning(f"Failed to get pages for document_id {document_id} in library {library}. Status code: {response.status_code}. Response: {response.text}")
+            return None
+
+        result = response.json()
+        if response_model:
+            try:
+                result = response_model(**result)
+            except Exception as e:
+                logger.error(f"Error parsing response into model {response_model}: {e}")
+                return None
+
+        return result
+
+    def delete_face(self, detection_id, route="/api/v1/faces/{detection_id}", response_model=None):
+        url = self.compose_url(route.format(detection_id=detection_id))
+
+        response = self.connector.delete(url)
+
+        if response.status_code != HTTPStatus.NO_CONTENT:
+            logger.warning(f"Failed to delete face with detection_id {detection_id}. Status code: {response.status_code}. Response: {response.text}")
+            return False
+
+        return True
+
+    def delete_document(self, source_id, route="/api/v1/documents/{source_id}", response_model=None):
+        url = self.compose_url(route.format(source_id=source_id))
+
+        response = self.connector.delete(url)
+
+        if response.status_code != HTTPStatus.NO_CONTENT:
+            logger.warning(f"Failed to delete document with source_id {source_id}. Status code: {response.status_code}. Response: {response.text}")
+            return False
+
+        return True
+
+    def delete_page(self, source_id, route="/api/v1/pages/{source_id}", response_model=None):
+        url = self.compose_url(route.format(source_id=source_id))
+
+        response = self.connector.delete(url)
+
+        if response.status_code != HTTPStatus.NO_CONTENT:
+            logger.warning(f"Failed to delete page with source_id {source_id}. Status code: {response.status_code}. Response: {response.text}")
+            return False
+
+        return True
+
+    def delete_document_annotations(self, document_id, library):
+        db_document_pages = self.get_document_pages(document_id, library)
+        if db_document_pages is None:
+            logger.error(f"Failed to get pages for document_id {document_id} in library {library}. Cannot delete annotations.")
+            return False
+
+        for db_page in db_document_pages["items"]:
+            page_id = db_page["page_id"]
+            source_id = db_page["source_id"]
+
+            db_faces = self.get_faces_for_page(source_id)
+            if db_faces is None:
+                logger.error(f"Failed to get faces for page {page_id} in document {document_id}. Cannot delete annotations.")
+                continue
+
+            for db_face in db_faces["items"]:
+                detection_id = db_face["detection_id"]
+                self.delete_face(detection_id)
+
+        return True
+
+    def merge_entities(self, target_entity_id, other_entity_ids, description=None, short_description=None, route="/api/v1/entities/{target_entity_id}:merge-batch", response_model=None):
+        url = self.compose_url(route.format(target_entity_id=target_entity_id))
+
+        payload = {
+            "source_entity_ids": other_entity_ids,
+            "description": description,
+            "short_description": short_description
+        }
+
+        response = self.connector.post(url, json=payload)
+
+        if response.status_code != HTTPStatus.OK:
+            logger.warning(f"Failed to merge entities (target_entity_id: {target_entity_id}, source_entity_ids: {other_entity_ids}). Status code: {response.status_code}, Response: {response.text}")
             return None
 
         result = response.json()

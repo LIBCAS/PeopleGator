@@ -23,7 +23,7 @@ class DocumentParser:
         if self.config.has_section("DB_API"):
             self.db_api_service = DatabaseApiService(self.config["DB_API"])
 
-    def process_document(self, document: PeopleGatorDocument, import_from_app: bool = False, export_to_app: bool = False) -> PeopleGatorDocument:
+    def process_document(self, document: PeopleGatorDocument, import_from_app: bool = False, export_to_app: bool = False, drop_existing_annotations: bool = False) -> PeopleGatorDocument:
         if import_from_app and self.db_api_service is not None:
             logger.info("Importing document from PeopleGator App")
             document = import_document(document, self.db_api_service)
@@ -34,7 +34,7 @@ class DocumentParser:
 
         if export_to_app and self.db_api_service is not None:
             logger.info("Exporting document to PeopleGator App")
-            export_document(document, self.db_api_service)
+            export_document(document, self.db_api_service, drop_existing_annotations=drop_existing_annotations)
 
         return document
 
@@ -124,7 +124,7 @@ def import_document(document: PeopleGatorDocument, db_api_service: DatabaseApiSe
     return document
 
 
-def export_document(document: PeopleGatorDocument, db_api_service: DatabaseApiService):
+def export_document(document: PeopleGatorDocument, db_api_service: DatabaseApiService, drop_existing_annotations: bool = False):
     if document.library is None:
         logger.error("Document library is not specified, cannot export to PeopleGator App")
         return
@@ -137,28 +137,47 @@ def export_document(document: PeopleGatorDocument, db_api_service: DatabaseApiSe
         logger.error("Document name is not specified, cannot export to PeopleGator App")
         return
 
-    db_document = db_api_service.create_document(document.id, document.name, library=document.library)
+    db_document = db_api_service.get_document_info(document.id, library=document.library)
     if not db_document:
-        logger.error("Failed to create document in PeopleGator App")
-        return
+        logger.info(f"Document {document.id} does not exist in PeopleGator App, creating new document")
+        db_document = db_api_service.create_document(document.id, document.name, library=document.library)
+        if not db_document:
+            logger.error(f"Failed to create document {document.id} in PeopleGator App")
+            return
+    else:
+        if drop_existing_annotations:
+            logger.info(f"Dropping existing annotations for document {document.id} in PeopleGator App")
+            result = db_api_service.delete_document_annotations(document.id, library=document.library)
+            if not result:
+                logger.error(f"Failed to drop existing annotations for document {document.id} in PeopleGator App")
 
     for page_image, page_layout in document.pages_iterator():
-        faces = [region for region in page_layout.regions if isinstance(region, PeopleGatorFaceRegionLayout)]
-        if len(faces) > 0:
+        db_page = db_api_service.get_page_info(document.id, page_layout.id, library=document.library)
+        if not db_page:
+            logger.info(f"Page {page_layout.id} does not exist in PeopleGator App, creating new page")
             db_page = db_api_service.create_page(page_layout.id, document.id, library=document.library)
             if not db_page:
                 logger.error(f"Failed to create page {page_layout.id} in PeopleGator App")
                 continue
+        else:
+            logger.info(f"Page {page_layout.id} already exists in PeopleGator App, updating existing page")
 
-            for face_region in faces:
-                db_face = db_api_service.create_face(face_region, db_page["source_id"])
-                if not db_face:
-                    logger.error(f"Failed to create face {face_region.id} in PeopleGator App")
+        faces = [region for region in page_layout.regions if isinstance(region, PeopleGatorFaceRegionLayout)]
+        for face_region in faces:
+            db_face = db_api_service.create_face(face_region, db_page["source_id"])
+            if not db_face:
+                logger.error(f"Failed to create face {face_region.id} in PeopleGator App")
+            else:
+                logger.info(f"Created face {face_region.id} in PeopleGator App with detection_id {db_face['detection_id']}")
 
-            result = db_api_service.put_page_image(page_image, db_page['source_id'])
-            if not result:
-                logger.error(f"Failed to upload page image for page {page_layout.id} in PeopleGator App")
+        result = db_api_service.put_page_image(page_image, db_page['source_id'])
+        if not result:
+            logger.error(f"Failed to upload page image for page {page_layout.id} in PeopleGator App")
+        else:
+            logger.info(f"Uploaded page image for page {page_layout.id} in PeopleGator App")
 
-            result = db_api_service.put_page_layout(page_layout.to_app_dict(), db_page['source_id'])
-            if not result:
-                logger.error(f"Failed to upload page layout for page {page_layout.id} in PeopleGator App")
+        result = db_api_service.put_page_layout(page_layout.to_app_dict(), db_page['source_id'])
+        if not result:
+            logger.error(f"Failed to upload page layout for page {page_layout.id} in PeopleGator App")
+        else:
+            logger.info(f"Uploaded page layout for page {page_layout.id} in PeopleGator App")
