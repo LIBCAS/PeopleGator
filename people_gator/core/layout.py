@@ -164,12 +164,7 @@ class PeopleGatorPageIdentity(AnnoPageBaseMetadata):
         identity: PeopleGatorIdentity = PeopleGatorIdentity.from_dict(identity_data)
 
         name: str|None = data.get("name")
-        if name is None:
-            raise ValueError("Missing 'name' in data.")
-
         peoplegator_id: str|None = data.get("peoplegator_id")
-        if peoplegator_id is None:
-            raise ValueError("Missing 'peoplegator_id' in data.")
 
         return cls(tag_id=tag_id,
                    mods_id=mods_id,
@@ -463,6 +458,9 @@ class PeopleGatorFaceRegionLayout(RegionLayout):
 
         custom = json.loads(region_element.attrib["custom"])
         category = custom.get("category", None)
+        if category.lower() != "face":
+            return None
+
         detection_confidence = custom.get("detection_confidence", None)
         source_region_id = custom.get("source_region", None)
 
@@ -566,7 +564,7 @@ class PeopleGatorTextEntityMention:
 
 class PeopleGatorPageLayout(AnnoPagePageLayout):
     def __init__(self, id: str|None = None, page_size: tuple[int, int] = (0, 0), file: str|None = None):
-        super().__init__(id, page_size, file)
+        super().__init__(id, page_size, file=None)
 
         self.text_entities: list[PeopleGatorTextEntityMention] = []
 
@@ -576,6 +574,12 @@ class PeopleGatorPageLayout(AnnoPagePageLayout):
         self.to_altoxml_processing_added += altoxml_add_processing_step
         self.to_altoxml_regions_ended += altoxml_postprocess_lines
         self.to_pagexml_processing_added += pagexml_add_processing_step
+
+        if file is not None:
+            self.from_pagexml(file)
+
+        if self.reading_order is not None and len(self.regions) > 0:
+            self.sort_regions_by_reading_order()
 
     @property
     def faces(self):
@@ -635,7 +639,6 @@ class PeopleGatorTextEntityCluster:
 
 
 class PeopleGatorDocument:
-
     def __init__(self,
                  id: str|None = None,
                  name: str|None = None,
@@ -676,6 +679,10 @@ class PeopleGatorDocument:
             elif self.alto_xmls_dir:
                 self.from_altoxml(self.alto_xmls_dir)
 
+            for page_layout in self.page_layouts:
+                if page_layout.id.endswith(".jpg"):
+                    page_layout.id = page_layout.id[:-len(".jpg")]
+
         if self.load_images:
             self.load_page_images()
 
@@ -711,7 +718,8 @@ class PeopleGatorDocument:
 
     def load_page_image(self, page_layout):
         if self.page_images_dir:
-            image_path = os.path.join(self.page_images_dir, f"{page_layout.id}.jpg")
+            image_name = page_layout.id if page_layout.id.endswith(".jpg") else f"{page_layout.id}.jpg"
+            image_path = os.path.join(self.page_images_dir, image_name)
             image = load_image(image_path)
             if self.keep_images_in_memory:
                 self.page_images[page_layout.id] = image
@@ -762,10 +770,18 @@ class PeopleGatorDocument:
             parser = ET.XMLParser(remove_blank_text=True)
 
             for page_layout in self.page_layouts:
-                output_path = os.path.join(output_dir, f"{page_layout.id}.xml")
+                file_name = page_layout.id
+
+                if file_name.lower().endswith('.jpg'):
+                    file_name = file_name[:-len('.jpg')]
+
+                if not file_name.lower().endswith('.xml'):
+                    file_name += '.xml'
+
+                output_path = os.path.join(output_dir, file_name)
 
                 if self.alto_xmls_dir is not None:
-                    input_path = os.path.join(self.alto_xmls_dir, f"{page_layout.id}.xml")
+                    input_path = os.path.join(self.alto_xmls_dir, file_name)
 
                     tree = ET.parse(input_path, parser)
                     alto = tree.getroot()
@@ -857,7 +873,7 @@ def altoxml_load_regions(page_layout, root):
 
 def pagexml_load_regions(page_layout, page_tree):
     root = page_tree.getroot()
-    for region_element in root.findall(".//CustomRegion[@type='face']", root.nsmap):
+    for region_element in root.findall(".//ImageRegion", root.nsmap):
         region = PeopleGatorFaceRegionLayout.from_pagexml(region_element, page_layout)
         if region is not None:
             page_layout.regions.append(region)
