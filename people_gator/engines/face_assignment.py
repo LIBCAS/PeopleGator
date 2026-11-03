@@ -251,7 +251,11 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
             if isinstance(region, PeopleGatorFaceRegionLayout):
                 source_regions_mapping[region.source_region].append(region)
 
-        median_line_height = np.median([line.heights[0] + line.heights[1] for line in page_layout.lines_iterator()])
+        median_line_height = 0
+        lines = list(page_layout.lines_iterator())
+        if len(lines) > 0:
+            median_line_height = np.median([line.heights[0] + line.heights[1] for line in lines])
+    
         vertical_offset = int(median_line_height * self.vertical_offset)
         horizontal_offset = int(median_line_height * self.horizontal_offset)
 
