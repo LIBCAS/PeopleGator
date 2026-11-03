@@ -593,6 +593,9 @@ class PeopleGatorPageLayout(AnnoPagePageLayout):
 
             lines = []
             for line in region.lines:
+                if type(line.heights) is not np.ndarray:
+                    line.heights = np.array(line.heights)
+
                 line_data = {
                     "id": line.id,
                     "polygon": line.polygon.tolist(),
@@ -604,9 +607,12 @@ class PeopleGatorPageLayout(AnnoPagePageLayout):
 
                 lines.append(line_data)
 
+            if type(region.polygon) is not np.ndarray:
+                region.polygon = np.array(region.polygon)
+
             region_data = {
                 "id": region.id,
-                "polygon": region.polygon,
+                "polygon": region.polygon.tolist(),
                 "transcription": "",
                 "lines": lines
             }
