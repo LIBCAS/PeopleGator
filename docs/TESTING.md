@@ -17,14 +17,20 @@ Use synthetic documents and mocked model outputs or person-database responses so
 
 ## How to run tests
 
-The automated test suite and reproducible dependencies are being established. Once `pytest` is configured, run the focused test module first, then the full suite:
+Install the test/build tools from a checkout, then run the focused packaging tests or the full available suite:
 
 ```bash
-python -m pytest -q tests/test_relevant_component.py
+python -m pip install -e '.[test]'
+python -m pytest -q tests/test_packaging.py
 python -m pytest -q
+python -m build
 ```
 
-Replace the example module path with the tests added or modified. Confirm that the runner **collected and executed tests** and check its exit status.
+`tests/test_packaging.py` validates dependency specifications and entry points, builds an sdist and a wheel from that sdist, checks every source module is packaged, and installs the wheel without dependencies into a temporary isolated environment to check lightweight imports and console-script registration. Build subprocesses use the already installed build tools without network access. This verifies distribution structure; it does not replace runtime dependency installation or processing checks.
+
+`tests/test_runtime.py` checks installed engine and API imports outside the checkout, CLI help, API defaults with the DocAPI runner mocked, and synthetic PAGE-to-PAGE/ALTO processing with an empty engine configuration. The API starts a service rather than parsing `--help`. DocAPI checks are skipped in a base-only installation. For all runtime checks, install `.[full,test]` in a clean environment and run `python -m pytest -q` and `python -m pip check`. Actual inference still requires a compatible model and configuration.
+
+The wider processing regression suite and CI are still being established. For new processing tests, replace the focused module above with the tests added or modified. Confirm that the runner **collected and executed tests** and check its exit status.
 
 For a syntax check of the processing code, run:
 

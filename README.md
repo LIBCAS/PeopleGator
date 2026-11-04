@@ -73,13 +73,49 @@ PeopleGator uses OCR layout primitives from [pero-ocr](https://github.com/DCGM/p
 
 ## Installation
 
-Run PeopleGator in a Python environment containing compatible versions of AnnoPage, pero-ocr and DocAPI, together with the Python imaging, XML, inference and LLM libraries used by the selected engines. Prepare a compatible face-detection model and an INI configuration for the processing stages you intend to run. A reproducible package manifest and pinned installation guide are planned development tasks.
+Use Python 3.10 or newer and Git (needed for the pinned AnnoPage and pero-ocr dependencies). From a checkout of this repository, create an environment and install the base package for local processing and entity merging:
+
+~~~bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install .
+~~~
+
+The base package includes the processing engines and their imaging, XML, inference and LLM dependencies. Install optional DocAPI components as needed:
+
+~~~bash
+python -m pip install '.[api]'       # processing API server
+python -m pip install '.[client]'    # job submission and result retrieval
+python -m pip install '.[worker]'    # worker, including local processing
+python -m pip install '.[full]'      # all application components
+python -m pip install -e '.[full,test]'  # editable development install and test/build tools
+~~~
+
+Each DocAPI extra currently installs the same pinned DocAPI distribution, which supplies the server, client and worker wrappers. The `test` extra can also be combined with the base package (`pip install -e '.[test]'`). Upstream Git dependencies are pinned to commits; published dependencies use compatible requirements rather than a complete lock file. The selected PyTorch build must support your Python version and CPU/CUDA platform. OpenCV may require system graphics libraries on Linux.
+
+Prepare a compatible face/keypoint model and an INI configuration for the stages you intend to run. Models, prompts, credentials, the PeopleGatorApp service, and the DocAPI server's database configuration are supplied separately; installing an extra does not start a service.
+
+Installed commands delegate to the existing `main()` functions and retain the module CLI arguments:
+
+| Command | Existing module | Installation |
+| --- | --- | --- |
+| `peoplegator` | `user_scripts.parse_folder` | base |
+| `peoplegator_merge_document_entities` | `user_scripts.merge_document_entities` | base |
+| `peoplegator_api` | `processing_api.api` | `api` or `full` |
+| `peoplegator_client` | `processing_api.client` | `client` or `full` |
+| `peoplegator_worker` | `processing_api.worker` | `worker` or `full` |
+
+All command wrappers are installed with the base package; API commands require their corresponding extra at runtime. `peoplegator_api` starts DocAPI using environment configuration and has no `--help` interface. The other commands support `--help`.
 
 After preparing the environment, inspect the local CLI options from the repository root:
 
 ~~~bash
-python -m user_scripts.parse_folder --help
+peoplegator --help
+peoplegator_merge_document_entities --help
 ~~~
+
+The existing `python -m user_scripts.parse_folder` invocation remains available. See [Testing](docs/TESTING.md) for package build and validation commands.
 
 ## Example local invocation
 
@@ -94,7 +130,7 @@ MODEL_PATH = /absolute/path/to/compatible-face-model.pt
 Provide page JPEGs named `<page-id>.jpg` and corresponding source layout XML:
 
 ~~~bash
-python -m user_scripts.parse_folder \
+peoplegator \
   --config ./local-config.ini \
   --input-image-path ./sample/images \
   --input-alto-path ./sample/alto \
