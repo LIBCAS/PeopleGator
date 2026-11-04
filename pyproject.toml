@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "people-gator"
+version = "0.0.1"
+description = "Face detection and person identification in digitized documents"
+authors = [{name = "Martin Kišš", email = "ikiss@fit.vutbr.cz"}]
+license = {file = "LICENSE"}
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+api = [
+    "doc-api @ git+https://github.com/DCGM/DocAPI.git@f1e19e4bf9699736ed999bad6b7abf9205d25d42",
+]
+client = [
+    "doc-api @ git+https://github.com/DCGM/DocAPI.git@f1e19e4bf9699736ed999bad6b7abf9205d25d42",
+]
+tool = [
+    "anno-page @ git+https://github.com/LIBCAS/AnnoPage.git@1fa885d55d516f782ed5ac2fcabe8801e5fb8838",
+    "pero-ocr @ git+https://github.com/DCGM/pero-ocr.git@204a989b51b97256704fcf098878b99d1e958a3c",
+    "Jinja2",
+    "jsonschema",
+    "lxml",
+    "numpy",
+    # Responses API support used by LLMPrompter.
+    "openai>=1.66.0",
+    "opencv-python",
+    # ConfigDict and model_validator require Pydantic v2.
+    "pydantic>=2",
+    "requests",
+    "safe-gpu>=1.5.1",
+    "shapely",
+    "torch>=2.0.1",
+    "ultralytics>=8",
+]
+worker = [
+    "doc-api @ git+https://github.com/DCGM/DocAPI.git@f1e19e4bf9699736ed999bad6b7abf9205d25d42",
+]
+full = [
+    "anno-page @ git+https://github.com/LIBCAS/AnnoPage.git@1fa885d55d516f782ed5ac2fcabe8801e5fb8838",
+    "pero-ocr @ git+https://github.com/DCGM/pero-ocr.git@204a989b51b97256704fcf098878b99d1e958a3c",
+    "Jinja2",
+    "jsonschema",
+    "lxml",
+    "numpy",
+    # Responses API support used by LLMPrompter.
+    "openai>=1.66.0",
+    "opencv-python",
+    # ConfigDict and model_validator require Pydantic v2.
+    "pydantic>=2",
+    "requests",
+    "safe-gpu>=1.5.1",
+    "shapely",
+    "torch>=2.0.1",
+    "ultralytics>=8",
+    "doc-api @ git+https://github.com/DCGM/DocAPI.git@f1e19e4bf9699736ed999bad6b7abf9205d25d42",
+]
+test = [
+    "pytest>=8",
+    "build",
+    "packaging",
+    "setuptools>=61",
+    "tomli; python_version < '3.11'",
+]
+
+[project.urls]
+homepage = "https://orbis.lib.cas.cz/"
+repository = "https://github.com/LIBCAS/PeopleGator"
+issues = "https://github.com/LIBCAS/PeopleGator/issues"
+
+[project.scripts]
+peoplegator = "user_scripts.parse_folder:main"
+peoplegator_api = "processing_api.api:main"
+peoplegator_client = "processing_api.client:main"
+peoplegator_worker = "processing_api.worker:main"
+peoplegator_merge_document_entities = "user_scripts.merge_document_entities:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["people_gator*", "processing_api*", "user_scripts*"]
+namespaces = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

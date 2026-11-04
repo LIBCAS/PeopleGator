@@ -17,14 +17,47 @@ Use synthetic documents and mocked model outputs or person-database responses so
 
 ## How to run tests
 
-The automated test suite and reproducible dependencies are being established. Once `pytest` is configured, run the focused test module first, then the full suite:
+Install the test/build tools from a checkout, then run the focused packaging tests or the full available suite:
 
 ```bash
-python -m pytest -q tests/test_relevant_component.py
-python -m pytest -q
+python -m pip install -e '.[test]'
+python -m pytest -q tests/test_packaging.py
+python -m pip install -e '.[full,test]'
+python -m pytest -q --runtime-mode=full
+python -m build
 ```
 
-Replace the example module path with the tests added or modified. Confirm that the runner **collected and executed tests** and check its exit status.
+`tests/test_packaging.py` validates dependency specifications and entry points, builds an sdist and a wheel from that sdist, checks every source module is packaged, and installs the wheel without dependencies into a temporary isolated environment to check lightweight imports and console-script registration. Build subprocesses use the already installed build tools without network access. This verifies distribution structure; it does not replace runtime dependency installation or processing checks.
+
+`tests/test_runtime.py` checks installed engine and API imports outside the checkout, CLI help, API defaults with the DocAPI runner mocked, and synthetic PAGE-to-PAGE/ALTO processing with an empty engine configuration. The API starts a service rather than parsing `--help`. Runtime tests default to `--runtime-mode=full`, which requires both the processing stack and DocAPI: missing dependencies fail rather than silently skipping checks. For all runtime checks, install `.[full,test]` in a clean environment and run `python -m pytest -q --runtime-mode=full` and `python -m pip check`. Actual inference still requires a compatible model and configuration.
+
+`tests/test_worker.py` mocks `subprocess.Popen` to check job input/metadata paths, every combination of ALTO/PAGE/render outputs, missing settings and optional values, mutually exclusive XML inputs, device/GPU selection, effective logging level, and worker CLI forwarding/defaults. It also checks that the original engine configuration is unchanged and no database/authentication arguments are passed. Run `python -m pytest -q tests/test_worker.py` with `.[worker,test]` or `.[full,test]`; these tests need DocAPI but no processing models, live service or GPU. Tool mode skips these DocAPI checks. The full runtime suite also runs a real worker subprocess on a synthetic PAGE document and checks ALTO, PAGE and rendered results.
+
+`tests/test_worker.py` checks subprocess completion using mocked `Popen` results
+and DocAPI's real `WorkerResponse`: success, positive and negative non-zero exit
+codes, populated/empty stdout and stderr, missing job IDs, diagnostic logging,
+failure-message contents, and unchanged subprocess arguments/environment. Run
+`python -m pytest -q tests/test_worker.py` with `.[worker,test]` or `.[full,test]`;
+no live service, processing model, or GPU is needed. Tool mode skips these DocAPI
+checks.
+
+Use a separate clean environment for each partial installation:
+
+```bash
+# Client-only environment: no AnnoPage, pero-ocr, PyTorch or Ultralytics.
+python -m pip install '.[client,test]'
+python -m pytest -q --runtime-mode=client
+python -m pip check
+
+# Local processing environment, without DocAPI.
+python -m pip install '.[tool,test]'
+python -m pytest -q --runtime-mode=tool
+python -m pip check
+```
+
+The client mode asserts that the processing packages above are absent and exercises installed API/client imports, client help and the mocked API wrapper. Tool mode exercises processing imports, local command help and synthetic XML processing. Only checks outside the explicitly selected partial mode are skipped. `tests/test_packaging.py` runs with `.[test]` alone, including a dependency-free base wheel installation. Virtual-environment executable paths and console-script suffixes account for POSIX and Windows; execution on Windows and Python 3.10 still needs independent validation.
+
+The wider processing regression suite and CI are still being established. For new processing tests, replace the focused module above with the tests added or modified. Confirm that the runner **collected and executed tests** and check its exit status.
 
 For a syntax check of the processing code, run:
 
@@ -43,3 +76,30 @@ Syntax checks complement behavioral tests; they do not prove an issue is impleme
 5. Run focused and available full-suite checks. In the PR, map each acceptance criterion to the test or other evidence that verifies it, and report test outcomes and any remaining gaps.
 
 See [Output formats](OUTPUT_FORMATS.md) for ALTO and PAGE XML examples.
+
+## Logging and inline documentation
+
+`tests/test_documentation.py` uses the Python AST to require docstrings for every
+project-defined class and callable under `people_gator`, `processing_api`, and
+`user_scripts`, including constructors, properties, and private helpers. It checks
+Google-style parameter entries against signatures without importing optional
+runtime dependencies. This establishes structural coverage only: semantic
+accuracy, defaults, return values, and exception contracts still require manual
+review against the implementation and its callers.
+
+`tests/test_logging.py` uses captured records, synthetic pages, and mocked model,
+HTTP, and subprocess responses to check logging levels, safe failure diagnostics,
+empty inputs, handler reuse, and unchanged coordinates, identities, XML, and worker
+results. It requires the applicable runtime extras; client/tool modes explicitly
+skip tests belonging to the other runtime. Run both alongside the existing suite:
+
+```bash
+python -m pytest -q tests/test_documentation.py tests/test_logging.py
+python -m pytest -q --runtime-mode=full
+python -m compileall -q people_gator processing_api user_scripts
+```
+
+These tests make no live model/service requests. They check the current worker
+success/failure contract from PR #31. Existing LLM response/validation behavior,
+including known limitations, is preserved; passing tests do not establish that
+those separate LLM defects are fixed.

@@ -8,6 +8,11 @@ from doc_client.doc_client_wrapper import DocClientWrapper
 
 
 def parse_args():
+    """Parse client submission or engine-listing arguments from the command line.
+
+    Returns:
+        An argparse.Namespace with the parsed command options.
+    """
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--api-url", type=str, help="URL of the API endpoint.", required=True)
@@ -34,10 +39,16 @@ def parse_args():
 
 
 class PeopleGatorClient(DocClientWrapper):
+    """DocAPI client using the inherited job submission and retrieval pipeline."""
     pass
 
 
 def setup_logging(logging_level):
+    """Set the root logging level and format, adding handlers only when needed.
+
+    Args:
+        logging_level: Root logging level name accepted by the CLI.
+    """
     level = logging.getLevelName(logging_level)
 
     console_log_formatter = logging.Formatter('%(message)s')
@@ -54,6 +65,11 @@ def setup_logging(logging_level):
 
 
 def format_engines(engines: list[Engine]) -> str:
+    """Return human-readable engine names and descriptions, including an empty message.
+
+    Args:
+        engines: Available DocAPI engine descriptions.
+    """
     if not engines:
         return "No available engines."
 
@@ -74,11 +90,17 @@ def format_engines(engines: list[Engine]) -> str:
 
 
 def main():
+    """List engines or submit and retrieve a document job.
+
+    Returns:
+        Zero after the command completes normally.
+    """
     args = parse_args()
 
     setup_logging(args.logging_level)
     logger = logging.getLogger(__name__)
 
+    logger.debug("Initializing DocAPI client")
     connector = Connector(args.api_key, user_agent="AnnoPageClient/1.0")
 
     if args.list_engines:
@@ -95,6 +117,7 @@ def main():
                                    connector=connector,
                                    polling_interval=args.polling_interval)
 
+        logger.info("Submitting document job and waiting for results")
         client.run_job_pipeline(
             images_dir=args.images,
             result_dir=args.output,
@@ -104,6 +127,7 @@ def main():
             engine_name=args.engine_name,
         )
 
+    logger.debug("Client operation completed")
     return 0
 
 

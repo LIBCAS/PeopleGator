@@ -73,13 +73,52 @@ PeopleGator uses OCR layout primitives from [pero-ocr](https://github.com/DCGM/p
 
 ## Installation
 
-Run PeopleGator in a Python environment containing compatible versions of AnnoPage, pero-ocr and DocAPI, together with the Python imaging, XML, inference and LLM libraries used by the selected engines. Prepare a compatible face-detection model and an INI configuration for the processing stages you intend to run. A reproducible package manifest and pinned installation guide are planned development tasks.
-
-After preparing the environment, inspect the local CLI options from the repository root:
+Use Python 3.10 or newer and Git (needed for the pinned AnnoPage and pero-ocr dependencies). From a checkout of this repository, create an environment and explicitly select the components you need. For local processing and entity merging, install the `tool` extra:
 
 ~~~bash
-python -m user_scripts.parse_folder --help
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install '.[tool]'
 ~~~
+
+The base package (`pip install .`) installs the Python modules and command wrappers without runtime dependencies. Select optional components as needed:
+
+~~~bash
+python -m pip install '.[tool]'      # local processing and entity merging
+python -m pip install '.[api]'       # processing API server
+python -m pip install '.[client]'    # job submission and result retrieval
+python -m pip install '.[worker]'    # DocAPI worker wrapper
+python -m pip install '.[full]'      # all application components
+python -m pip install -e '.[full,test]'  # editable development install and test/build tools
+~~~
+
+The `client`, `api` and `worker` extras install only the pinned DocAPI distribution and its transitive dependencies. They do not install the PeopleGator processing stack (AnnoPage, pero-ocr, PyTorch, Ultralytics or LLM libraries). DocAPI itself currently requires NumPy and OpenCV, so those remain transitive dependencies. The `tool` extra provides all local processing dependencies without DocAPI; `full` combines both sets. To execute local processing jobs from a worker, install `.[worker,tool]` or `.[full]` so the worker subprocess has the processing dependencies. The `test` extra installs only test/build tooling and can be combined with any application extra.
+
+Upstream Git dependencies are pinned to commits; published dependencies use compatible requirements rather than a complete lock file. The selected PyTorch build must support your Python version and CPU/CUDA platform. OpenCV may require system graphics libraries on Linux.
+
+Prepare a compatible face/keypoint model and an INI configuration for the stages you intend to run. Models, prompts, credentials, the PeopleGatorApp service, and the DocAPI server's database configuration are supplied separately; installing an extra does not start a service.
+
+Installed commands delegate to the existing `main()` functions and retain the module CLI arguments:
+
+| Command | Existing module | Installation |
+| --- | --- | --- |
+| `peoplegator` | `user_scripts.parse_folder` | `tool` or `full` |
+| `peoplegator_merge_document_entities` | `user_scripts.merge_document_entities` | `tool` or `full` |
+| `peoplegator_api` | `processing_api.api` | `api` or `full` |
+| `peoplegator_client` | `processing_api.client` | `client` or `full` |
+| `peoplegator_worker` | `processing_api.worker` | `worker` or `full` |
+
+All command wrappers are installed with the base package; running each command requires the extra listed above. `peoplegator_api` starts DocAPI using environment configuration and has no `--help` interface. The other commands support `--help`.
+
+With the `tool` extra installed, inspect the local CLI options:
+
+~~~bash
+peoplegator --help
+peoplegator_merge_document_entities --help
+~~~
+
+The existing `python -m user_scripts.parse_folder` invocation remains available. See [Testing](docs/TESTING.md) for package build and validation commands.
 
 ## Example local invocation
 
@@ -94,7 +133,7 @@ MODEL_PATH = /absolute/path/to/compatible-face-model.pt
 Provide page JPEGs named `<page-id>.jpg` and corresponding source layout XML:
 
 ~~~bash
-python -m user_scripts.parse_folder \
+peoplegator \
   --config ./local-config.ini \
   --input-image-path ./sample/images \
   --input-alto-path ./sample/alto \
