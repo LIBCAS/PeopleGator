@@ -149,9 +149,18 @@ class PeopleGatorWorker(DocWorkerWrapper):
         )
 
         stdout, stderr = process.communicate()
-        result = WorkerResponse.ok()
+        if process.returncode != 0:
+            job_id = getattr(job, "id", None) or "unknown"
+            message = (
+                f"peoplegator processing for job {job_id} failed "
+                f"with return code {process.returncode}"
+            )
+            logger.error("%s", message)
+            logger.error("Job %s stdout: %s", job_id, stdout)
+            logger.error("Job %s stderr: %s", job_id, stderr)
+            return WorkerResponse.fail(message)
 
-        return result
+        return WorkerResponse.ok()
 
 
 def main():
