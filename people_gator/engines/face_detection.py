@@ -160,7 +160,7 @@ class FaceDetectionYoloEngine(DocumentProcessingEngine):
         """Return detector predictions for the supplied region images.
 
         Args:
-            images: Optional images as an ordered list or label-to-image mapping.
+            images: Ordered list of source-region image arrays.
 
         Returns:
             YOLO result objects, in input image order.

@@ -3,6 +3,7 @@
 import importlib
 import itertools
 import logging
+import os
 import sys
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -158,3 +159,89 @@ def test_existing_defaults(worker_module, monkeypatch):
     worker = worker_module.PeopleGatorWorker("https://example.invalid", Mock())
     assert worker.device == "cpu"
     assert worker.gpu_id is None
+
+
+@pytest.fixture
+def invoke_completion(worker_module, monkeypatch):
+    instance = object.__new__(worker_module.PeopleGatorWorker)
+    instance.device = "cpu"
+    instance.gpu_id = 0
+    process = Mock(returncode=0)
+    process.communicate.return_value = ("", "")
+    popen = Mock(return_value=process)
+    monkeypatch.setattr(worker_module.subprocess, "Popen", popen)
+
+    def run(returncode=0, output=("", ""), job_id="job-29", input_format="alto"):
+        process.returncode = returncode
+        process.communicate.return_value = output
+        job = SimpleNamespace(alto_required=input_format == "alto",
+                              page_required=input_format == "page",
+                              meta_json_required=True,
+                              engine_settings={"outputs": {"alto": True, "page": True, "renders": True}})
+        if job_id is not None:
+            job.id = job_id
+        return instance.process_job(job, None, "input images", "results",
+                                    alto_dir="input alto", page_xml_dir="input page",
+                                    meta_file="meta.json", engine_dir="engine")
+
+    run.process = process
+    run.popen = popen
+    return run
+
+
+@pytest.mark.parametrize("output", [("", ""), ("processing complete", "diagnostic")])
+def test_success_response(invoke_completion, output, caplog, worker_module):
+    with caplog.at_level(logging.DEBUG, logger=worker_module.__name__):
+        response = invoke_completion(output=output)
+    assert response == worker_module.WorkerResponse.ok()
+    assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+    invoke_completion.process.communicate.assert_called_once_with()
+
+
+@pytest.mark.parametrize("returncode", [1, 2, -15])
+@pytest.mark.parametrize("output", [("processing started", "invalid configuration"), ("", "")])
+@pytest.mark.parametrize("job_id", ["job-29", None])
+def test_failure_response_and_diagnostics(invoke_completion, worker_module, caplog, returncode, output, job_id):
+    with caplog.at_level(logging.ERROR, logger=worker_module.__name__):
+        response = invoke_completion(returncode, output, job_id)
+    job_label = job_id or "unknown"
+    assert response == worker_module.WorkerResponse.fail(
+        f"peoplegator processing for job {job_label} failed with return code {returncode}"
+    )
+    messages = [record.getMessage() for record in caplog.records
+                if record.name == worker_module.__name__ and record.levelno == logging.ERROR]
+    assert response.error_message in messages
+    assert f"Job {job_label} subprocess output: stdout={len(output[0])} chars, stderr={len(output[1])} chars" in messages
+    invoke_completion.process.communicate.assert_called_once_with()
+
+
+def test_failure_message_omits_output_and_credentials(invoke_completion, worker_module, monkeypatch, caplog):
+    monkeypatch.setenv("DOCAPI_KEY", "worker-secret")
+    output = ("password=child-secret", "sensitive diagnostic")
+    with caplog.at_level(logging.ERROR, logger=worker_module.__name__):
+        response = invoke_completion(2, output)
+    for value in ("worker-secret", "child-secret", "sensitive diagnostic"):
+        assert value not in caplog.text
+    for value in ("worker-secret", "child-secret", "sensitive diagnostic", "--config"):
+        assert value not in response.error_message
+
+
+@pytest.mark.parametrize("input_format", ["alto", "page"])
+@pytest.mark.parametrize("returncode", [0, 2])
+def test_command_unchanged(invoke_completion, worker_module, monkeypatch, caplog, input_format, returncode):
+    monkeypatch.setenv("WORKER_TEST_VALUE", "preserved")
+    with caplog.at_level(logging.INFO, logger=worker_module.__name__):
+        invoke_completion(returncode=returncode, input_format=input_format)
+    option = "--input-alto-path" if input_format == "alto" else "--input-xml-path"
+    path = "input alto" if input_format == "alto" else "input page"
+    invoke_completion.popen.assert_called_once_with(
+        ["peoplegator", "--config", os.path.join("engine", "config.ini"),
+         "--input-image-path", "input images",
+         "--logging-level", "INFO", "--device", "cpu", "--gpu-id", "0",
+         option, path, "--input-metadata-path", "meta.json",
+         "--output-alto-path", os.path.join("results", "alto"),
+         "--output-xml-path", os.path.join("results", "page"),
+         "--output-render-path", os.path.join("results", "renders")],
+        stdout=worker_module.subprocess.PIPE, stderr=worker_module.subprocess.PIPE,
+        env=os.environ.copy(), text=True,
+    )

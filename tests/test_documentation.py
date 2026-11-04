@@ -1,4 +1,9 @@
-"""Keep inline documentation complete without importing optional runtimes."""
+"""Check docstring/parameter coverage without importing optional runtimes.
+
+These structural checks cannot establish semantic accuracy, meaningful defaults,
+or the correctness/completeness of return and exception descriptions. Review
+those against implementations and callers manually.
+"""
 
 import ast
 from pathlib import Path

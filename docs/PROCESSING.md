@@ -169,6 +169,13 @@ The worker forwards `--device` and an explicitly supplied integer `--gpu-id` (in
 
 PeopleGatorApp credentials remain in the engine's `[DB_API]` section. The worker's `--api-url` and `--api-key` authenticate with DocAPI and are separate from that database connection.
 
+The worker reports success to DocAPI only when the `peoplegator` subprocess exits
+with code `0`. A non-zero exit code produces a failed worker response identifying
+the command, job (when available), and numeric return code. Failure diagnostics
+report stdout/stderr character counts at `ERROR`, including empty streams. Raw
+child output, command arguments, configuration contents, and worker credentials
+are omitted from these diagnostics and the concise failure response.
+
 ## Logging
 
 The processing CLI, entity-merging utility, DocAPI client, and worker retain their
@@ -187,6 +194,9 @@ applicable. JSON decoding failures still propagate to database callers after a
 safe diagnostic. Worker logs report job IDs, subprocess exit status, and stdout/
 stderr character counts; arbitrary child output is not copied into logs.
 
-This logging does not change processing or failure contracts. In particular,
-worker subprocess failure propagation remains tracked in
-[issue #29](https://github.com/LIBCAS/PeopleGator/issues/29).
+The worker retains the subprocess failure propagation introduced by
+[PR #31](https://github.com/LIBCAS/PeopleGator/pull/31).
+
+The entity-merging CLI reports its document page count and completion at `INFO`,
+with at most ten page-count progress updates per document. Page identifiers and
+individual merge details remain at `DEBUG`.

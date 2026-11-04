@@ -33,6 +33,14 @@ python -m build
 
 `tests/test_worker.py` mocks `subprocess.Popen` to check job input/metadata paths, every combination of ALTO/PAGE/render outputs, missing settings and optional values, mutually exclusive XML inputs, device/GPU selection, effective logging level, and worker CLI forwarding/defaults. It also checks that the original engine configuration is unchanged and no database/authentication arguments are passed. Run `python -m pytest -q tests/test_worker.py` with `.[worker,test]` or `.[full,test]`; these tests need DocAPI but no processing models, live service or GPU. Tool mode skips these DocAPI checks. The full runtime suite also runs a real worker subprocess on a synthetic PAGE document and checks ALTO, PAGE and rendered results.
 
+`tests/test_worker.py` checks subprocess completion using mocked `Popen` results
+and DocAPI's real `WorkerResponse`: success, positive and negative non-zero exit
+codes, populated/empty stdout and stderr, missing job IDs, diagnostic logging,
+failure-message contents, and unchanged subprocess arguments/environment. Run
+`python -m pytest -q tests/test_worker.py` with `.[worker,test]` or `.[full,test]`;
+no live service, processing model, or GPU is needed. Tool mode skips these DocAPI
+checks.
+
 Use a separate clean environment for each partial installation:
 
 ```bash
@@ -75,7 +83,9 @@ See [Output formats](OUTPUT_FORMATS.md) for ALTO and PAGE XML examples.
 project-defined class and callable under `people_gator`, `processing_api`, and
 `user_scripts`, including constructors, properties, and private helpers. It checks
 Google-style parameter entries against signatures without importing optional
-runtime dependencies.
+runtime dependencies. This establishes structural coverage only: semantic
+accuracy, defaults, return values, and exception contracts still require manual
+review against the implementation and its callers.
 
 `tests/test_logging.py` uses captured records, synthetic pages, and mocked model,
 HTTP, and subprocess responses to check logging levels, safe failure diagnostics,
@@ -89,6 +99,7 @@ python -m pytest -q --runtime-mode=full
 python -m compileall -q people_gator processing_api user_scripts
 ```
 
-These tests make no live model/service requests. They preserve existing LLM
-response/validation and worker-result behavior, including known limitations;
-passing tests do not establish that those separate defects are fixed.
+These tests make no live model/service requests. They check the current worker
+success/failure contract from PR #31. Existing LLM response/validation behavior,
+including known limitations, is preserved; passing tests do not establish that
+those separate LLM defects are fixed.

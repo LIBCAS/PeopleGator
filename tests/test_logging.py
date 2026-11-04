@@ -237,19 +237,20 @@ def test_worker_completion_keeps_response_contract(exit_status, monkeypatch, cap
     process = Mock(returncode=exit_status)
     process.communicate.return_value = ("private-stdout", "secret-token")
     monkeypatch.setattr(worker.subprocess, "Popen", Mock(return_value=process))
-    expected = object()
-    monkeypatch.setattr(worker.WorkerResponse, "ok", lambda: expected)
     instance = object.__new__(worker.PeopleGatorWorker)
     instance.device = "cpu"
     instance.gpu_id = None
     job = SimpleNamespace(id="job1", alto_required=False, page_required=False, meta_json_required=False, engine_settings={})
     with caplog.at_level(logging.DEBUG):
         result = instance.process_job(job, None, "images", "results", engine_dir="engine")
-    assert result is expected
+    expected = worker.WorkerResponse.ok() if exit_status == 0 else worker.WorkerResponse.fail(
+        f"peoplegator processing for job job1 failed with return code {exit_status}"
+    )
+    assert result == expected
     assert "job1" in caplog.text
-    assert f"exit status {exit_status}" in caplog.text
+    assert (f"exit status {exit_status}" if exit_status == 0 else f"return code {exit_status}") in caplog.text
     assert "private-stdout" not in caplog.text and "secret-token" not in caplog.text
-    assert any(r.levelno == (logging.INFO if exit_status == 0 else logging.ERROR) and "exit status" in r.message for r in caplog.records)
+    assert any(r.levelno == (logging.INFO if exit_status == 0 else logging.ERROR) and ("exit status" in r.message or "return code" in r.message) for r in caplog.records)
 
 
 def test_worker_arguments_never_logged(monkeypatch, caplog, runtime_mode):
@@ -428,3 +429,46 @@ def test_llm_last_invalid_response_is_not_logged_as_success(processing, monkeypa
     assert result == {"unexpected": True}  # Preserve the existing return contract.
     assert "exhausted 2 attempts" in caplog.text
     assert "LLM request completed" not in caplog.text
+
+
+@pytest.mark.parametrize("page_count", [0, 3, 25])
+def test_entity_merge_progress_at_info(processing, monkeypatch, caplog, page_count):
+    from user_scripts import merge_document_entities as merge
+
+    args = SimpleNamespace(
+        config="config.ini", prompt="prompt.json", metadata="metadata.json",
+        logging_level="INFO", api_url="https://example.invalid", api_key="secret-key",
+        model="test-model", reasoning_effort="low", max_output_tokens=1000,
+    )
+    monkeypatch.setattr(merge, "parse_arguments", lambda: args)
+    monkeypatch.setattr(merge, "setup_logging", Mock())
+    monkeypatch.setattr(merge, "load_config", Mock(return_value={"DB_API": {}}))
+    monkeypatch.setattr(merge, "load_prompt", Mock(return_value={"system": "", "user": ""}))
+    monkeypatch.setattr(merge, "load_metadata", Mock(return_value={"document": {
+        "id": "doc1", "name": "private-title", "library": "library1",
+    }}))
+    service = Mock()
+    service.get_document_pages.return_value = {"items": [{"source_id": f"page-{i}"} for i in range(page_count)]}
+    service.get_entities_for_page.return_value = {"items": [{"entity_id": "entity1"}, {"entity_id": "entity2"}]}
+    monkeypatch.setattr(merge, "DatabaseApiService", Mock(return_value=service))
+    monkeypatch.setattr(merge, "LLMPrompter", Mock())
+    monkeypatch.setattr(merge, "evaluate_page_entities", Mock(return_value=SimpleNamespace(groups=[
+        SimpleNamespace(entity_ids=[0, 1], long_description="private-description", short_description="private-name"),
+    ])))
+    with caplog.at_level(logging.INFO):
+        assert merge.main() == 0
+    assert f"Document doc1: merging entities across {page_count} pages" in caplog.text
+    assert f"Document doc1 entity merging completed ({page_count} pages)" in caplog.text
+    progress = [r.message for r in caplog.records if "processed" in r.message]
+    assert len(progress) <= 10
+    if page_count:
+        assert progress[-1] == f"Document doc1: processed {page_count}/{page_count} pages"
+    else:
+        assert not progress
+    assert service.merge_entities.call_count == page_count
+    if page_count:
+        service.merge_entities.assert_called_with(
+            "entity1", ["entity2"], description="private-description", short_description="private-name",
+        )
+    for private in ("secret-key", "private-title", "private-name", "private-description", "page-0"):
+        assert private not in caplog.text

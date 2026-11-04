@@ -133,7 +133,7 @@ class PeopleGatorWorker(DocWorkerWrapper):
                     page_xml_dir: Optional[str] = None,
                     meta_file: Optional[str] = None,
                     engine_dir: Optional[str] = None) -> WorkerResponse:
-        """Run the processing subprocess and return the existing successful worker response.
+        """Run processing and return success only for a zero subprocess exit status.
 
         Args:
             job: DocAPI job with input requirements.
@@ -149,7 +149,7 @@ class PeopleGatorWorker(DocWorkerWrapper):
             OSError: If the processing executable cannot be started.
             ValueError: If both ALTO and PAGE inputs are required.
         """
-        job_id = getattr(job, "id", None)
+        job_id = getattr(job, "id", None) or "unknown"
         logger.info("Starting processing subprocess for job %s", job_id)
         config_path = os.path.join(engine_dir, "config.ini")
 
@@ -200,15 +200,21 @@ class PeopleGatorWorker(DocWorkerWrapper):
         stdout, stderr = process.communicate()
         # Child output can contain document text, credentials or service payloads.
         # Report its presence without forwarding arbitrary subprocess text.
+        if process.returncode != 0:
+            message = (
+                f"peoplegator processing for job {job_id} failed "
+                f"with return code {process.returncode}"
+            )
+            logger.error("%s", message)
+            logger.error("Job %s subprocess output: stdout=%d chars, stderr=%d chars",
+                         job_id, len(stdout or ""), len(stderr or ""))
+            return WorkerResponse.fail(message)
+
         logger.debug("Job %s subprocess output: stdout=%d chars, stderr=%d chars",
                      job_id, len(stdout or ""), len(stderr or ""))
-        if process.returncode:
-            logger.error("Job %s subprocess failed with exit status %s", job_id, process.returncode)
-        else:
-            logger.info("Job %s subprocess completed with exit status %s", job_id, process.returncode)
-        result = WorkerResponse.ok()
+        logger.info("Job %s subprocess completed with exit status %s", job_id, process.returncode)
 
-        return result
+        return WorkerResponse.ok()
 
 
 def main():

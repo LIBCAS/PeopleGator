@@ -552,7 +552,7 @@ class PeopleGatorFaceRegionLayout(RegionLayout):
         """Initialize PeopleGatorFaceRegionLayout from the supplied settings and data.
 
         Args:
-            id: Document or region identifier; None when not supplied.
+            id: Face region identifier.
             polygon: Region vertices in page-image pixel coordinates.
             face_metadata: Face landmarks, provenance, and identity metadata.
             source_region: Original graphical region, or None when unavailable.
@@ -963,8 +963,8 @@ class PeopleGatorDocument:
         """Initialize document metadata and layouts, loading optional inputs.
 
         Args:
-            id: Document or region identifier; None when not supplied.
-            name: Proposed person name, or None when unknown.
+            id: Optional document identifier within its library.
+            name: Optional document display name.
             library: Library identifier used for app document lookup.
             page_layouts: Existing page layouts; None starts with an empty list.
             page_xmls_dir: Optional input PAGE XML directory; mutually exclusive with ALTO.

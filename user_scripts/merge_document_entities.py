@@ -149,7 +149,7 @@ def load_config(config_path):
     """Read an INI file and return its ConfigParser.
 
     Args:
-        config_path: Base directory for relative engine resource paths.
+        config_path: Path to the INI configuration file to read.
     """
     config = configparser.ConfigParser()
     config.read(config_path)
@@ -160,7 +160,7 @@ def load_metadata(metadata_path):
     """Load document and page metadata from the configured JSON file.
 
     Args:
-        metadata_path: Optional document/page metadata JSON path.
+        metadata_path: Path to the document/page metadata JSON file to read.
 
     Returns:
         The decoded metadata mapping.
@@ -237,7 +237,10 @@ def main():
     library = metadata["document"]["library"]
 
     db_pages = db_api_service.get_document_pages(document_id, library)
-    for db_page in db_pages["items"]:
+    page_count = len(db_pages["items"])
+    progress_interval = max(1, (page_count + 9) // 10)
+    logger.info("Document %s: merging entities across %d pages", document_id, page_count)
+    for page_index, db_page in enumerate(db_pages["items"], start=1):
         db_page_source_id = db_page["source_id"]
         logger.debug("Merging entities on page %s of document %s", db_page_source_id, document_id)
 
@@ -252,7 +255,10 @@ def main():
 
             db_api_service.merge_entities(target_entity_id, other_entity_ids, description=group.long_description, short_description=group.short_description)
 
-    logger.info("Document entity merging completed")
+        if page_index % progress_interval == 0 or page_index == page_count:
+            logger.info("Document %s: processed %d/%d pages", document_id, page_index, page_count)
+
+    logger.info("Document %s entity merging completed (%d pages)", document_id, page_count)
     return 0
 
 

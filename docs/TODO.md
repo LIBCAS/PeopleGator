@@ -17,7 +17,8 @@ This roadmap lists processing-related development work identified from the curre
 
 ## API and re-export
 
-- [ ] Propagate worker subprocess failures and verify job result files.
+- [x] Propagate worker subprocess failures (issue #29).
+- [ ] Verify worker job result files.
 - [ ] Validate PeopleGatorApp import/export contracts and repeated processing.
 - [ ] Implement the corrected-identity re-export flow described in [Architecture](ARCHITECTURE.md).
 

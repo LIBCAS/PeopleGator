@@ -111,7 +111,7 @@ def load_config(config_path):
     """Read an INI file and return its ConfigParser.
 
     Args:
-        config_path: Base directory for relative engine resource paths.
+        config_path: Path to the INI configuration file to read.
     """
     logging.getLogger(__name__).debug("Loading processing configuration")
     config = configparser.ConfigParser()
