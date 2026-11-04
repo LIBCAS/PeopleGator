@@ -144,6 +144,31 @@ Use `--input-xml-path` and `--output-xml-path` for PAGE XML. Optional metadata J
 
 The DocAPI-based client and worker in `processing_api/` offer the job-based processing path. See [Architecture](ARCHITECTURE.md) and [Output formats](OUTPUT_FORMATS.md).
 
+## DocAPI worker
+
+Install `.[worker,tool]` or `.[full]` to run processing jobs. For example:
+
+```bash
+peoplegator_worker --api-url https://docapi.example.org --api-key YOUR_WORKER_KEY \
+  --device gpu --gpu-id 0 --logging-level INFO
+```
+
+The worker invokes the installed `peoplegator` command with the original engine's `config.ini` and the downloaded image directory. It supplies ALTO or PAGE XML paths according to `job.alto_required` or `job.page_required`, and metadata when `job.meta_json_required` is enabled. Missing optional paths are omitted. Jobs requiring both ALTO and PAGE inputs are rejected before starting the subprocess, preserving the processing CLI's mutually exclusive input contract.
+
+Output arguments come from `job.engine_settings["outputs"]`:
+
+| Engine setting | Processing argument | Directory |
+| --- | --- | --- |
+| `outputs.alto` | `--output-alto-path` | `result_dir/alto` |
+| `outputs.page` | `--output-xml-path` | `result_dir/page` |
+| `outputs.renders` | `--output-render-path` | `result_dir/renders` |
+
+For example, `{"outputs": {"alto": true, "page": true, "renders": false}}` requests both XML formats from either supported input format. Disabled or unspecified outputs add no command-line paths; missing or empty engine settings add none. The original configuration is passed through unchanged, so any `[PARSE_FOLDER]` paths in it retain the local CLI behavior described above. Engine configurations intended to select outputs solely through job settings should leave output paths unset in `[PARSE_FOLDER]`.
+
+The worker forwards `--device` and an explicitly supplied integer `--gpu-id` (including zero). Its CLI defaults to `gpu`; direct `PeopleGatorWorker` construction continues to default to `cpu`. The GPU ID defaults to `None` and is omitted unless configured. The subprocess receives the worker logger's effective level through `--logging-level`; the worker CLI defaults to `INFO`.
+
+PeopleGatorApp credentials remain in the engine's `[DB_API]` section. The worker's `--api-url` and `--api-key` authenticate with DocAPI and are separate from that database connection.
+
 ## Logging
 
 The processing CLI, entity-merging utility, DocAPI client, and worker retain their

@@ -241,7 +241,8 @@ def test_worker_completion_keeps_response_contract(exit_status, monkeypatch, cap
     monkeypatch.setattr(worker.WorkerResponse, "ok", lambda: expected)
     instance = object.__new__(worker.PeopleGatorWorker)
     instance.device = "cpu"
-    job = SimpleNamespace(id="job1", alto_required=False, page_required=False)
+    instance.gpu_id = None
+    job = SimpleNamespace(id="job1", alto_required=False, page_required=False, meta_json_required=False, engine_settings={})
     with caplog.at_level(logging.DEBUG):
         result = instance.process_job(job, None, "images", "results", engine_dir="engine")
     assert result is expected
