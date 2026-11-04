@@ -88,12 +88,12 @@ The base package (`pip install .`) installs the Python modules and command wrapp
 python -m pip install '.[tool]'      # local processing and entity merging
 python -m pip install '.[api]'       # processing API server
 python -m pip install '.[client]'    # job submission and result retrieval
-python -m pip install '.[worker]'    # worker, including local processing
+python -m pip install '.[worker]'    # DocAPI worker wrapper
 python -m pip install '.[full]'      # all application components
 python -m pip install -e '.[full,test]'  # editable development install and test/build tools
 ~~~
 
-The `client` and `api` extras install only the pinned DocAPI distribution and its transitive dependencies. They do not install the PeopleGator processing stack (AnnoPage, pero-ocr, PyTorch, Ultralytics or LLM libraries). DocAPI itself currently requires NumPy and OpenCV, so those remain transitive dependencies. The `tool` extra provides all local processing dependencies without DocAPI; `worker` and `full` combine both sets. The `test` extra installs only test/build tooling and can be combined with any application extra.
+The `client`, `api` and `worker` extras install only the pinned DocAPI distribution and its transitive dependencies. They do not install the PeopleGator processing stack (AnnoPage, pero-ocr, PyTorch, Ultralytics or LLM libraries). DocAPI itself currently requires NumPy and OpenCV, so those remain transitive dependencies. The `tool` extra provides all local processing dependencies without DocAPI; `full` combines both sets. To execute local processing jobs from a worker, install `.[worker,tool]` or `.[full]` so the worker subprocess has the processing dependencies. The `test` extra installs only test/build tooling and can be combined with any application extra.
 
 Upstream Git dependencies are pinned to commits; published dependencies use compatible requirements rather than a complete lock file. The selected PyTorch build must support your Python version and CPU/CUDA platform. OpenCV may require system graphics libraries on Linux.
 
@@ -103,8 +103,8 @@ Installed commands delegate to the existing `main()` functions and retain the mo
 
 | Command | Existing module | Installation |
 | --- | --- | --- |
-| `peoplegator` | `user_scripts.parse_folder` | `tool`, `worker` or `full` |
-| `peoplegator_merge_document_entities` | `user_scripts.merge_document_entities` | `tool`, `worker` or `full` |
+| `peoplegator` | `user_scripts.parse_folder` | `tool` or `full` |
+| `peoplegator_merge_document_entities` | `user_scripts.merge_document_entities` | `tool` or `full` |
 | `peoplegator_api` | `processing_api.api` | `api` or `full` |
 | `peoplegator_client` | `processing_api.client` | `client` or `full` |
 | `peoplegator_worker` | `processing_api.worker` | `worker` or `full` |

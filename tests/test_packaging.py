@@ -55,9 +55,9 @@ def test_metadata_and_direct_dependencies():
     extras = project["optional-dependencies"]
     groups = {extra: {canonicalize_name(Requirement(d).name) for d in dependencies}
               for extra, dependencies in extras.items()}
-    assert groups["client"] == groups["api"] == {"doc-api"}
+    assert groups["client"] == groups["api"] == groups["worker"] == {"doc-api"}
     assert "doc-api" not in groups["tool"]
-    assert set(extras["worker"]) == set(extras["full"]) == set(extras["tool"]) | set(extras["client"])
+    assert set(extras["full"]) == set(extras["tool"]) | set(extras["client"])
     for directory in SOURCE_DIRS:
         declared = groups["worker"] if directory == "processing_api" else groups["tool"]
         for path in (ROOT / directory).rglob("*.py"):
