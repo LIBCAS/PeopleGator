@@ -143,3 +143,25 @@ python -m user_scripts.parse_folder \
 Use `--input-xml-path` and `--output-xml-path` for PAGE XML. Optional metadata JSON may contain `document.id`, `document.name`, `document.library`, and `pages_metadata`; the first three are used for PeopleGatorApp export.
 
 The DocAPI-based client and worker in `processing_api/` offer the job-based processing path. See [Architecture](ARCHITECTURE.md) and [Output formats](OUTPUT_FORMATS.md).
+
+## Logging
+
+The processing CLI, entity-merging utility, DocAPI client, and worker retain their
+`--logging-level` options. `INFO` reports initialization, document/job milestones,
+and output generation. Use `DEBUG` for page IDs, engine selection, eligible-region
+and face counts, assignment modes, and matching outcomes. Recoverable skips and
+failed requests use `WARNING` or `ERROR` as appropriate. Repeated initialization
+reuses existing root handlers, including the worker's rotating file handler for
+the same log filename. The worker retains its format, date-format, and file options.
+
+Project loggers use module names and parameterized messages. Diagnostics omit
+credentials, proposed person names, OCR/caption text, API response bodies, and
+exception messages that may contain private payloads. Database and LLM failures
+report the operation, HTTP status or exception type, and retry number where
+applicable. JSON decoding failures still propagate to database callers after a
+safe diagnostic. Worker logs report job IDs, subprocess exit status, and stdout/
+stderr character counts; arbitrary child output is not copied into logs.
+
+This logging does not change processing or failure contracts. In particular,
+worker subprocess failure propagation remains tracked in
+[issue #29](https://github.com/LIBCAS/PeopleGator/issues/29).

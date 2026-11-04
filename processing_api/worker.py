@@ -1,5 +1,4 @@
 import os
-import sys
 import logging
 import argparse
 import subprocess
@@ -16,8 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 def parse_arguments():
-    logger.info(' '.join(sys.argv))
+    """Parse this command's arguments from the process command line.
 
+    Returns:
+        An argparse.Namespace with the parsed command options.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--api-url", type=str, help="URL of the API endpoint.")
     parser.add_argument("--api-key", type=str, help="API key for authentication.")
@@ -41,6 +43,14 @@ def parse_arguments():
 
 
 def setup_logging(logging_level, logging_format="", logging_date_format=None, log_file_path=None):
+    """Set the root logging level and format, adding handlers only when needed.
+
+    Args:
+        logging_level: Root logging level name accepted by the CLI.
+        logging_format: Log-record format string.
+        logging_date_format: Optional timestamp format string.
+        log_file_path: Optional rotating log filename; repeated setup reuses its handler.
+    """
     level = logging.getLevelName(logging_level)
 
     console_log_formatter = logging.Formatter(logging_format, datefmt=logging_date_format)
@@ -52,7 +62,11 @@ def setup_logging(logging_level, logging_format="", logging_date_format=None, lo
         console_handler = logging.StreamHandler()
         root_logger.addHandler(console_handler)
 
-    if log_file_path is not None:
+    if log_file_path is not None and not any(
+        isinstance(handler, TimedRotatingFileHandler)
+        and handler.baseFilename == os.path.abspath(log_file_path)
+        for handler in root_logger.handlers
+    ):
         time_rotating_file_handler = TimedRotatingFileHandler(
             filename=log_file_path,
             when="midnight",
@@ -65,6 +79,8 @@ def setup_logging(logging_level, logging_format="", logging_date_format=None, lo
 
 
 class PeopleGatorWorker(DocWorkerWrapper):
+    """DocAPI worker invoking the local PeopleGator processing command."""
+
     def __init__(self,
                  api_url: str,
                  connector: Connector,
@@ -76,6 +92,20 @@ class PeopleGatorWorker(DocWorkerWrapper):
                  cleanup_old_engines: bool = False,
                  download_engine_using_stream: bool = False,
                  device="cpu"):
+        """Initialize PeopleGatorWorker from the supplied settings and data.
+
+        Args:
+            api_url: Service base URL.
+            connector: Authenticated DocAPI connector.
+            base_dir: Optional base directory for jobs and engines.
+            jobs_dir: Optional job directory overriding the base.
+            engines_dir: Optional engine directory overriding the base.
+            polling_interval: Seconds between DocAPI polling attempts.
+            cleanup_job_dir: Whether successful job data is removed; defaults to False.
+            cleanup_old_engines: Whether old engine versions are removed; defaults to False.
+            download_engine_using_stream: Whether engine downloads are streamed; defaults to False.
+            device: Processing device (torch device or cpu/gpu selection).
+        """
         super().__init__(
             api_url=api_url,
             connector=connector,
@@ -99,6 +129,23 @@ class PeopleGatorWorker(DocWorkerWrapper):
                     page_xml_dir: Optional[str] = None,
                     meta_file: Optional[str] = None,
                     engine_dir: Optional[str] = None) -> WorkerResponse:
+        """Run the processing subprocess and return the existing successful worker response.
+
+        Args:
+            job: DocAPI job with input requirements.
+            job_log_file_handler: Job log handler supplied by DocAPI; retained for interface compatibility.
+            images_dir: Downloaded page-image directory.
+            result_dir: Directory for job results.
+            alto_dir: Input ALTO XML directory.
+            page_xml_dir: Optional downloaded PAGE XML directory.
+            meta_file: Optional metadata path; retained for interface compatibility.
+            engine_dir: Directory containing the engine config.ini.
+
+        Raises:
+            OSError: If the processing executable cannot be started.
+        """
+        job_id = getattr(job, "id", None)
+        logger.info("Starting processing subprocess for job %s", job_id)
         config_path = os.path.join(engine_dir, "config.ini")
 
         process_env = os.environ.copy()
@@ -125,12 +172,25 @@ class PeopleGatorWorker(DocWorkerWrapper):
         )
 
         stdout, stderr = process.communicate()
+        # Child output can contain document text, credentials or service payloads.
+        # Report its presence without forwarding arbitrary subprocess text.
+        logger.debug("Job %s subprocess output: stdout=%d chars, stderr=%d chars",
+                     job_id, len(stdout or ""), len(stderr or ""))
+        if process.returncode:
+            logger.error("Job %s subprocess failed with exit status %s", job_id, process.returncode)
+        else:
+            logger.info("Job %s subprocess completed with exit status %s", job_id, process.returncode)
         result = WorkerResponse.ok()
 
         return result
 
 
 def main():
+    """Initialize logging and start the DocAPI worker loop.
+
+    Returns:
+        Zero after the command completes normally.
+    """
     args = parse_arguments()
 
     if args.base_dir is not None:

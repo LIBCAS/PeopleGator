@@ -1,4 +1,5 @@
 import os
+import logging
 import cv2
 import json
 import numpy as np
@@ -17,37 +18,80 @@ from people_gator.core.utils import load_image, find_source_region_by_bounding_b
 from people_gator.core.services import DateTimeService
 
 
+logger = logging.getLogger(__name__)
+
+
 class Position:
+    """A point in page-image pixel coordinates; x and y are stored unchanged."""
+
     def __init__(self, x: float|int, y: float|int):
+        """Store horizontal and vertical pixel coordinates.
+
+        Args:
+            x: Horizontal page coordinate in pixels.
+            y: Vertical page coordinate in pixels.
+        """
         self.x = x
         self.y = y
 
     def __repr__(self):
+        """Return a diagnostic representation of the stored fields.
+
+        Returns:
+            A diagnostic string; it may contain document or person data.
+        """
         return f"Position(x={self.x}, y={self.y})"
 
     def to_json(self):
+        """Return the point as an x/y mapping."""
         return {"x": self.x, "y": self.y}
 
     @classmethod
     def from_json(cls, data):
+        """Build a point from the mapping's optional x and y values.
+
+        Args:
+            data: Serialized object field mapping.
+        """
         x = data.get("x")
         y = data.get("y")
         return cls(x, y)
 
 
 class PeopleGatorIdentity:
+    """A proposed person name, optional app ID, and external authority IDs."""
+
     def __init__(self, name: str|None, peoplegator_id: str|None, other_ids: dict[str, str]|None = None):
+        """Store a proposed name and optional app/external identifiers.
+
+        Args:
+            name: Proposed person name, or None when unknown.
+            peoplegator_id: App person identifier, or None when unresolved.
+            other_ids: External authority-to-identifier mapping, or None.
+        """
         self.name: str|None = name
         self.peoplegator_id: str|None = peoplegator_id
         self.other_ids: dict[str, str]|None = other_ids
 
     def __repr__(self):
+        """Return a diagnostic representation of the stored fields.
+
+        Returns:
+            A diagnostic string; it may contain document or person data.
+        """
         return f"PeopleGatorIdentity(name={self.name}, peoplegator_id={self.peoplegator_id}, other_ids={self.other_ids})"
 
     def to_altoxml(self, mods, mods_namespace):
+        """Append the personal name and authority IDs to a MODS element.
+
+        Args:
+            mods: Parent MODS XML element.
+            mods_namespace: MODS namespace URI.
+        """
         self._add_name_element(mods, mods_namespace, self.name, self.peoplegator_id, self.other_ids)    
 
     def to_dict(self):
+        """Return a serializable mapping of the stored fields."""
         return {
             "name": self.name,
             "peoplegator_id": self.peoplegator_id,
@@ -56,6 +100,11 @@ class PeopleGatorIdentity:
 
     @classmethod
     def from_dict(cls, data: dict):
+        """Build an instance from its serialized field mapping.
+
+        Args:
+            data: Serialized object field mapping.
+        """
         name: str|None = data.get("name")
         peoplegator_id: str|None = data.get("peoplegator_id")
         other_ids: dict[str, str]|None = data.get("other_ids")
@@ -64,6 +113,15 @@ class PeopleGatorIdentity:
     
     @staticmethod
     def _add_name_element(mods, mods_namespace, name: str|None, peoplegator_id: str|None, other_ids: dict[str, str]|None = None):
+        """Append a personal MODS name and available authority identifiers.
+
+        Args:
+            mods: Parent MODS XML element.
+            mods_namespace: MODS namespace URI.
+            name: Proposed person name, or None when unknown.
+            peoplegator_id: App person identifier, or None when unresolved.
+            other_ids: External authority-to-identifier mapping, or None.
+        """
         name_element = ET.SubElement(mods, f"{{{mods_namespace}}}name")
         name_element.attrib["type"] = "personal"
         name_element.attrib["authority"] = "peoplegator"
@@ -85,6 +143,8 @@ class PeopleGatorIdentity:
 
 
 class PeopleGatorPageIdentity(AnnoPageBaseMetadata):
+    """Page-local XML identifiers and provenance for a shared person identity."""
+
     def __init__(self,
                  tag_id: str,
                  mods_id: str,
@@ -94,6 +154,18 @@ class PeopleGatorPageIdentity(AnnoPageBaseMetadata):
                  used_ai_models: dict | None = None,
                  creation_date_time=None,
                  confidence: float | None = None):
+        """Initialize PeopleGatorPageIdentity from the supplied settings and data.
+
+        Args:
+            tag_id: Page-local ALTO tag identifier.
+            mods_id: MODS record identifier used by XML references.
+            identity: Person identity shared by the occurrences.
+            mods_uuid: Optional MODS UUID forwarded to the metadata base class.
+            record_identifier: Optional provenance record identifier.
+            used_ai_models: Optional model-name provenance mapping.
+            creation_date_time: Optional record creation timestamp.
+            confidence: Optional confidence value.
+        """
         super().__init__(tag_id,
                          mods_id,
                          mods_uuid,
@@ -105,9 +177,19 @@ class PeopleGatorPageIdentity(AnnoPageBaseMetadata):
         self.identity = identity
 
     def __repr__(self):
+        """Return a diagnostic representation of the stored fields.
+
+        Returns:
+            A diagnostic string; it may contain document or person data.
+        """
         return f"PeopleGatorPageIdentity(identity={self.identity}, tag_id={self.tag_id}, mods_id={self.mods_id}, mods_uuid={self.mods_uuid}, record_identifier={self.record_identifier}, used_ai_models={self.used_ai_models}, creation_date_time={self.creation_date_time}, confidence={self.confidence})"
 
     def to_altoxml(self, tags):
+        """Append a person NamedEntityTag with MODS identity and provenance.
+
+        Args:
+            tags: Parent ALTO Tags element.
+        """
         named_entity_tag = ET.SubElement(tags, "NamedEntityTag")
         xml_data = ET.SubElement(named_entity_tag, "XmlData")
 
@@ -137,9 +219,15 @@ class PeopleGatorPageIdentity(AnnoPageBaseMetadata):
 
     @classmethod
     def from_altoxml(cls):
+        """Reserved ALTO reader; raises NotImplementedError.
+
+        Raises:
+            NotImplementedError: ALTO face/identity import is not implemented.
+        """
         raise NotImplementedError("Not implemented yet.")
 
     def to_dict(self):
+        """Return a serializable mapping of the stored fields."""
         result = super().to_dict()
         result.update({
             "identity": self.identity.to_dict() if self.identity is not None else None
@@ -149,6 +237,14 @@ class PeopleGatorPageIdentity(AnnoPageBaseMetadata):
 
     @classmethod
     def from_dict(cls, data: dict):
+        """Build an instance from its serialized field mapping.
+
+        Args:
+            data: Serialized object field mapping.
+
+        Raises:
+            ValueError: If tag_id, mods_id, or identity is missing or None.
+        """
         tag_id: str|None = data.get("tag_id")
         if tag_id is None:
             raise ValueError("Missing 'tag_id' in data.")
@@ -177,6 +273,8 @@ class PeopleGatorPageIdentity(AnnoPageBaseMetadata):
 
 
 class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
+    """Face landmarks, provenance, and the page-local person identity."""
+
     def __init__(self,
                  tag_id: str,
                  mods_id: str,
@@ -191,6 +289,23 @@ class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
                  used_ai_models: dict|None = None,
                  creation_date_time=None,
                  confidence: float|None = None):
+        """Initialize PeopleGatorFaceMetadata from the supplied settings and data.
+
+        Args:
+            tag_id: Page-local ALTO tag identifier.
+            mods_id: MODS record identifier used by XML references.
+            page_identity: Page-local metadata for the linked person identity.
+            left_eye_position: Left-eye landmark in page pixels.
+            right_eye_position: Right-eye landmark in page pixels.
+            nose_position: Nose landmark in page pixels.
+            left_mouth_corner_position: Left mouth-corner landmark in page pixels.
+            right_mouth_corner_position: Right mouth-corner landmark in page pixels.
+            mods_uuid: Optional MODS UUID forwarded to the metadata base class.
+            record_identifier: Optional provenance record identifier.
+            used_ai_models: Optional model-name provenance mapping.
+            creation_date_time: Optional record creation timestamp.
+            confidence: Optional confidence value.
+        """
         super().__init__(tag_id,
                          mods_id,
                          mods_uuid,
@@ -208,13 +323,20 @@ class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
         self.right_mouth_corner_position: Position = right_mouth_corner_position
 
     def __repr__(self):
+        """Return a diagnostic representation of the stored fields.
+
+        Returns:
+            A diagnostic string; it may contain document or person data.
+        """
         return f"PeopleGatorFaceMetadata(tag_id={self.tag_id}, mods_id={self.mods_id}, page_identity={repr(self.page_identity)}, left_eye_position={repr(self.left_eye_position)}, right_eye_position={repr(self.right_eye_position)}, nose_position={repr(self.nose_position)}, left_mouth_corner_position={repr(self.left_mouth_corner_position)}, right_mouth_corner_position={repr(self.right_mouth_corner_position)})"
 
     @property
     def identity_name(self):
+        """Return the associated person name."""
         return self.page_identity.identity.name
 
     def to_dict(self):
+        """Return a serializable mapping of the stored fields."""
         result = super().to_dict()
 
         result.update({
@@ -230,6 +352,11 @@ class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
 
     @classmethod
     def from_dict(cls, data: dict):
+        """Build an instance from its serialized field mapping.
+
+        Args:
+            data: Serialized object field mapping.
+        """
         page_identity = PeopleGatorPageIdentity.from_dict(data["page_identity"])
 
         left_eye_position = Position.from_json(data["left_eye_position"])
@@ -253,11 +380,25 @@ class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
                    confidence=data.get("confidence", None))
 
     def to_altoxml(self, print_space, bounding_box, source_region=None):
+        """Append linked face and identity tags to the enclosing ALTO tree.
+
+        Args:
+            print_space: Parent ALTO PrintSpace element.
+            bounding_box: Bounds as (x_min, y_min, x_max, y_max) in page pixels.
+            source_region: Original graphical region, or None when unavailable.
+        """
         tags = find_or_create_tags_element(print_space)
         self.to_altoxml_layout(tags, bounding_box, source_region)
         self.to_altoxml_identity(tags)
 
     def to_altoxml_layout(self, tags, bounding_box, source_region=None):
+        """Append the face LayoutTag, MODS provenance, and facial landmarks.
+
+        Args:
+            tags: Parent ALTO Tags element.
+            bounding_box: Bounds as (x_min, y_min, x_max, y_max) in page pixels.
+            source_region: Original graphical region, or None when unavailable.
+        """
         layout_tag = ET.SubElement(tags, "LayoutTag")
         xml_data = ET.SubElement(layout_tag, "XmlData")
 
@@ -312,6 +453,11 @@ class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
         self._add_point(key_points, peoplegator_namespace, "right-mouth-corner", self.right_mouth_corner_position)
 
     def to_altoxml_identity(self, tags):
+        """Append the person NamedEntityTag unless its MODS ID is already present.
+
+        Args:
+            tags: Parent ALTO Tags element.
+        """
         namespaces = tags.nsmap
 
         ns = {
@@ -325,6 +471,13 @@ class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
 
     @staticmethod
     def _add_size_element(mods, mods_namespace, bounding_box):
+        """Append MODS physical dimensions from a pixel bounding box.
+
+        Args:
+            mods: Parent MODS XML element.
+            mods_namespace: MODS namespace URI.
+            bounding_box: Bounds as (x_min, y_min, x_max, y_max) in page pixels.
+        """
         x_min, y_min, x_max, y_max = bounding_box
         width = round(x_max - x_min)
         height = round(y_max - y_min)
@@ -336,6 +489,15 @@ class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
 
     @staticmethod
     def _add_point(parent, peoplegator_namespace:str, key: str, position: Position, unit: str = "pixels"):
+        """Append a named landmark with coordinates formatted to two decimal places.
+
+        Args:
+            parent: Parent XML element.
+            peoplegator_namespace: PeopleGator namespace URI.
+            key: Landmark label written to XML.
+            position: Landmark point in page-image coordinates.
+            unit: Coordinate unit written to XML; defaults to pixels.
+        """
         point = ET.SubElement(parent, f"{{{peoplegator_namespace}}}points")
         point.attrib["key"] = key
         point.attrib["x"] = f"{position.x:.2f}"
@@ -344,6 +506,13 @@ class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
 
     @staticmethod
     def _add_namespace(element, prefix: str, uri: str):
+        """Return the namespace for a prefix, attempting to register it if absent.
+
+        Args:
+            element: XML element whose root supplies namespace bindings.
+            prefix: Identifier or namespace prefix.
+            uri: Namespace URI to register.
+        """
         root_element = get_root_element(element)
         if prefix not in root_element.nsmap:
             nsmap = dict(root_element.nsmap)
@@ -356,10 +525,22 @@ class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
 
     @classmethod
     def from_altoxml(cls):
+        """Reserved ALTO reader; raises NotImplementedError.
+
+        Raises:
+            NotImplementedError: ALTO face/identity import is not implemented.
+        """
         raise NotImplementedError("Not implemented yet.")
 
 
 class PeopleGatorFaceRegionLayout(RegionLayout):
+    """A face polygon linked to its source region and facial metadata.
+
+    Attributes:
+        face_metadata: Landmarks, provenance, and identity.
+        source_region: Originating graphical region, when available.
+    """
+
     def __init__(self,
                  id: str,
                  polygon: np.ndarray,
@@ -368,6 +549,17 @@ class PeopleGatorFaceRegionLayout(RegionLayout):
                  region_type: str|None = None,
                  category: str|None = None,
                  detection_confidence: float|None = None):
+        """Initialize PeopleGatorFaceRegionLayout from the supplied settings and data.
+
+        Args:
+            id: Document or region identifier; None when not supplied.
+            polygon: Region vertices in page-image pixel coordinates.
+            face_metadata: Face landmarks, provenance, and identity metadata.
+            source_region: Original graphical region, or None when unavailable.
+            region_type: Optional XML region type.
+            category: Optional region category.
+            detection_confidence: Optional detector confidence.
+        """
         super().__init__(id=id,
                          polygon=polygon,
                          region_type=region_type,
@@ -378,10 +570,28 @@ class PeopleGatorFaceRegionLayout(RegionLayout):
         self.source_region: RegionLayout|None = source_region
 
     def __repr__(self):
+        """Return a diagnostic representation of the stored fields.
+
+        Returns:
+            A diagnostic string; it may contain document or person data.
+        """
         return f"PeopleGatorFaceRegionLayout(id={self.id}, polygon={self.polygon.tolist()}, region_type={self.region_type}, category={self.category}, detection_confidence={self.detection_confidence}, source_region_id={self.source_region.id if self.source_region else None}, face_metadata={repr(self.face_metadata)})"
 
     def to_altoxml(self, print_space, arabic_helper, min_line_confidence,
                    print_space_coords: Tuple[int, int, int, int], version: ALTOVersion, word_splitters=["-"]) -> Tuple[int, int, int, int]:
+        """Append this object's ALTO/MODS annotations to the supplied XML element.
+
+        Args:
+            print_space: Parent ALTO PrintSpace element.
+            arabic_helper: Compatibility argument for the layout writer; unused here.
+            min_line_confidence: Compatibility argument for the layout writer; unused here.
+            print_space_coords: Current print-space (height, width, vpos, hpos).
+            version: ALTO version passed by the layout writer.
+            word_splitters: Compatibility argument for the layout writer; unused here.
+
+        Returns:
+            Updated print-space (height, width, vpos, hpos).
+        """
         page_element = get_page_element(print_space)
         page_id = page_element.attrib["ID"]
 
@@ -421,9 +631,25 @@ class PeopleGatorFaceRegionLayout(RegionLayout):
 
     @classmethod
     def from_altoxml(cls, text_block, schema, generated_block_id=None):
+        """Reserved ALTO reader; raises NotImplementedError.
+
+        Args:
+            text_block: Source ALTO block; reserved for future import.
+            schema: Layout-reader compatibility argument; unused here.
+            generated_block_id: Optional fallback block ID; reserved for future import.
+
+        Raises:
+            NotImplementedError: ALTO face/identity import is not implemented.
+        """
         raise NotImplementedError("Not implemented yet.")
 
     def to_pagexml(self, page_element, validate_id: bool = False):
+        """Append a PAGE ImageRegion with face metadata.
+
+        Args:
+            page_element: Parent PAGE Page element.
+            validate_id: Layout-writer compatibility flag; unused here.
+        """
         custom = {
             "category": self.category,
             "detection_confidence": round(self.detection_confidence, 3) if self.detection_confidence is not None else None,
@@ -443,6 +669,16 @@ class PeopleGatorFaceRegionLayout(RegionLayout):
 
     @classmethod
     def from_pagexml(cls, region_element, schema, page_layout=None):
+        """Read a face region and resolve its optional source-region reference.
+
+        Args:
+            region_element: PAGE ImageRegion containing polygon and custom face data.
+            schema: Layout-reader compatibility argument; unused here.
+            page_layout: Page layout supplying regions, OCR, or source references.
+
+        Returns:
+            A face region, or None when its custom category is not face.
+        """
         region_id = region_element.attrib["id"]
         region_type = region_element.attrib.get("type", None)
 
@@ -485,6 +721,16 @@ class PeopleGatorFaceRegionLayout(RegionLayout):
 
     @classmethod
     def from_app_dict(cls, db_face, db_entity, page_layout):
+        """Build a face region from app coordinates, keypoints, and optional identity.
+
+        Args:
+            db_face: App face record with bounding box, keypoints, and confidence.
+            db_entity: Optional app person record linked to the face.
+            page_layout: Page layout supplying regions, OCR, or source references.
+
+        Returns:
+            A face region with page-image coordinates and app identity metadata.
+        """
         region_id = db_face["identifier"]
         bounding_box = db_face["bounding_box"]
         confidence = db_face["confidence"]
@@ -542,12 +788,23 @@ class PeopleGatorFaceRegionLayout(RegionLayout):
 
 
 class PeopleGatorTextEntityMention:
+    """A person-name occurrence with an OCR line, character span, and identity."""
+
     def __init__(self,
                  name: str,
                  text: str,
                  line: TextLine,
                  span: tuple[int, int],
                  page_identity: PeopleGatorPageIdentity):
+        """Initialize PeopleGatorTextEntityMention from the supplied settings and data.
+
+        Args:
+            name: Person name as associated with this text occurrence.
+            text: OCR text containing the person mention.
+            line: OCR line containing the mention.
+            span: Character start/end offsets within the line.
+            page_identity: Page-local metadata for the linked person identity.
+        """
         self.name: str = name
         self.text: str = text
         self.line: TextLine = line
@@ -556,14 +813,34 @@ class PeopleGatorTextEntityMention:
 
     @property
     def identity_name(self):
+        """Return the associated person name."""
         return self.page_identity.identity.name
 
     def __repr__(self):
+        """Return a diagnostic representation of the stored fields.
+
+        Returns:
+            A diagnostic string; it may contain document or person data.
+        """
         return f"PeopleGatorTextEntityMention(name={self.name}, text={self.text}, line_id={self.line.id}, span={self.span}, identity={repr(self.page_identity) if self.page_identity else None})"
 
 
 class PeopleGatorPageLayout(AnnoPagePageLayout):
+    """An AnnoPage layout with face regions and text-entity mentions.
+
+    Attributes:
+        text_entities: Text mentions attached to this page.
+        faces: Computed list of face regions.
+    """
+
     def __init__(self, id: str|None = None, page_size: tuple[int, int] = (0, 0), file: str|None = None):
+        """Initialize PeopleGatorPageLayout from the supplied settings and data.
+
+        Args:
+            id: Page identifier; None when loaded from the optional file.
+            page_size: Page (height, width) in pixels; defaults to (0, 0).
+            file: Optional PAGE XML file to load.
+        """
         super().__init__(id, page_size, file=None)
 
         self.text_entities: list[PeopleGatorTextEntityMention] = []
@@ -583,9 +860,11 @@ class PeopleGatorPageLayout(AnnoPagePageLayout):
 
     @property
     def faces(self):
+        """Return the face regions in layout order."""
         return [region for region in self.regions if isinstance(region, PeopleGatorFaceRegionLayout)]
 
     def to_app_dict(self):
+        """Return the app page-layout mapping with text regions and OCR lines."""
         regions = []
         for region in self.regions:
             if region.category not in {'text', None}:
@@ -630,21 +909,44 @@ class PeopleGatorPageLayout(AnnoPagePageLayout):
 
 
 class PeopleGatorTextEntityCluster:
+    """Text mentions sharing one person identity across a document."""
+
     def __init__(self,
                  text_entities: list[PeopleGatorTextEntityMention],
                  identity: PeopleGatorIdentity,
                  name: str|None = None,
                  description: str|None = None):
+        """Initialize PeopleGatorTextEntityCluster from the supplied settings and data.
+
+        Args:
+            text_entities: Text mentions belonging to this identity cluster.
+            identity: Person identity shared by the occurrences.
+            name: Proposed person name, or None when unknown.
+            description: Optional long person or cluster description.
+        """
         self.text_entities: list[PeopleGatorTextEntityMention] = text_entities
         self.identity: PeopleGatorIdentity = identity
         self.name: str|None = name
         self.description: str|None = description
 
     def __repr__(self):
+        """Return a diagnostic representation of the stored fields.
+
+        Returns:
+            A diagnostic string; it may contain document or person data.
+        """
         return f"PeopleGatorTextEntityCluster(name={self.name}, identity_id={self.identity.peoplegator_id if self.identity else None}, num_entities={len(self.text_entities)})"
 
 
 class PeopleGatorDocument:
+    """Document metadata, page layouts, image cache, and shared text identities.
+
+    Attributes:
+        page_layouts: Ordered page layouts.
+        page_images: Page-ID-to-image cache.
+        text_entity_clusters: Shared identities for text mentions.
+    """
+
     def __init__(self,
                  id: str|None = None,
                  name: str|None = None,
@@ -658,6 +960,25 @@ class PeopleGatorDocument:
                  page_images_dir: str|None = None,
                  load_images: bool = False,
                  keep_images_in_memory: bool = False):
+        """Initialize document metadata and layouts, loading optional inputs.
+
+        Args:
+            id: Document or region identifier; None when not supplied.
+            name: Proposed person name, or None when unknown.
+            library: Library identifier used for app document lookup.
+            page_layouts: Existing page layouts; None starts with an empty list.
+            page_xmls_dir: Optional input PAGE XML directory; mutually exclusive with ALTO.
+            alto_xmls_dir: Optional input ALTO XML directory; mutually exclusive with PAGE.
+            metadata_path: Optional document/page metadata JSON path.
+            text_entity_clusters: Existing identity clusters; None starts with an empty list.
+            page_images: Optional page-ID-to-image cache.
+            page_images_dir: Optional directory containing page JPEGs.
+            load_images: Whether to load images at construction; defaults to False.
+            keep_images_in_memory: Whether loaded images are cached; defaults to False.
+
+        Raises:
+            ValueError: If both XML input directories are supplied without layouts.
+        """
         self.id = id
         self.name = name
         self.library = library
@@ -696,6 +1017,7 @@ class PeopleGatorDocument:
             self.load_metadata()
 
     def pages_iterator(self):
+        """Yield (image, layout) pairs in page order, loading images as needed."""
         if self.page_layouts:
             for page_layout in self.page_layouts:
                 page_image = self.get_page_image(page_layout)
@@ -703,6 +1025,7 @@ class PeopleGatorDocument:
 
     @property
     def text_entities(self):
+        """Return all text mentions in document page order."""
         text_entities = []
         for page_layout in self.page_layouts:
             text_entities.extend(page_layout.text_entities)
@@ -710,12 +1033,18 @@ class PeopleGatorDocument:
 
     @property
     def faces(self):
+        """Return the face regions in layout order."""
         faces = []
         for page_layout in self.page_layouts:
             faces.extend(page_layout.faces)
         return faces
 
     def load_page_images(self):
+        """Load all page images, caching them only when configured.
+
+        Raises:
+            Exception: If the required image directory is absent or an image cannot be read.
+        """
         if self.page_images_dir:
             for page_layout in self.page_layouts:
                 self.load_page_image(page_layout)
@@ -723,6 +1052,17 @@ class PeopleGatorDocument:
             raise Exception("Cannot load page images: no page_images_dir specified.")
 
     def load_page_image(self, page_layout):
+        """Read a page JPEG and optionally cache it by page ID.
+
+        Args:
+            page_layout: Page layout supplying regions, OCR, or source references.
+
+        Returns:
+            The decoded BGR page image.
+
+        Raises:
+            Exception: If the required image directory is absent or an image cannot be read.
+        """
         if self.page_images_dir:
             image_name = page_layout.id if page_layout.id.endswith(".jpg") else f"{page_layout.id}.jpg"
             image_path = os.path.join(self.page_images_dir, image_name)
@@ -734,6 +1074,7 @@ class PeopleGatorDocument:
             raise Exception(f"Cannot load page image for page '{page_layout.id}': no page_images_dir specified.")
 
     def load_metadata(self):
+        """Load document and page metadata from the configured JSON file."""
         if self.metadata_path:
             with open(self.metadata_path, 'r', encoding='utf-8') as f:
                 metadata = json.load(f)
@@ -748,6 +1089,18 @@ class PeopleGatorDocument:
                     page_layout.metadata["people_gator_metadata"] = pages_metadata[page_layout.id]
 
     def get_page_image(self, page_layout, force_reload=False):
+        """Return a cached page image or load it when missing or forced.
+
+        Args:
+            page_layout: Page layout supplying regions, OCR, or source references.
+            force_reload: Whether to bypass the image cache; defaults to False.
+
+        Returns:
+            The cached or newly decoded BGR page image.
+
+        Raises:
+            Exception: If the required image directory is absent or an image cannot be read.
+        """
         if force_reload or page_layout.id not in self.page_images:
             page_image = self.load_page_image(page_layout)
         elif page_layout.id in self.page_images:
@@ -758,6 +1111,11 @@ class PeopleGatorDocument:
         return page_image
 
     def from_altoxml(self, alto_dir):
+        """Load ALTO files and rebuild document text-identity clusters.
+
+        Args:
+            alto_dir: Input ALTO XML directory.
+        """
         files = [file for file in os.listdir(alto_dir) if file.lower().endswith('.xml')]
         page_layouts = []
 
@@ -768,9 +1126,16 @@ class PeopleGatorDocument:
             page_layouts.append(page_layout)
 
         self.page_layouts = page_layouts
+        logger.debug("Document %s: loaded %d page layouts", self.id, len(page_layouts))
         self.build_text_entity_clusters()
 
     def to_altoxml(self, output_dir, alto_version=ALTOVersion.ALTO_v4_4):
+        """Write enriched ALTO files, retaining source OCR when available.
+
+        Args:
+            output_dir: Existing directory for generated output files.
+            alto_version: ALTO writer version; defaults to ALTO v4.4.
+        """
         if self.page_layouts:
             self.distribute_text_entity_identities()
             parser = ET.XMLParser(remove_blank_text=True)
@@ -799,8 +1164,14 @@ class PeopleGatorDocument:
                         file.write(ET.tostring(alto, pretty_print=True, encoding="utf-8", xml_declaration=True).decode("utf-8"))
                 else:
                     page_layout.to_altoxml(output_path)
+                logger.debug("Document %s: wrote ALTO page %s", self.id, page_layout.id)
 
     def from_pagexml(self, pagexml_dir: str):
+        """Load PAGE files and rebuild document text-identity clusters.
+
+        Args:
+            pagexml_dir: Input PAGE XML directory.
+        """
         files = [file for file in os.listdir(pagexml_dir) if file.lower().endswith('.xml')]
         page_layouts = []
 
@@ -810,16 +1181,29 @@ class PeopleGatorDocument:
             page_layouts.append(page_layout)
 
         self.page_layouts = page_layouts
+        logger.debug("Document %s: loaded %d page layouts", self.id, len(page_layouts))
         self.build_text_entity_clusters()
 
     def to_pagexml(self, output_dir):
+        """Write PAGE files after distributing shared text identities.
+
+        Args:
+            output_dir: Existing directory for generated output files.
+        """
         if self.page_layouts:
             self.distribute_text_entity_identities()
             for page_layout in self.page_layouts:
                 output_path = os.path.join(output_dir, f"{page_layout.id}.xml")
                 page_layout.to_pagexml(output_path)
+                logger.debug("Document %s: wrote PAGE page %s", self.id, page_layout.id)
 
     def build_text_entity_clusters(self, drop_mentions_identities=False, create_clusters_without_identity=False):
+        """Group text mentions by app identity and optionally detach their identities.
+
+        Args:
+            drop_mentions_identities: Whether to detach mention identities after clustering; defaults to False.
+            create_clusters_without_identity: Whether to include mentions without an app ID; defaults to False.
+        """
         clusters = []
         identity_to_cluster = {}
         for page_layout in self.page_layouts:
@@ -842,16 +1226,29 @@ class PeopleGatorDocument:
         self.text_entity_clusters = clusters
 
     def distribute_text_entity_identities(self):
+        """Copy each cluster identity back to its member text mentions."""
         for cluster in self.text_entity_clusters:
             for text_entity in cluster.text_entities:
                 text_entity.page_identity.identity = cluster.identity
 
 
 def remove_peoplegator_elements(alto_root):
+    """Return the ALTO root unchanged; annotation removal is not implemented.
+
+    Args:
+        alto_root: ALTO root element modified or returned by the operation.
+    """
     return alto_root
 
 
 def add_page_layout_to_alto(page_layout: AnnoPagePageLayout, alto_root, alto_version=ALTOVersion.ALTO_v4_4):
+    """Append face annotations and processing metadata to an existing ALTO tree.
+
+    Args:
+        page_layout: Page layout supplying regions, OCR, or source references.
+        alto_root: ALTO root element modified or returned by the operation.
+        alto_version: ALTO writer version; defaults to ALTO v4.4.
+    """
     description_element = find_or_create_element(alto_root, "Description")
     tags_element = find_or_create_element(alto_root, "Tags")
     layout_element = find_or_create_element(alto_root, "Layout")
@@ -874,10 +1271,22 @@ def add_page_layout_to_alto(page_layout: AnnoPagePageLayout, alto_root, alto_ver
 
 
 def altoxml_load_regions(page_layout, root):
+    """Reserved ALTO import hook; currently leaves the layout unchanged.
+
+    Args:
+        page_layout: Page layout supplying regions, OCR, or source references.
+        root: Source XML root supplied by the reader hook.
+    """
     pass
 
 
 def pagexml_load_regions(page_layout, page_tree):
+    """Append face regions read from PAGE ImageRegion elements.
+
+    Args:
+        page_layout: Page layout supplying regions, OCR, or source references.
+        page_tree: Parsed PAGE XML tree.
+    """
     root = page_tree.getroot()
     for region_element in root.findall(".//ImageRegion", root.nsmap):
         region = PeopleGatorFaceRegionLayout.from_pagexml(region_element, page_layout)
@@ -886,6 +1295,13 @@ def pagexml_load_regions(page_layout, page_tree):
 
 
 def altoxml_add_processing_step(page_layout, description_element, alto_version=ALTOVersion.ALTO_v4_4):
+    """Append PeopleGator software provenance to the ALTO description.
+
+    Args:
+        page_layout: Page layout supplying regions, OCR, or source references.
+        description_element: ALTO Description element receiving provenance.
+        alto_version: ALTO writer version; defaults to ALTO v4.4.
+    """
     processing_element = create_ocr_processing_element(id=globals.software_name,
                                                        software_creator_str=globals.software_creator,
                                                        software_name_str=globals.software_name,
@@ -896,6 +1312,12 @@ def altoxml_add_processing_step(page_layout, description_element, alto_version=A
 
 
 def pagexml_add_processing_step(page_layout, metadata):
+    """Append a timestamped PeopleGator processing item to PAGE metadata.
+
+    Args:
+        page_layout: Page layout supplying regions, OCR, or source references.
+        metadata: PAGE Metadata element.
+    """
     metadata_item = ET.SubElement(metadata, "MetadataItem")
     metadata_item.set("type", "processingStep")
     metadata_item.set("name", "Face detection and analysis and named entity recognition")
@@ -904,10 +1326,24 @@ def pagexml_add_processing_step(page_layout, metadata):
 
 
 def altoxml_postprocess_lines(page_layout, print_space_element, alto_version=ALTOVersion.ALTO_v4_4):
+    """Reserved ALTO line-processing hook; currently performs no changes.
+
+    Args:
+        page_layout: Page layout supplying regions, OCR, or source references.
+        print_space_element: ALTO PrintSpace element supplied by the writer hook.
+        alto_version: ALTO writer version; defaults to ALTO v4.4.
+    """
     pass
 
 
 def get_next_mods_id(page_layout, prefix="MODS_FACE", padding=4):
+    """Return the first unused padded MODS ID among existing face metadata.
+
+    Args:
+        page_layout: Page layout supplying regions, OCR, or source references.
+        prefix: Identifier or namespace prefix.
+        padding: Zero-padding width for generated numeric suffixes.
+    """
     regions = [region for region in page_layout.regions if isinstance(region, PeopleGatorFaceRegionLayout)]
     existing_mods_ids = set([region.face_metadata.mods_id for region in regions if region.face_metadata and region.face_metadata.mods_id])
 
@@ -922,6 +1358,13 @@ def get_next_mods_id(page_layout, prefix="MODS_FACE", padding=4):
 
 
 def get_next_region_id(page_layout, prefix, padding=3):
+    """Return the first unused padded region ID for a prefix.
+
+    Args:
+        page_layout: Page layout supplying regions, OCR, or source references.
+        prefix: Identifier or namespace prefix.
+        padding: Zero-padding width for generated numeric suffixes.
+    """
     existing_region_ids = set([region.id for region in page_layout.regions])
 
     index = 1
@@ -935,6 +1378,12 @@ def get_next_region_id(page_layout, prefix, padding=3):
 
 
 def render_to_image(image, page_layout):
+    """Return an image copy annotated with face boxes, names, and landmarks.
+
+    Args:
+        image: OpenCV image array.
+        page_layout: Page layout supplying regions, OCR, or source references.
+    """
     render = np.copy(image)
 
     for region in page_layout.regions:

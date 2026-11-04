@@ -12,6 +12,11 @@ from people_gator.core.document_parser import DocumentParser
 
 
 def parse_arguments():
+    """Parse this command's arguments from the process command line.
+
+    Returns:
+        An argparse.Namespace with the parsed command options.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", help="Path to config file.", required=True)
     parser.add_argument("--input-image-path", help="Path to directory with images to process.")
@@ -39,12 +44,20 @@ def parse_arguments():
 
 
 def setup_logging(logging_level):
+    """Set the root logging level and format, adding handlers only when needed.
+
+    Args:
+        logging_level: Root logging level name accepted by the CLI.
+    """
     level = logging.getLevelName(logging_level)
 
     log_formatter = logging.Formatter('[%(levelname)s|%(asctime)s|%(filename)s:%(name)s]: %(message)s', datefmt="%Y-%m-%d_%H-%M-%S")
 
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
+
+    if not root_logger.handlers:
+        root_logger.addHandler(logging.StreamHandler())
 
     root_handler = root_logger.handlers[0]
     root_handler.setFormatter(log_formatter)
@@ -53,6 +66,16 @@ def setup_logging(logging_level):
 
 
 def get_device(device, gpu_index=None, logger=None):
+    """Select a torch device, claiming GPUs when no explicit GPU index is supplied.
+
+    Args:
+        device: Processing device (torch device or cpu/gpu selection).
+        gpu_index: Optional explicit CUDA index; overrides automatic device selection.
+        logger: Optional logger passed to GPU allocation.
+
+    Returns:
+        The selected torch.device.
+    """
     if gpu_index is None:
         if device == "gpu":
             safe_gpu.claim_gpus(logger=logger)
@@ -66,6 +89,14 @@ def get_device(device, gpu_index=None, logger=None):
 
 
 def get_value_or_none(config, section, key, getboolean: bool = False):
+    """Return an INI value, optionally parsed as a boolean, or None if absent.
+
+    Args:
+        config: INI configuration or engine section for this component.
+        section: INI section name.
+        key: Configuration key or landmark label for this operation.
+        getboolean: Whether to parse the value as a boolean; defaults to False.
+    """
     if config.has_option(section, key):
         if getboolean:
             value = config.getboolean(section, key)
@@ -77,32 +108,64 @@ def get_value_or_none(config, section, key, getboolean: bool = False):
 
 
 def load_config(config_path):
+    """Read an INI file and return its ConfigParser.
+
+    Args:
+        config_path: Base directory for relative engine resource paths.
+    """
+    logging.getLogger(__name__).debug("Loading processing configuration")
     config = configparser.ConfigParser()
     config.read(config_path)
     return config
 
 
 def create_document_parser(config, device, config_path):
+    """Create the configured document-processing pipeline.
+
+    Args:
+        config: INI configuration or engine section for this component.
+        device: Processing device (torch device or cpu/gpu selection).
+        config_path: Base directory for relative engine resource paths.
+
+    Returns:
+        A parser with engines in configuration section order.
+    """
     document_parser = DocumentParser(config, device, config_path)
     return document_parser
 
 
 def load_document(input_images_path, input_xml_path=None, input_alto_path=None, input_metadata_path=None):
+    """Construct a document from images, optional XML layouts, and metadata.
+
+    Args:
+        input_images_path: Input directory containing page JPEGs.
+        input_xml_path: Optional PAGE XML directory.
+        input_alto_path: Optional ALTO XML directory.
+        input_metadata_path: Optional document/page metadata JSON path.
+
+    Returns:
+        A document with the supplied inputs loaded according to its defaults.
+    """
     document = PeopleGatorDocument(page_images_dir=input_images_path, page_xmls_dir=input_xml_path, alto_xmls_dir=input_alto_path, metadata_path=input_metadata_path)
     return document
 
 
 def main():
+    """Process configured input pages and write the requested outputs.
+
+    Returns:
+        Zero after the command completes normally.
+    """
     args = parse_arguments()
     config_path = args.config
 
     setup_logging(args.logging_level)
     logger = logging.getLogger(__name__)
 
-    logger.info(args)
+    logger.debug("Processing CLI initialized on device %s", args.device)
 
     if not os.path.isfile(config_path):
-        logger.error(f"Config file does not exist: '{config_path}'.")
+        logger.error("Config file does not exist: '%s'.", config_path)
         exit(-1)
 
     config = load_config(args.config)
@@ -182,9 +245,11 @@ def main():
         os.makedirs(output_alto_path)
 
     if output_xml_path:
+        logger.info("Writing PAGE XML output")
         document.to_pagexml(output_xml_path)
 
     if output_alto_path:
+        logger.info("Writing ALTO XML output")
         document.to_altoxml(output_alto_path)
 
     if output_render_path:
@@ -195,8 +260,9 @@ def main():
             rendered_image = render_to_image(page_image, page_layout)
             output_image_path = os.path.join(output_render_path, f"{page_layout.id}.jpg")
             cv2.imwrite(output_image_path, rendered_image)
+            logger.debug("Rendered page %s", page_layout.id)
 
-    print("Processing completed successfully.")
+    logger.info("Processing completed successfully.")
 
     return 0
 

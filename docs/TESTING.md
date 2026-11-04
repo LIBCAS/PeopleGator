@@ -66,3 +66,27 @@ Syntax checks complement behavioral tests; they do not prove an issue is impleme
 5. Run focused and available full-suite checks. In the PR, map each acceptance criterion to the test or other evidence that verifies it, and report test outcomes and any remaining gaps.
 
 See [Output formats](OUTPUT_FORMATS.md) for ALTO and PAGE XML examples.
+
+## Logging and inline documentation
+
+`tests/test_documentation.py` uses the Python AST to require docstrings for every
+project-defined class and callable under `people_gator`, `processing_api`, and
+`user_scripts`, including constructors, properties, and private helpers. It checks
+Google-style parameter entries against signatures without importing optional
+runtime dependencies.
+
+`tests/test_logging.py` uses captured records, synthetic pages, and mocked model,
+HTTP, and subprocess responses to check logging levels, safe failure diagnostics,
+empty inputs, handler reuse, and unchanged coordinates, identities, XML, and worker
+results. It requires the applicable runtime extras; client/tool modes explicitly
+skip tests belonging to the other runtime. Run both alongside the existing suite:
+
+```bash
+python -m pytest -q tests/test_documentation.py tests/test_logging.py
+python -m pytest -q --runtime-mode=full
+python -m compileall -q people_gator processing_api user_scripts
+```
+
+These tests make no live model/service requests. They preserve existing LLM
+response/validation and worker-result behavior, including known limitations;
+passing tests do not establish that those separate defects are fixed.

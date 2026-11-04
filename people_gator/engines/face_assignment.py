@@ -18,12 +18,30 @@ logger = logging.getLogger(__name__)
 
 
 class FaceIdentifier(BaseModel):
+    """A face identifier and its four bounding-box coordinates."""
     id: str
     coordinates: tuple[int, int, int, int]
 
 
 class FaceAssignmentData:
+    """One face crop, context image/text, relative center, and assignment result.
+
+    Attributes:
+        result: Optional assignment prediction, populated after the request.
+    """
+
     def __init__(self, face_region, face_image, face_coordinates, context_image, context_text=None, caption_text=None, result=None):
+        """Initialize FaceAssignmentData from the supplied settings and data.
+
+        Args:
+            face_region: Face region to export or assign.
+            face_image: Cropped face image.
+            face_coordinates: Face center relative to context, in integer percentages.
+            context_image: Cropped source context with marked faces.
+            context_text: Optional OCR text overlapping the context crop.
+            caption_text: Optional source-region caption.
+            result: Structured model result, or None before assignment.
+        """
         self.face_region = face_region
         self.face_image = face_image
         self.face_coordinates = face_coordinates
@@ -33,32 +51,73 @@ class FaceAssignmentData:
         self.result = result
 
     def __repr__(self):
+        """Return a diagnostic representation of the stored fields.
+
+        Returns:
+            A diagnostic string; it may contain document or person data.
+        """
         return f"FaceAssignmentData(face_region={self.face_region}, face_image={self.face_image}, context_image={self.context_image}, context_text={self.context_text}, caption_text={self.caption_text}, result={repr(self.result)})"
 
 
 class FaceAssignmentResult(BaseModel):
+    """Normalized and source-text names proposed for one face."""
     name_normalized: str|None
     name_in_text: str|None
 
     def __repr__(self):
+        """Return a diagnostic representation of the stored fields.
+
+        Returns:
+            A diagnostic string; it may contain document or person data.
+        """
         return f"FaceAssignmentResult(name_normalized={self.name_normalized}, name_in_text={self.name_in_text})"
 
 
 class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
+    """Propose a person name per face using image and OCR context."""
+
     def __init__(self, config, device, config_path):
+        """Initialize LLMFaceAssignmentEngine from the supplied settings and data.
+
+        Args:
+            config: INI configuration or engine section for this component.
+            device: Processing device (torch device or cpu/gpu selection).
+            config_path: Base directory for relative engine resource paths.
+        """
         super().__init__(config, device, config_path)
 
         self.vertical_offset = self.config.getint("vertical_offset", 0)
         self.horizontal_offset = self.config.getint("horizontal_offset", 0)
 
     def process_document(self, document):
+        """Process the document with the configured engine and return it.
+
+        Args:
+            document: Document to process or transfer; updated in place.
+
+        Returns:
+            The processed document (the same instance for the built-in engines).
+        """
         for page_image, page_layout in document.pages_iterator():
             self.process_page(page_image, page_layout)
 
         return document
 
     def process_page(self, page_image, page_layout):
+        """Request one prediction per face and apply names to the page.
+
+        The current caller expects the prompter to return a (result, messages)
+        pair; unpacking failures propagate unchanged.
+
+        Args:
+            page_image: Page image array in page-layout coordinates.
+            page_layout: Page layout supplying regions, OCR, or source references.
+
+        Returns:
+            The page layout after in-place processing.
+        """
         face_data = self.prepare_face_data(page_image, page_layout)
+        logger.debug("Page %s: prepared %d LLM assignment requests", page_layout.id, len(face_data))
 
         for face_item in face_data:
             result, messages = self.llm_prompter(data={
@@ -75,6 +134,15 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         return page_layout
 
     def prepare_face_data(self, page_image, page_layout) -> list[FaceAssignmentData]:
+        """Build face request data from crops, relative coordinates, OCR, and captions.
+
+        Args:
+            page_image: Page image array in page-layout coordinates.
+            page_layout: Page layout supplying regions, OCR, or source references.
+
+        Returns:
+            Request objects in face or source-region order.
+        """
         face_data = []
         for i, region in enumerate(page_layout.regions):
             if isinstance(region, PeopleGatorFaceRegionLayout):
@@ -129,11 +197,22 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         return face_data
 
     def update_layout(self, page_layout, face_data: list[FaceAssignmentData]):
+        """Apply available name predictions to matching face identities in place.
+
+        Args:
+            page_layout: Page layout supplying regions, OCR, or source references.
+            face_data: Prepared face request objects with optional assignment results.
+
+        Returns:
+            The updated page layout.
+        """
         for face_item in face_data:
+            if face_item.result is None:
+                logger.debug("Page %s: no assignment response for face %s", page_layout.id, face_item.face_region.id)
             face_region = face_item.face_region
             if face_item.result is not None:
                 if face_region.face_metadata is None:
-                    logger.warning(f"Face region {face_region.id} has no face metadata, skipping update.")
+                    logger.warning('Face region %s has no face metadata, skipping update.', face_region.id)
                     continue
 
                 face_region.face_metadata.page_identity.identity.name = face_item.result.name_normalized
@@ -142,6 +221,7 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
 
 
 class BatchFaceAssignmentResultItem(BaseModel):
+    """One batch prediction with an ID, relative center, and proposed names."""
     id: int
     coordinates: list[int]
     name_in_text: str|None
@@ -151,11 +231,29 @@ class BatchFaceAssignmentResultItem(BaseModel):
 
 
 class BatchFaceAssignmentResult(BaseModel):
+    """Structured predictions for the faces in one source-region batch."""
     faces: list[BatchFaceAssignmentResultItem]
 
 
 class BatchFaceAssignmentData:
+    """A source-region context, ordered faces, and optional LLM batch result.
+
+    Attributes:
+        face_regions: Ordered regions corresponding to faces.
+        result: Optional batch assignment prediction.
+    """
+
     def __init__(self, context_text=None, caption_text=None, context_image=None, faces=None, face_regions=None, result=None):
+        """Initialize BatchFaceAssignmentData from the supplied settings and data.
+
+        Args:
+            context_text: Optional OCR text overlapping the context crop.
+            caption_text: Optional source-region caption.
+            context_image: Cropped source context with marked faces.
+            faces: Ordered batch face descriptors (ID, coordinates, and color).
+            face_regions: Ordered face regions corresponding to the batch descriptors.
+            result: Structured model result, or None before assignment.
+        """
         self.context_text = context_text
         self.caption_text = caption_text
         self.context_image = context_image
@@ -164,6 +262,8 @@ class BatchFaceAssignmentData:
         self.result = result
 
     def to_dict(self):
+        """Return faces, OCR text, and caption context for the prompt.
+        """
         return {
             "faces": self.faces,
             "context_text": self.context_text,
@@ -171,11 +271,25 @@ class BatchFaceAssignmentData:
         }
 
     def __repr__(self):
+        """Return a diagnostic representation of the stored fields.
+
+        Returns:
+            A diagnostic string; it may contain document or person data.
+        """
         return f"BatchFaceAssignmentData(context_text={self.context_text}, caption_text={self.caption_text}, context_image={self.context_image}, faces={self.faces}, face_regions={self.face_regions}, result={self.result})"
 
 
 class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
+    """Assign face groups using sequential or parallel LLM requests."""
+
     def __init__(self, config, device, config_path):
+        """Initialize LLMBatchFaceAssignmentEngine from the supplied settings and data.
+
+        Args:
+            config: INI configuration or engine section for this component.
+            device: Processing device (torch device or cpu/gpu selection).
+            config_path: Base directory for relative engine resource paths.
+        """
         super().__init__(config, device, config_path)
 
         self.max_people = self.config.getint("max_people", 3)
@@ -194,6 +308,15 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         self.processing_mode = ProcessingMode.from_string(self.config.get("processing_mode", "sequential"))
 
     def process_document(self, document):
+        """Process the document with the configured engine and return it.
+
+        Args:
+            document: Document to process or transfer; updated in place.
+
+        Returns:
+            The processed document (the same instance for the built-in engines).
+        """
+        logger.debug("Document %s: batch assignment mode=%s", document.id, self.processing_mode.name)
         if self.processing_mode == ProcessingMode.DOCUMENT_PARALLEL:
             self.process_document_parallel(document)
         else:
@@ -203,9 +326,15 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         return document
 
     def process_document_parallel(self, document):
+        """Assign source-region batches across the document using a process pool.
+
+        Args:
+            document: Document to process or transfer; updated in place.
+        """
         all_face_data = []
         for page_image, page_layout in document.pages_iterator():
             face_data = self.prepare_face_data(page_image, page_layout)
+            logger.debug("Page %s: prepared %d LLM assignment requests", page_layout.id, len(face_data))
             all_face_data.extend(face_data)
 
         data = [face_item.to_dict() for face_item in all_face_data]
@@ -220,7 +349,17 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         self.update_layout(all_face_data)
 
     def process_page(self, page_image, page_layout):
+        """Process one page in place and return its layout.
+
+        Args:
+            page_image: Page image array in page-layout coordinates.
+            page_layout: Page layout supplying regions, OCR, or source references.
+
+        Returns:
+            The page layout after in-place processing.
+        """
         face_data = self.prepare_face_data(page_image, page_layout)
+        logger.debug("Page %s: prepared %d LLM assignment requests", page_layout.id, len(face_data))
 
         if self.processing_mode == ProcessingMode.PAGE_PARALLEL:
             data = [face_item.to_dict() for face_item in face_data]
@@ -244,6 +383,15 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         return page_layout
 
     def prepare_face_data(self, page_image, page_layout) -> list[BatchFaceAssignmentData]:
+        """Build face request data from crops, relative coordinates, OCR, and captions.
+
+        Args:
+            page_image: Page image array in page-layout coordinates.
+            page_layout: Page layout supplying regions, OCR, or source references.
+
+        Returns:
+            Request objects in face or source-region order.
+        """
         face_data = []
 
         source_regions_mapping = defaultdict(list)
@@ -261,7 +409,7 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
 
         for source_region, face_regions in source_regions_mapping.items():
             if len(face_regions) > self.max_people:
-                logger.info(f"Found {len(face_regions)} face regions for source region {source_region.id}, which exceeds the maximum of {self.max_people}. Skipping this source region.")
+                logger.debug('Found %s face regions for source region %s, which exceeds the maximum of %s. Skipping this source region.', len(face_regions), source_region.id, self.max_people)
                 continue
 
             source_x_min, source_y_min, source_x_max, source_y_max = source_region.get_polygon_bounding_box()
@@ -335,7 +483,14 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         return face_data
 
     def update_layout(self, face_data: list[BatchFaceAssignmentData]):
+        """Apply available name predictions to matching face identities in place.
+
+        Args:
+            face_data: Prepared face request objects with optional assignment results.
+        """
         for face_item in face_data:
+            if face_item.result is None:
+                logger.debug("Batch assignment has no response; preserving existing identities")
             if face_item.result is not None:
                 for face_result in face_item.result.faces:
                     target_face_region = None
@@ -345,11 +500,11 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                             break
 
                     if target_face_region is None:
-                        logger.warning(f"No matching face region found for face result {face_result.id} with coordinates {face_result.coordinates}. Skipping update.")
+                        logger.warning('No matching face region found for face result %s with coordinates %s. Skipping update.', face_result.id, face_result.coordinates)
                         continue
 
                     if target_face_region.face_metadata is None:
-                        logger.warning(f"Face region {target_face_region.id} has no face metadata, skipping update.")
+                        logger.warning('Face region %s has no face metadata, skipping update.', target_face_region.id)
                         continue
 
                     target_face_region.face_metadata.page_identity.identity.name = face_result.name_normalized
