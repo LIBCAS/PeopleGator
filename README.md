@@ -73,18 +73,19 @@ PeopleGator uses OCR layout primitives from [pero-ocr](https://github.com/DCGM/p
 
 ## Installation
 
-Use Python 3.10 or newer and Git (needed for the pinned AnnoPage and pero-ocr dependencies). From a checkout of this repository, create an environment and install the base package for local processing and entity merging:
+Use Python 3.10 or newer and Git (needed for the pinned AnnoPage and pero-ocr dependencies). From a checkout of this repository, create an environment and explicitly select the components you need. For local processing and entity merging, install the `tool` extra:
 
 ~~~bash
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install .
+python -m pip install '.[tool]'
 ~~~
 
-The base package includes the processing engines and their imaging, XML, inference and LLM dependencies. Install optional DocAPI components as needed:
+The base package (`pip install .`) installs the Python modules and command wrappers without runtime dependencies. Select optional components as needed:
 
 ~~~bash
+python -m pip install '.[tool]'      # local processing and entity merging
 python -m pip install '.[api]'       # processing API server
 python -m pip install '.[client]'    # job submission and result retrieval
 python -m pip install '.[worker]'    # worker, including local processing
@@ -92,7 +93,9 @@ python -m pip install '.[full]'      # all application components
 python -m pip install -e '.[full,test]'  # editable development install and test/build tools
 ~~~
 
-Each DocAPI extra currently installs the same pinned DocAPI distribution, which supplies the server, client and worker wrappers. The `test` extra can also be combined with the base package (`pip install -e '.[test]'`). Upstream Git dependencies are pinned to commits; published dependencies use compatible requirements rather than a complete lock file. The selected PyTorch build must support your Python version and CPU/CUDA platform. OpenCV may require system graphics libraries on Linux.
+The `client` and `api` extras install only the pinned DocAPI distribution and its transitive dependencies. They do not install the PeopleGator processing stack (AnnoPage, pero-ocr, PyTorch, Ultralytics or LLM libraries). DocAPI itself currently requires NumPy and OpenCV, so those remain transitive dependencies. The `tool` extra provides all local processing dependencies without DocAPI; `worker` and `full` combine both sets. The `test` extra installs only test/build tooling and can be combined with any application extra.
+
+Upstream Git dependencies are pinned to commits; published dependencies use compatible requirements rather than a complete lock file. The selected PyTorch build must support your Python version and CPU/CUDA platform. OpenCV may require system graphics libraries on Linux.
 
 Prepare a compatible face/keypoint model and an INI configuration for the stages you intend to run. Models, prompts, credentials, the PeopleGatorApp service, and the DocAPI server's database configuration are supplied separately; installing an extra does not start a service.
 
@@ -100,15 +103,15 @@ Installed commands delegate to the existing `main()` functions and retain the mo
 
 | Command | Existing module | Installation |
 | --- | --- | --- |
-| `peoplegator` | `user_scripts.parse_folder` | base |
-| `peoplegator_merge_document_entities` | `user_scripts.merge_document_entities` | base |
+| `peoplegator` | `user_scripts.parse_folder` | `tool`, `worker` or `full` |
+| `peoplegator_merge_document_entities` | `user_scripts.merge_document_entities` | `tool`, `worker` or `full` |
 | `peoplegator_api` | `processing_api.api` | `api` or `full` |
 | `peoplegator_client` | `processing_api.client` | `client` or `full` |
 | `peoplegator_worker` | `processing_api.worker` | `worker` or `full` |
 
-All command wrappers are installed with the base package; API commands require their corresponding extra at runtime. `peoplegator_api` starts DocAPI using environment configuration and has no `--help` interface. The other commands support `--help`.
+All command wrappers are installed with the base package; running each command requires the extra listed above. `peoplegator_api` starts DocAPI using environment configuration and has no `--help` interface. The other commands support `--help`.
 
-After preparing the environment, inspect the local CLI options from the repository root:
+With the `tool` extra installed, inspect the local CLI options:
 
 ~~~bash
 peoplegator --help

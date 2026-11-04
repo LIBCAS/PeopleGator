@@ -22,13 +22,30 @@ Install the test/build tools from a checkout, then run the focused packaging tes
 ```bash
 python -m pip install -e '.[test]'
 python -m pytest -q tests/test_packaging.py
-python -m pytest -q
+python -m pip install -e '.[full,test]'
+python -m pytest -q --runtime-mode=full
 python -m build
 ```
 
 `tests/test_packaging.py` validates dependency specifications and entry points, builds an sdist and a wheel from that sdist, checks every source module is packaged, and installs the wheel without dependencies into a temporary isolated environment to check lightweight imports and console-script registration. Build subprocesses use the already installed build tools without network access. This verifies distribution structure; it does not replace runtime dependency installation or processing checks.
 
-`tests/test_runtime.py` checks installed engine and API imports outside the checkout, CLI help, API defaults with the DocAPI runner mocked, and synthetic PAGE-to-PAGE/ALTO processing with an empty engine configuration. The API starts a service rather than parsing `--help`. DocAPI checks are skipped in a base-only installation. For all runtime checks, install `.[full,test]` in a clean environment and run `python -m pytest -q` and `python -m pip check`. Actual inference still requires a compatible model and configuration.
+`tests/test_runtime.py` checks installed engine and API imports outside the checkout, CLI help, API defaults with the DocAPI runner mocked, and synthetic PAGE-to-PAGE/ALTO processing with an empty engine configuration. The API starts a service rather than parsing `--help`. Runtime tests default to `--runtime-mode=full`, which requires both the processing stack and DocAPI: missing dependencies fail rather than silently skipping checks. For all runtime checks, install `.[full,test]` in a clean environment and run `python -m pytest -q --runtime-mode=full` and `python -m pip check`. Actual inference still requires a compatible model and configuration.
+
+Use a separate clean environment for each partial installation:
+
+```bash
+# Client-only environment: no AnnoPage, pero-ocr, PyTorch or Ultralytics.
+python -m pip install '.[client,test]'
+python -m pytest -q --runtime-mode=client
+python -m pip check
+
+# Local processing environment, without DocAPI.
+python -m pip install '.[tool,test]'
+python -m pytest -q --runtime-mode=tool
+python -m pip check
+```
+
+The client mode asserts that the processing packages above are absent and exercises installed API/client imports, client help and the mocked API wrapper. Tool mode exercises processing imports, local command help and synthetic XML processing. Only checks outside the explicitly selected partial mode are skipped. `tests/test_packaging.py` runs with `.[test]` alone, including a dependency-free base wheel installation. Virtual-environment executable paths and console-script suffixes account for POSIX and Windows; execution on Windows and Python 3.10 still needs independent validation.
 
 The wider processing regression suite and CI are still being established. For new processing tests, replace the focused module above with the tests added or modified. Confirm that the runner **collected and executed tests** and check its exit status.
 

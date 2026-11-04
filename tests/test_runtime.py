@@ -1,6 +1,7 @@
 """Smoke checks for an installed package; no model downloads or live services."""
 
 import importlib
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -9,28 +10,33 @@ import pytest
 
 
 def command(name, *arguments, cwd):
-    executable = Path(sys.executable).parent / name
+    executable = Path(sys.executable).parent / (name + (".exe" if os.name == "nt" else ""))
     result = subprocess.run([str(executable), *arguments], cwd=cwd, text=True, capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
 
 
-def test_installed_core_imports(tmp_path):
+def test_installed_imports(tmp_path, runtime_mode):
     result = subprocess.run([sys.executable, "-I", "-c", """
 import importlib
 import importlib.util
-for module in (
+import sys
+mode = sys.argv[1]
+processing_modules = (
     'people_gator.core.layout', 'people_gator.core.document_parser',
     'people_gator.core.db', 'people_gator.engines.face_detection',
     'people_gator.engines.face_assignment', 'people_gator.engines.entity_matching',
     'people_gator.engines.llm', 'user_scripts.parse_folder',
     'user_scripts.merge_document_entities',
-):
+)
+api_modules = ('processing_api.api', 'processing_api.client', 'processing_api.worker')
+modules = processing_modules if mode == 'tool' else api_modules if mode == 'client' else processing_modules + api_modules
+for module in modules:
     importlib.import_module(module)
-if importlib.util.find_spec('doc_api') is not None:
-    for module in ('processing_api.api', 'processing_api.client', 'processing_api.worker'):
-        importlib.import_module(module)
-"""], cwd=tmp_path, text=True, capture_output=True)
+if mode == 'client':
+    for module in ('torch', 'ultralytics', 'anno_page', 'pero_ocr'):
+        assert importlib.util.find_spec(module) is None, module + ' must be absent in the client-only environment'
+""", runtime_mode], cwd=tmp_path, text=True, capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
@@ -40,16 +46,41 @@ if importlib.util.find_spec('doc_api') is not None:
     ("peoplegator_client", ["--api-url", "--alto-xmls", "--page-xmls"]),
     ("peoplegator_worker", ["--api-url", "--engines-dir", "--device"]),
 ])
-def test_installed_cli_help(name, options, tmp_path):
-    if name in {"peoplegator_client", "peoplegator_worker"}:
-        pytest.importorskip("doc_api")
+def test_installed_cli_help(name, options, tmp_path, runtime_mode):
+    if runtime_mode == "tool" and name in {"peoplegator_client", "peoplegator_worker"}:
+        pytest.skip("DocAPI commands are outside the tool installation mode")
+    if runtime_mode == "client" and name != "peoplegator_client":
+        pytest.skip("Only client command is exercised in the client installation mode")
     output = command(name, "--help", cwd=tmp_path)
     for option in options:
         assert option in output
 
 
-def test_api_wrapper(monkeypatch):
-    pytest.importorskip("doc_api")
+def test_installed_client_list_engines(tmp_path, runtime_mode):
+    if runtime_mode == "tool":
+        pytest.skip("DocAPI is outside the tool installation mode")
+    result = subprocess.run([sys.executable, "-I", "-c", """
+from importlib.metadata import distribution
+from types import SimpleNamespace
+from unittest.mock import patch
+import importlib
+import sys
+entry, = (e for e in distribution('people-gator').entry_points if e.name == 'peoplegator_client')
+main = entry.load()
+module = importlib.import_module(main.__module__)
+sys.argv = ['peoplegator_client', '--api-url', 'https://example.invalid', '--api-key', 'test', '--list-engines']
+with patch.object(module, 'Adapter') as adapter:
+    adapter.return_value.get_engines.return_value = SimpleNamespace(data=[])
+    assert main() == 0
+    adapter.return_value.get_engines.assert_called_once_with()
+"""], cwd=tmp_path, text=True, capture_output=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "No available engines." in result.stderr
+
+
+def test_api_wrapper(monkeypatch, runtime_mode):
+    if runtime_mode == "tool":
+        pytest.skip("DocAPI is outside the tool installation mode")
     api = importlib.import_module("processing_api.api")
     calls = []
     monkeypatch.delenv("SERVER_NAME", raising=False)
@@ -59,13 +90,14 @@ def test_api_wrapper(monkeypatch):
         monkeypatch.setenv(key, "")
     monkeypatch.setattr(api, "doc_api_main", lambda: calls.append(True))
     assert api.main() == 0
-    import os
     assert os.environ["SERVER_NAME"] == "PeopleGatorAPI"
     assert os.environ["APP_PORT"] == "8123"
     assert calls == [True]
 
 
-def test_installed_model_free_processing(tmp_path):
+def test_installed_model_free_processing(tmp_path, runtime_mode):
+    if runtime_mode == "client":
+        pytest.skip("Processing is outside the client installation mode")
     import cv2
     import numpy as np
     from lxml import etree

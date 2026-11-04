@@ -4,6 +4,7 @@ import ast
 import configparser
 from email.parser import BytesParser
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -50,10 +51,15 @@ def test_metadata_and_direct_dependencies():
         "doc_api": "doc-api", "doc_worker": "doc-api", "doc_client": "doc-api",
     }
     base = {canonicalize_name(Requirement(d).name) for d in project["dependencies"]}
+    assert not base
+    extras = project["optional-dependencies"]
+    groups = {extra: {canonicalize_name(Requirement(d).name) for d in dependencies}
+              for extra, dependencies in extras.items()}
+    assert groups["client"] == groups["api"] == {"doc-api"}
+    assert "doc-api" not in groups["tool"]
+    assert set(extras["worker"]) == set(extras["full"]) == set(extras["tool"]) | set(extras["client"])
     for directory in SOURCE_DIRS:
-        declared = base.copy()
-        if directory == "processing_api":
-            declared.update(Requirement(d).name for d in project["optional-dependencies"]["full"])
+        declared = groups["worker"] if directory == "processing_api" else groups["tool"]
         for path in (ROOT / directory).rglob("*.py"):
             for node in ast.walk(ast.parse(path.read_text())):
                 if isinstance(node, ast.Import):
@@ -75,9 +81,6 @@ def test_metadata_and_direct_dependencies():
             if requirement.url:
                 revision = requirement.url.rsplit("@", 1)[-1]
                 assert len(revision) == 40 and all(c in "0123456789abcdef" for c in revision)
-        if extra in {"api", "client", "worker", "full"}:
-            assert dependencies == project["optional-dependencies"]["full"]
-    assert "doc-api" not in base
 
 
 @pytest.fixture(scope="module")
@@ -106,7 +109,9 @@ def test_wheel_contents_and_metadata(wheel):
         assert metadata["Requires-Python"] == CONFIG["project"]["requires-python"]
         assert set(metadata.get_all("Provides-Extra")) == set(CONFIG["project"]["optional-dependencies"])
         for dependency in metadata.get_all("Requires-Dist"):
-            Requirement(dependency)
+            requirement = Requirement(dependency)
+            assert requirement.marker is not None
+            assert not requirement.marker.evaluate({"extra": ""})
         entries_path, = (name for name in files if name.endswith(".dist-info/entry_points.txt"))
         entries = configparser.ConfigParser()
         entries.read_string(archive.read(entries_path).decode())
@@ -120,7 +125,8 @@ def test_wheel_contents_and_metadata(wheel):
 def test_clean_wheel_install(wheel, tmp_path):
     environment = tmp_path / "venv"
     venv.EnvBuilder(with_pip=True).create(environment)
-    python = environment / "bin/python"
+    scripts = environment / ("Scripts" if os.name == "nt" else "bin")
+    python = scripts / ("python.exe" if os.name == "nt" else "python")
     run(str(python), "-m", "pip", "install", "--no-deps", "--no-index", str(wheel), cwd=tmp_path)
     # Run away from the checkout so namespace-package discovery errors surface.
     output = run(str(python), "-I", "-c", """
@@ -135,4 +141,4 @@ print(json.dumps({entry.name: entry.value for entry in distribution.entry_points
 """, cwd=tmp_path)
     assert json.loads(output) == CONFIG["project"]["scripts"]
     for command in CONFIG["project"]["scripts"]:
-        assert (environment / "bin" / command).is_file()
+        assert (scripts / (command + (".exe" if os.name == "nt" else ""))).is_file()
