@@ -168,3 +168,10 @@ For example, `{"outputs": {"alto": true, "page": true, "renders": false}}` reque
 The worker forwards `--device` and an explicitly supplied integer `--gpu-id` (including zero). Its CLI defaults to `gpu`; direct `PeopleGatorWorker` construction continues to default to `cpu`. The GPU ID defaults to `None` and is omitted unless configured. The subprocess receives the worker logger's effective level through `--logging-level`; the worker CLI defaults to `INFO`.
 
 PeopleGatorApp credentials remain in the engine's `[DB_API]` section. The worker's `--api-url` and `--api-key` authenticate with DocAPI and are separate from that database connection.
+
+The worker reports success to DocAPI only when the `peoplegator` subprocess exits
+with code `0`. A non-zero exit code produces a failed worker response identifying
+the command, job (when available), and numeric return code. Captured stdout and
+stderr are logged at `ERROR` with the job identifier, including empty streams;
+they are not included in the concise failure response. Command arguments, engine
+configuration contents, and worker credentials are not added to these diagnostics.
