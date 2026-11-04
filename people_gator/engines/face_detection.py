@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 
 from ultralytics import YOLO
@@ -10,8 +11,20 @@ from people_gator.core.services import UuidService
 from people_gator.engines import DocumentProcessingEngine
 
 
+logger = logging.getLogger(__name__)
+
+
 class FaceDetectionYoloEngine(DocumentProcessingEngine):
+    """Detect faces and five landmarks in eligible source-region crops."""
+
     def __init__(self, config, device, config_path):
+        """Initialize FaceDetectionYoloEngine from the supplied settings and data.
+
+        Args:
+            config: INI configuration or engine section for this component.
+            device: Processing device (torch device or cpu/gpu selection).
+            config_path: Base directory for relative engine resource paths.
+        """
         super().__init__(config, device, config_path)
 
         self.detector = YoloDetector(model_path=compose_path(self.config["MODEL_PATH"], self.config_path),
@@ -25,14 +38,33 @@ class FaceDetectionYoloEngine(DocumentProcessingEngine):
         self.uuid_service = UuidService()
 
     def process_document(self, document):
+        """Process the document with the configured engine and return it.
+
+        Args:
+            document: Document to process or transfer; updated in place.
+
+        Returns:
+            The processed document (the same instance for the built-in engines).
+        """
         for page_image, page_layout in document.pages_iterator():
             self.process_page(page_image, page_layout)
 
         return document
 
     def process_page(self, page_image, page_layout):
+        """Process one page in place and return its layout.
+
+        Args:
+            page_image: Page image array in page-layout coordinates.
+            page_layout: Page layout supplying regions, OCR, or source references.
+
+        Returns:
+            The page layout after in-place processing.
+        """
         regions = []
         regions_images = []
+        skipped = 0
+        detected = 0
 
         for region in page_layout.regions:
             if self.categories is None or region.category is not None and region.category.lower() in self.categories:
@@ -40,12 +72,16 @@ class FaceDetectionYoloEngine(DocumentProcessingEngine):
                 region_image = page_image[y_min:y_max, x_min:x_max]
 
                 if region_image.size == 0:
+                    skipped += 1
                     continue
 
                 regions.append(region)
                 regions_images.append(region_image)
 
+        logger.debug("Page %s: %d eligible regions, %d empty crops skipped",
+                     page_layout.id, len(regions_images), skipped)
         if len(regions_images) == 0:
+            logger.debug("Page %s: no eligible nonempty regions; detection skipped", page_layout.id)
             return page_layout
 
         face_detections = self.detect_faces(regions_images)
@@ -115,27 +151,68 @@ class FaceDetectionYoloEngine(DocumentProcessingEngine):
                                                           face_metadata=face_metadata)
 
                 page_layout.regions.append(face_region)
+                detected += 1
 
+        logger.debug("Page %s: detected %d faces", page_layout.id, detected)
         return page_layout
 
     def detect_faces(self, images):
+        """Return detector predictions for the supplied region images.
+
+        Args:
+            images: Ordered list of source-region image arrays.
+
+        Returns:
+            YOLO result objects, in input image order.
+        """
         return self.detector(images)
 
 
 class YoloDetector:
+    """YOLO inference adapter storing confidence, image-size, and NMS settings."""
+
     def __init__(self, model_path, device, detection_threshold=0.2, image_size=640, agnostic_nms=False):
+        """Load the YOLO model on the selected device and store inference options.
+
+        Args:
+            model_path: Path to a compatible YOLO face/keypoint model.
+            device: Processing device (torch device or cpu/gpu selection).
+            detection_threshold: Minimum detector confidence; defaults to 0.2.
+            image_size: YOLO inference image size; defaults to 640.
+            agnostic_nms: Whether NMS ignores class labels; defaults to False.
+        """
+        logger.info("Loading YOLO face detector on %s", device)
         self.model = YOLO(model_path).to(device)
+        logger.debug("YOLO detector ready: threshold=%s, image_size=%s", detection_threshold, image_size)
         self.detection_threshold = detection_threshold
         self.image_size = image_size
         self.agnostic_nms = agnostic_nms
 
     def __call__(self, *args, **kwargs):
+        """Delegate to the primary operation with the supplied arguments.
+
+        Args:
+            *args: Arguments forwarded to the delegated operation.
+            **kwargs: Keyword arguments forwarded to the delegated operation.
+
+        Returns:
+            The result of the delegated operation.
+        """
         return self.detect(*args, **kwargs)
 
     def detect(self, data):
+        """Run YOLO inference with the configured threshold, image size, and NMS.
+
+        Args:
+            data: YOLO-compatible images or batches.
+
+        Returns:
+            YOLO result objects, in input image order.
+        """
         results = self.model(data, conf=self.detection_threshold, imgsz=self.image_size, verbose=False, agnostic_nms=self.agnostic_nms)
         return results
 
     @property
     def names(self):
+        """Return the model class-name mapping."""
         return self.model.names

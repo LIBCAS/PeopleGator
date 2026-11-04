@@ -211,8 +211,7 @@ def test_failure_response_and_diagnostics(invoke_completion, worker_module, capl
     messages = [record.getMessage() for record in caplog.records
                 if record.name == worker_module.__name__ and record.levelno == logging.ERROR]
     assert response.error_message in messages
-    assert f"Job {job_label} stdout: {output[0]}" in messages
-    assert f"Job {job_label} stderr: {output[1]}" in messages
+    assert f"Job {job_label} subprocess output: stdout={len(output[0])} chars, stderr={len(output[1])} chars" in messages
     invoke_completion.process.communicate.assert_called_once_with()
 
 
@@ -221,7 +220,8 @@ def test_failure_message_omits_output_and_credentials(invoke_completion, worker_
     output = ("password=child-secret", "sensitive diagnostic")
     with caplog.at_level(logging.ERROR, logger=worker_module.__name__):
         response = invoke_completion(2, output)
-    assert "worker-secret" not in caplog.text
+    for value in ("worker-secret", "child-secret", "sensitive diagnostic"):
+        assert value not in caplog.text
     for value in ("worker-secret", "child-secret", "sensitive diagnostic", "--config"):
         assert value not in response.error_message
 

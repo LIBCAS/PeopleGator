@@ -10,23 +10,43 @@ logger = logging.getLogger(__name__)
 
 
 def compose_path(file_path, reference_path):
+    """Resolve a relative file path against a reference directory.
+
+    Args:
+        file_path: Absolute or relative file path.
+        reference_path: Base directory for resolving relative paths.
+
+    Returns:
+        The original absolute path, or the path joined to the reference directory.
+    """
     if reference_path and not os.path.isabs(file_path):
         file_path = os.path.join(reference_path, file_path)
     return file_path
 
 
 def config_get_list(config, key, fallback=None, make_lowercase=False):
+    """Read a JSON list setting, using the fallback for missing or invalid values.
+
+    Args:
+        config: INI configuration or engine section for this component.
+        key: INI option containing a JSON list.
+        fallback: Value returned for missing or invalid list settings.
+        make_lowercase: Whether to lowercase string list items; defaults to False.
+
+    Returns:
+        The parsed list, optionally lowercased, or the supplied fallback.
+    """
     if key not in config:
         return fallback
 
     try:
         value = json.loads(config[key])
     except json.decoder.JSONDecodeError as e:
-        logger.info(f'Failed to parse list from config key "{key}", returning fallback {fallback}:\n{e}')
+        logger.warning("Invalid JSON list in configuration key %s; using fallback", key)
         return fallback
 
     if not isinstance(value, list):
-        logger.info(f'Config key "{key}" is not a list (got {type(value).__name__}), returning fallback {fallback}.')
+        logger.warning("Configuration key %s is not a list; using fallback", key)
         return fallback
 
     if make_lowercase:
@@ -36,6 +56,17 @@ def config_get_list(config, key, fallback=None, make_lowercase=False):
 
 
 def load_image(path):
+    """Read a color image with OpenCV.
+
+    Args:
+        path: Image file path.
+
+    Returns:
+        A BGR color image array.
+
+    Raises:
+        Exception: If OpenCV cannot read the image.
+    """
     image = cv2.imread(path, 1)
     if image is None:
         raise Exception(f'Unable to read image "{path}"')
@@ -43,6 +74,13 @@ def load_image(path):
 
 
 def find_text_in_bounding_box(page_layout, bounding_box, min_overlap_ratio=0.5):
+    """Return joined OCR lines meeting the overlap threshold, or None.
+
+    Args:
+        page_layout: Page layout supplying regions, OCR, or source references.
+        bounding_box: Bounds as (x_min, y_min, x_max, y_max) in page pixels.
+        min_overlap_ratio: Minimum fraction of line area inside the box; defaults to 0.5.
+    """
     x_min, y_min, x_max, y_max = bounding_box
     bounding_box_polygon = Polygon([(x_min, y_min), (x_min, y_max), (x_max, y_max), (x_max, y_min)])
 
@@ -63,6 +101,13 @@ def find_text_in_bounding_box(page_layout, bounding_box, min_overlap_ratio=0.5):
 
 
 def find_source_region_by_bounding_box(page_layout, bounding_box, min_overlap_ratio=0.8):
+    """Return the best-overlapping region meeting the threshold, or None.
+
+    Args:
+        page_layout: Page layout supplying regions, OCR, or source references.
+        bounding_box: Bounds as (x_min, y_min, x_max, y_max) in page pixels.
+        min_overlap_ratio: Minimum intersection/box-area ratio; defaults to 0.8.
+    """
     x_min, y_min, x_max, y_max = bounding_box
     bounding_box_polygon = Polygon([(x_min, y_min), (x_min, y_max), (x_max, y_max)])
     bounding_box_area = bounding_box_polygon.area

@@ -171,7 +171,32 @@ PeopleGatorApp credentials remain in the engine's `[DB_API]` section. The worker
 
 The worker reports success to DocAPI only when the `peoplegator` subprocess exits
 with code `0`. A non-zero exit code produces a failed worker response identifying
-the command, job (when available), and numeric return code. Captured stdout and
-stderr are logged at `ERROR` with the job identifier, including empty streams;
-they are not included in the concise failure response. Command arguments, engine
-configuration contents, and worker credentials are not added to these diagnostics.
+the command, job (when available), and numeric return code. Failure diagnostics
+report stdout/stderr character counts at `ERROR`, including empty streams. Raw
+child output, command arguments, configuration contents, and worker credentials
+are omitted from these diagnostics and the concise failure response.
+
+## Logging
+
+The processing CLI, entity-merging utility, DocAPI client, and worker retain their
+`--logging-level` options. `INFO` reports initialization, document/job milestones,
+and output generation. Use `DEBUG` for page IDs, engine selection, eligible-region
+and face counts, assignment modes, and matching outcomes. Recoverable skips and
+failed requests use `WARNING` or `ERROR` as appropriate. Repeated initialization
+reuses existing root handlers, including the worker's rotating file handler for
+the same log filename. The worker retains its format, date-format, and file options.
+
+Project loggers use module names and parameterized messages. Diagnostics omit
+credentials, proposed person names, OCR/caption text, API response bodies, and
+exception messages that may contain private payloads. Database and LLM failures
+report the operation, HTTP status or exception type, and retry number where
+applicable. JSON decoding failures still propagate to database callers after a
+safe diagnostic. Worker logs report job IDs, subprocess exit status, and stdout/
+stderr character counts; arbitrary child output is not copied into logs.
+
+The worker retains the subprocess failure propagation introduced by
+[PR #31](https://github.com/LIBCAS/PeopleGator/pull/31).
+
+The entity-merging CLI reports its document page count and completion at `INFO`,
+with at most ten page-count progress updates per document. Page identifiers and
+individual merge details remain at `DEBUG`.

@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 
 class LLMPrompter:
+    """Render prompts and request structured LLM responses with bounded retries."""
+
     def __init__(self, 
                  api_url: str, 
                  api_key: str, 
@@ -30,6 +32,20 @@ class LLMPrompter:
                  json_schema = None,
                  max_attempts: int = 3,
                  num_processes: int = 4):
+        """Configure prompt rendering, response validation, and LLM request limits.
+
+        Args:
+            api_url: Service base URL.
+            api_key: Service authentication key.
+            model_name: LLM model identifier.
+            reasoning_effort: Requested reasoning effort; defaults to low.
+            max_output_tokens: Response token limit; defaults to 1000.
+            prompt_template_system: Optional Jinja2 system-prompt source.
+            prompt_template_user: Optional Jinja2 user-prompt source.
+            json_schema: Optional output schema used when no response model is supplied.
+            max_attempts: Maximum request attempts; defaults to 3.
+            num_processes: Parallel request pool size; defaults to 4.
+        """
         self.api_url = api_url
         self.api_key = api_key
         self.model_name = model_name
@@ -42,12 +58,30 @@ class LLMPrompter:
         self.num_processes = num_processes
 
     def __call__(self, data: dict, images: list|dict|None = None, response_model=None):
+        """Delegate to the primary operation with the supplied arguments.
+
+        Args:
+            data: Template context mapping.
+            images: Optional images as an ordered list or label-to-image mapping.
+            response_model: Optional Pydantic response class; None returns decoded JSON.
+
+        Returns:
+            The result of the delegated operation.
+        """
         return self.process(data, images, response_model)
 
     def process_parallel(self, data_list: list[dict], images_list: list[list|dict|None]|None = None, response_model=None):
+        """Return LLM results in request order using a multiprocessing pool.
+
+        Args:
+            data_list: Prompt-context dictionaries in request order.
+            images_list: Optional per-request images; None supplies no images.
+            response_model: Optional Pydantic response class; None returns decoded JSON.
+        """
         if images_list is None:
             images_list = [None] * len(data_list)
 
+        logger.debug("Preparing %d parallel LLM requests with %d processes", len(data_list), self.num_processes)
         request_args = [self._prepare_request_args(data, images, response_model) for data, images in zip(data_list, images_list)]
 
         with multiprocessing.Pool(processes=self.num_processes) as pool:
@@ -56,6 +90,16 @@ class LLMPrompter:
         return results
 
     def process(self, data: dict, images: list|dict|None = None, response_model=None):
+        """Render a prompt and return the structured LLM result.
+
+        Args:
+            data: Template context mapping.
+            images: Optional images as an ordered list or label-to-image mapping.
+            response_model: Optional Pydantic response class; None returns decoded JSON.
+
+        Returns:
+            The latest LLM result; see _send_request for failure semantics.
+        """
         request_args = self._prepare_request_args(data, images, response_model)
         result = self._send_request(self.api_url, self.api_key, request_args, self.max_attempts, self.json_schema, response_model)
 
@@ -63,10 +107,27 @@ class LLMPrompter:
 
     @staticmethod
     def _send_request(api_url, api_key, request_args: dict, max_attempts: int, json_schema, response_model=None):
+        """Request and validate an LLM response with bounded retries.
+
+        Args:
+            api_url: Service base URL.
+            api_key: Service authentication key.
+            request_args: Prepared Responses API keyword arguments.
+            max_attempts: Maximum number of request attempts.
+            json_schema: Output schema used when no response model is supplied; may be None.
+            response_model: Optional Pydantic response class; None returns decoded JSON.
+
+        Returns:
+            The latest decoded result, optionally validated, or None. A decoded
+            value can survive a subsequent validation failure, as in existing callers.
+        """
+        logger.debug("Starting structured LLM request; maximum attempts=%d", max_attempts)
         result = None
+        validated = False
         client = OpenAI(base_url=api_url, api_key=api_key)
 
         for attempt in range(max_attempts):
+            validated = False
             try:
                 response = client.responses.create(**request_args)
                 parsed_json = json.loads(strip_markdown(response.output_text))
@@ -79,19 +140,34 @@ class LLMPrompter:
                     validate(instance=parsed_json, schema=json_schema)
 
             except ValidationError as e:
-                logger.error(f"Attempt {attempt + 1} failed to validate JSON response: {e}")
+                logger.warning("LLM attempt %d/%d: response schema validation failed (%s)", attempt + 1, max_attempts, type(e).__name__)
                 continue
 
             except Exception as e:
-                logger.error(f"Attempt {attempt + 1} failed to get a valid response: {e}")
+                logger.warning("LLM attempt %d/%d failed (%s)", attempt + 1, max_attempts, type(e).__name__)
                 continue
 
+            validated = True
             if result:
                 break
 
+        if not validated or not result:
+            logger.error("LLM request exhausted %d attempts without a usable response", max_attempts)
+        else:
+            logger.debug("LLM request completed")
         return result
 
     def _prepare_request_args(self, data: dict, images: list|dict|None = None, response_model=None):
+        """Build Responses API arguments from templates, images, and output schema.
+
+        Args:
+            data: Template context mapping.
+            images: Optional images as an ordered list or label-to-image mapping.
+            response_model: Optional Pydantic response class; None returns decoded JSON.
+
+        Returns:
+            Responses API keyword arguments with an optional output schema.
+        """
         messages = []
 
         if self.prompt_template_system:
@@ -148,12 +224,27 @@ class LLMPrompter:
         return request_args
 
     def eval_prompt_template(self, template: Template, data: dict):
+        """Return a Jinja2 template rendered with the supplied context.
+
+        Args:
+            template: Jinja2 template to render.
+            data: Template context mapping.
+        """
         return template.render(**data)
 
 
 
 class LLMBasedEngine(BaseEngine):
+    """Engine configuration for prompt templates, response schemas, and an LLM."""
+
     def __init__(self, config, device, config_path):
+        """Initialize LLMBasedEngine from the supplied settings and data.
+
+        Args:
+            config: INI configuration or engine section for this component.
+            device: Processing device (torch device or cpu/gpu selection).
+            config_path: Base directory for relative engine resource paths.
+        """
         super().__init__(config, device, config_path)
 
         self.prompt_template_path = self.config.get("prompt_template_path")
@@ -163,6 +254,7 @@ class LLMBasedEngine(BaseEngine):
         self.prompt_template_user = None
         self.json_schema = None
 
+        logger.debug("Loading LLM prompt and response schema configuration")
         self.load_prompt_template()
         self.load_json_schema()
 
@@ -184,6 +276,12 @@ class LLMBasedEngine(BaseEngine):
         )
 
     def load_prompt_template(self):
+        """Load configured system/user templates from JSON when a path is present.
+
+        Raises:
+            OSError: If the configured resource cannot be read.
+            ValueError: If the resource contains invalid JSON.
+        """
         if self.prompt_template_path:
             prompt_template_path = compose_path(self.prompt_template_path, self.config_path)
             with open(prompt_template_path, "r") as f:
@@ -196,6 +294,12 @@ class LLMBasedEngine(BaseEngine):
                 self.prompt_template_user = prompt_template["user"]
 
     def load_json_schema(self):
+        """Load the optional response JSON schema when a path is present.
+
+        Raises:
+            OSError: If the configured resource cannot be read.
+            ValueError: If the resource contains invalid JSON.
+        """
         if self.json_schema_path:
             json_schema_path = compose_path(self.json_schema_path, self.config_path)
             with open(json_schema_path, "r") as f:
@@ -203,6 +307,11 @@ class LLMBasedEngine(BaseEngine):
 
 
 def strip_markdown(text):
+    """Return text without a complete outer JSON or unlabelled Markdown fence.
+
+    Args:
+        text: Source OCR text or input text for this operation.
+    """
     text = (text or "").strip()
     if not text.startswith("```"):
         return text
@@ -219,6 +328,11 @@ def strip_markdown(text):
 
 
 def encode_image_to_base64(image: np.ndarray) -> str:
+    """Return a JPEG data URL encoded from an OpenCV image.
+
+    Args:
+        image: OpenCV image array.
+    """
     _, buffer = cv2.imencode('.jpg', image)
     image_base64 = base64.b64encode(buffer).decode("utf-8")
     return f"data:image/jpeg;base64,{image_base64}"

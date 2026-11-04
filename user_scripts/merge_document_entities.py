@@ -45,6 +45,14 @@ class EntityGroup(BaseModel):
 
     @model_validator(mode="after")
     def validate_entity_ids(self):
+        """Validate that the group has at least two distinct entity indices.
+
+        Returns:
+            The validated model instance.
+
+        Raises:
+            ValueError: If the entity-index constraints are violated.
+        """
         if len(self.entity_ids) < 2:
             raise ValueError("Each group must contain at least two entities.")
 
@@ -69,6 +77,14 @@ class EntityResolutionOutput(BaseModel):
 
     @model_validator(mode="after")
     def validate_unique_entities(self):
+        """Validate that each entity index occurs in at most one group.
+
+        Returns:
+            The validated model instance.
+
+        Raises:
+            ValueError: If the entity-index constraints are violated.
+        """
         all_ids = [
             entity_id
             for group in self.groups
@@ -85,6 +101,11 @@ class EntityResolutionOutput(BaseModel):
 
 
 def parse_arguments():
+    """Parse this command's arguments from the process command line.
+
+    Returns:
+        An argparse.Namespace with the parsed command options.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", help="Path to the configuration INI file with DB_API settings.")
     parser.add_argument("--metadata", help="Path to the document metadata JSON file.")
@@ -103,12 +124,20 @@ def parse_arguments():
 
 
 def setup_logging(logging_level):
+    """Set the root logging level and format, adding handlers only when needed.
+
+    Args:
+        logging_level: Root logging level name accepted by the CLI.
+    """
     level = logging.getLevelName(logging_level)
 
     log_formatter = logging.Formatter('[%(levelname)s|%(asctime)s|%(filename)s:%(name)s]: %(message)s', datefmt="%Y-%m-%d_%H-%M-%S")
 
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
+
+    if not root_logger.handlers:
+        root_logger.addHandler(logging.StreamHandler())
 
     root_handler = root_logger.handlers[0]
     root_handler.setFormatter(log_formatter)
@@ -117,24 +146,51 @@ def setup_logging(logging_level):
 
 
 def load_config(config_path):
+    """Read an INI file and return its ConfigParser.
+
+    Args:
+        config_path: Path to the INI configuration file to read.
+    """
     config = configparser.ConfigParser()
     config.read(config_path)
     return config
 
 
 def load_metadata(metadata_path):
+    """Load document and page metadata from the configured JSON file.
+
+    Args:
+        metadata_path: Path to the document/page metadata JSON file to read.
+
+    Returns:
+        The decoded metadata mapping.
+    """
     with open(metadata_path, "r") as f:
         metadata = json.load(f)
     return metadata
 
 
 def load_prompt(prompt_path):
+    """Read and return the JSON prompt templates.
+
+    Args:
+        prompt_path: JSON file containing system and user prompt templates.
+
+    Returns:
+        The decoded prompt mapping.
+    """
     with open(prompt_path, "r") as f:
         prompt = json.load(f)
     return prompt
 
 
 def evaluate_page_entities(llm_prompter: LLMPrompter, db_page_entities):
+    """Return LLM consolidation groups for the supplied page entity records.
+
+    Args:
+        llm_prompter: Configured structured-response LLM client.
+        db_page_entities: App response containing page entity items.
+    """
     data = []
     for i, entity in enumerate(db_page_entities["items"]):
         data.append({
@@ -149,7 +205,16 @@ def evaluate_page_entities(llm_prompter: LLMPrompter, db_page_entities):
 
 
 def main():
+    """Consolidate page entities through LLM suggestions and the app API.
+
+    Returns:
+        Zero after the command completes normally.
+    """
     args = parse_arguments()
+
+    setup_logging(args.logging_level)
+    logger = logging.getLogger(__name__)
+    logger.info("Starting document entity merging")
 
     config = load_config(args.config)
     prompt = load_prompt(args.prompt)
@@ -172,9 +237,12 @@ def main():
     library = metadata["document"]["library"]
 
     db_pages = db_api_service.get_document_pages(document_id, library)
-    for db_page in db_pages["items"]:
+    page_count = len(db_pages["items"])
+    progress_interval = max(1, (page_count + 9) // 10)
+    logger.info("Document %s: merging entities across %d pages", document_id, page_count)
+    for page_index, db_page in enumerate(db_pages["items"], start=1):
         db_page_source_id = db_page["source_id"]
-        print(f"Processing page {db_page_source_id} of document '{document_name}' (ID: {document_id}) in library '{library}'")
+        logger.debug("Merging entities on page %s of document %s", db_page_source_id, document_id)
 
         db_page_entities = db_api_service.get_entities_for_page(db_page_source_id)
         result = evaluate_page_entities(llm_prompter, db_page_entities)
@@ -183,10 +251,14 @@ def main():
             target_entity_id = entities[0]["entity_id"]
             other_entity_ids = [entity["entity_id"] for entity in entities[1:]]
 
-            print(f"Merging entities {other_entity_ids} into target entity {target_entity_id} for page {db_page_source_id}")
+            logger.debug("Merging %d entities on page %s", len(other_entity_ids), db_page_source_id)
 
             db_api_service.merge_entities(target_entity_id, other_entity_ids, description=group.long_description, short_description=group.short_description)
 
+        if page_index % progress_interval == 0 or page_index == page_count:
+            logger.info("Document %s: processed %d/%d pages", document_id, page_index, page_count)
+
+    logger.info("Document %s entity merging completed (%d pages)", document_id, page_count)
     return 0
 
 
