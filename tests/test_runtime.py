@@ -44,7 +44,7 @@ if mode == 'client':
     ("peoplegator", ["--config", "--input-alto-path", "--input-xml-path", "--device"]),
     ("peoplegator_merge_document_entities", ["--metadata", "--prompt", "--model"]),
     ("peoplegator_client", ["--api-url", "--alto-xmls", "--page-xmls"]),
-    ("peoplegator_worker", ["--api-url", "--engines-dir", "--device"]),
+    ("peoplegator_worker", ["--api-url", "--engines-dir", "--device", "--gpu-id"]),
 ])
 def test_installed_cli_help(name, options, tmp_path, runtime_mode):
     if runtime_mode == "tool" and name in {"peoplegator_client", "peoplegator_worker"}:
@@ -95,9 +95,12 @@ def test_api_wrapper(monkeypatch, runtime_mode):
     assert calls == [True]
 
 
-def test_installed_model_free_processing(tmp_path, runtime_mode):
+@pytest.mark.parametrize("runner", ["cli", "worker"])
+def test_installed_model_free_processing(tmp_path, runtime_mode, runner):
     if runtime_mode == "client":
         pytest.skip("Processing is outside the client installation mode")
+    if runtime_mode == "tool" and runner == "worker":
+        pytest.skip("DocAPI is outside the tool installation mode")
     import cv2
     import numpy as np
     from lxml import etree
@@ -125,9 +128,33 @@ def test_installed_model_free_processing(tmp_path, runtime_mode):
     config.write_text("[PARSE_FOLDER]\n")
     output_page = tmp_path / "output-page"
     output_alto = tmp_path / "output-alto"
-    command("peoplegator", "--config", str(config), "--input-image-path", str(images),
-            "--input-xml-path", str(pages), "--output-xml-path", str(output_page),
-            "--output-alto-path", str(output_alto), "--device", "cpu", cwd=tmp_path)
+    if runner == "cli":
+        command("peoplegator", "--config", str(config), "--input-image-path", str(images),
+                "--input-xml-path", str(pages), "--output-xml-path", str(output_page),
+                "--output-alto-path", str(output_alto), "--device", "cpu", cwd=tmp_path)
+    else:
+        # Exercise the installed worker and its real processing subprocess away from the checkout.
+        result = subprocess.run([sys.executable, "-I", "-c", """
+import logging
+from pathlib import Path
+from types import SimpleNamespace
+from doc_api.connector import Connector
+from processing_api.worker import PeopleGatorWorker
+logging.basicConfig(level=logging.INFO)
+root = Path.cwd()
+worker = PeopleGatorWorker('https://example.invalid', Connector('test'), base_dir=str(root / 'worker'))
+job = SimpleNamespace(alto_required=False, page_required=True, meta_json_required=False,
+                      engine_settings={'outputs': {'alto': True, 'page': True, 'renders': True}})
+response = worker.process_job(job, None, str(root / 'images'), str(root / 'results'),
+                              page_xml_dir=str(root / 'pages'), engine_dir=str(root))
+assert response.success
+"""], cwd=tmp_path, text=True, capture_output=True,
+            env={**os.environ, "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", "")})
+        assert result.returncode == 0, result.stdout + result.stderr
+        output_page = tmp_path / "results" / "page"
+        output_alto = tmp_path / "results" / "alto"
+        rendered = cv2.imread(str(tmp_path / "results" / "renders" / "P0001.jpg"))
+        assert rendered is not None and rendered.shape == (64, 64, 3)
     page = etree.parse(str(output_page / "P0001.xml"))
     assert page.xpath("//*[local-name()='Unicode']/text()") == ["Test page"]
     assert page.xpath("//*[local-name()='Page']/@imageWidth") == ["64"]
