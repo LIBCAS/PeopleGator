@@ -36,6 +36,7 @@ def parse_arguments():
     parser.add_argument("--log-file-path", type=str, default=None, required=False, help="Path to a directory where log files will be stored")
 
     parser.add_argument("--device", choices=["gpu", "cpu"], default="gpu")
+    parser.add_argument("--gpu-id", type=int, default=None, help="GPU index to use (if device is gpu).")
 
     return parser.parse_args()
 
@@ -75,7 +76,8 @@ class PeopleGatorWorker(DocWorkerWrapper):
                  cleanup_job_dir: bool = False,
                  cleanup_old_engines: bool = False,
                  download_engine_using_stream: bool = False,
-                 device="cpu"):
+                 device="cpu",
+                 gpu_id: Optional[int] = None):
         super().__init__(
             api_url=api_url,
             connector=connector,
@@ -89,6 +91,7 @@ class PeopleGatorWorker(DocWorkerWrapper):
         )
 
         self.device = device
+        self.gpu_id = gpu_id
 
     def process_job(self,
                     job: Job,
@@ -101,20 +104,41 @@ class PeopleGatorWorker(DocWorkerWrapper):
                     engine_dir: Optional[str] = None) -> WorkerResponse:
         config_path = os.path.join(engine_dir, "config.ini")
 
+        if job.alto_required and job.page_required:
+            raise ValueError("ALTO and PAGE XML inputs are mutually exclusive")
+
+        engine_settings = job.engine_settings if job.engine_settings else {}
+        outputs_settings = engine_settings.get("outputs", {})
+
         process_env = os.environ.copy()
         process_params = [
             "peoplegator",
             "--config", config_path,
             "--input-image-path", images_dir,
-            "--output-alto-path", os.path.join(result_dir, "alto"),
+            "--logging-level", logging.getLevelName(logger.getEffectiveLevel()),
             "--device", self.device
         ]
 
-        if job.alto_required:
+        if self.gpu_id is not None:
+            process_params += ["--gpu-id", str(self.gpu_id)]
+
+        if job.alto_required and alto_dir:
             process_params += ["--input-alto-path", alto_dir]
 
-        if job.page_required:
+        if job.page_required and page_xml_dir:
             process_params += ["--input-xml-path", page_xml_dir]
+
+        if job.meta_json_required and meta_file:
+            process_params += ["--input-metadata-path", meta_file]
+
+        if outputs_settings.get("alto", False):
+            process_params += ["--output-alto-path", os.path.join(result_dir, "alto")]
+
+        if outputs_settings.get("page", False):
+            process_params += ["--output-xml-path", os.path.join(result_dir, "page")]
+
+        if outputs_settings.get("renders", False):
+            process_params += ["--output-render-path", os.path.join(result_dir, "renders")]
 
         process = subprocess.Popen(
             process_params,
@@ -163,7 +187,8 @@ def main():
         cleanup_job_dir=args.cleanup_job_dir,
         cleanup_old_engines=args.cleanup_old_engines,
         download_engine_using_stream=True,
-        device=args.device
+        device=args.device,
+        gpu_id=args.gpu_id
     )
     logger.debug("PeopleGatorWorker initialized.")
 
