@@ -4,7 +4,7 @@ This roadmap lists processing-related development work identified from the curre
 
 ## Development infrastructure
 
-- [ ] Add `pyproject.toml`, declared dependencies and CLI entry points.
+- [x] Add `pyproject.toml`, declared dependencies and CLI entry points (issue #25).
 - [ ] Introduce synthetic fixtures, automated tests, and GitHub Actions CI.
 
 ## Processing and annotation
