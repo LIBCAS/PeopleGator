@@ -58,6 +58,9 @@ subprocess.run(
     ],
     check=True,
 )
+# Record paths for subsequent tool calls and for safe cleanup checks.
+print(f"Temporary root: {temp_root}")
+print(f"Clone: {clone}")
 # Subsequent tool operations must explicitly target clone, not primary.
 ```
 
