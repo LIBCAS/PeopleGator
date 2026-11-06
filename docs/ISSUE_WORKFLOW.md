@@ -15,6 +15,16 @@ If an important decision is still unresolved, keep a `[Draft]` title and list th
 
 **Implementation readiness:** Before assigning an issue to a coding agent, confirm that its intended outcome, scope, acceptance criteria and required decisions are clear enough to implement and verify. The agent should refine an issue with material open questions before beginning work, then follow the [implementation workflow](../AGENTS.md#github-development-workflow).
 
+## Implementing an existing issue with Codex CLI
+
+Start `codex` normally from the **root of your existing PeopleGator checkout**, then give it only:
+
+```text
+Implement LIBCAS/PeopleGator issue #N
+```
+
+The root [`AGENTS.md`](../AGENTS.md) instructs the agent to create and work exclusively in **its own temporary remote clone**, push an issue branch, open a PR against `develop` and delete the clone **only after safe handoff**. You do not need to describe branching, sandbox or cleanup steps in every prompt, and should not use `codex --worktree` for this workflow. For permission prompts, review iterations, operating-system portability and safe cleanup, see [Temporary clones for coding agents](AGENT_TEMP_CLONES.md). This applies to **implementation**; issue drafting remains a separate workflow.
+
 ## What a complete issue contains
 
 | Section | What to include |
