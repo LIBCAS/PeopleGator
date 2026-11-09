@@ -150,3 +150,16 @@ python -m compileall -q people_gator
 
 No live LLM, database or GPU inference is required. Passing mocked tests does not
 establish extraction quality for a particular model or OCR corpus.
+
+`tests/test_detect_text_entities_cli.py` exercises the standalone diagnostic
+`main()` with real ALTO/PAGE fixtures and mocked LLM results, including Unicode,
+multiline provenance, repeated page IDs, ordering, stdout/JSON/empty output,
+exclusive detector selection despite face/linking/DB configuration, required
+arguments and failures in configuration, XML, detection and writing. Atomic-write
+regressions preserve an existing output and remove temporary files on failure.
+Module subprocess checks cover help and a nonzero error exit. Run these with
+processing extras (they skip explicitly in client mode):
+
+```bash
+python -m pytest -q tests/test_detect_text_entities_cli.py tests/test_text_entity_detection.py tests/test_documentation.py
+```

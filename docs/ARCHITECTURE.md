@@ -125,3 +125,10 @@ through the existing factory. It composes the independent chunker and shared
 extend the existing mention model; canonical names/descriptions are detection
 metadata, not app identities. Clustering, face cooperation and persistence remain
 separate #33 tasks. See [the detector contract](PROCESSING.md#text-entity-detection-text_entity_detection).
+
+`user_scripts/detect_text_entities.py` is a standalone diagnostic path: validate
+an ALTO/PAGE directory, load it through `PeopleGatorDocument`, select exactly one
+text detector through the ordinary engine factory, then print a summary or write
+an atomic JSON snapshot of page mentions and their OCR provenance. It does not
+construct `DocumentParser` or execute other configured engines/app services. The
+module CLI uses processing extras and introduces no package dependency changes.

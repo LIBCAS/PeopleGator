@@ -142,3 +142,14 @@ peoplegator \
 ~~~
 
 For PAGE XML use `--input-xml-path` and `--output-xml-path`. `--output-render-path` adds visual annotations. App import/export requires separate `[DB_API]` configuration and appropriate document metadata; see [Processing](docs/PROCESSING.md). The example illustrates the current CLI arguments; adapt the paths and model configuration for your local data.
+
+For text-only inspection with a configured `TEXT_ENTITY_DETECTION` engine, use:
+
+```bash
+python -m user_scripts.detect_text_entities --config ./config.ini --input-alto-path ./sample/alto
+```
+
+Use `--input-xml-path` for PAGE XML and `--output-path ./output/entities.json`
+to save UTF-8 JSON containing exact OCR mentions and source spans. See the
+[diagnostic CLI contract](docs/PROCESSING.md#standalone-text-detection-inspection-cli)
+for configuration, output fields and failure behavior.

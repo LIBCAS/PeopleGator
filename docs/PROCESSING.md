@@ -405,3 +405,74 @@ positions and failure types, never OCR, names, response payloads or credentials.
 Text-mention ALTO/PAGE serialization, app persistence, clustering and face
 cooperation remain follow-up work in #33; XML export does not persist this engine's
 in-memory text detections.
+
+### Standalone text-detection inspection CLI
+
+With `.[tool]` or `.[full]` installed, inspect OCR detections independently of the
+other stages configured in an existing INI file:
+
+```bash
+# Read ALTO pages and print mentions with their source locations.
+python -m user_scripts.detect_text_entities \
+  --config ./config.ini --input-alto-path ./input/alto
+
+# Read PAGE pages and write a structured diagnostic snapshot.
+python -m user_scripts.detect_text_entities \
+  --config ./config.ini --input-xml-path ./input/page \
+  --output-path ./output/entities.json
+```
+
+`--config` and exactly one input option are required. The utility finds exactly
+one `[ENGINE_*]` section whose `METHOD` is `TEXT_ENTITY_DETECTION`; zero or multiple
+matches are errors. It calls the normal factory for that section only, with CPU
+as the device and resource paths relative to the configuration file's directory.
+Other engine sections, `[DB_API]` and `[PARSE_FOLDER]` are not executed. No images,
+GPU inference, database credentials or DocAPI installation are needed.
+
+The directory must contain readable, valid XML pages in the selected format.
+Pages load as one `PeopleGatorDocument`, retaining the existing loader's page
+order. The results retain page, detection and ordered source-span order; repeated
+runs with the same page order and model results produce the same JSON. Output
+indices refer to these original loaded lists. Without `--output-path`, stdout
+lists mention names and page/region/line IDs, indices and half-open offsets; empty
+results print `No text entity mentions detected.`
+
+With `--output-path`, missing parent directories are created and the complete
+UTF-8 JSON file is written via a temporary sibling and atomic replacement.
+Nothing is printed to stdout in this mode. Errors/diagnostic logs go to stderr.
+Configuration, XML loading, detection and output-writing errors return a nonzero
+exit status. Failed detection creates no output; a failed write preserves an
+existing result and removes its temporary file. Provider/parser exception payloads
+are omitted from error messages. An existing output file from a previous successful
+run remains intact on failure; the exit status identifies whether this run succeeded.
+
+The diagnostic JSON contract is:
+
+```json
+{
+  "document_id": null,
+  "mentions": [
+    {
+      "name": "Karel\nČapek",
+      "proposed_name": "Karel Čapek",
+      "description": "spisovatel",
+      "context": "Karel\nČapek napsal knihu.",
+      "source_spans": [
+        {"page_id": "p1", "region_id": "r1", "line_id": "l1",
+         "page_index": 0, "region_index": 0, "line_index": 0, "start": 0, "end": 5},
+        {"page_id": "p1", "region_id": "r1", "line_id": "l2",
+         "page_index": 0, "region_index": 0, "line_index": 1, "start": 0, "end": 5}
+      ]
+    }
+  ]
+}
+```
+
+`document_id` is nullable (the XML-only loader supplies no document metadata).
+`name` and `context` are exact source evidence; `proposed_name` and `description`
+are nullable detection metadata. Each span contains the original page/region/line
+IDs (possibly missing/repeated), zero-based list indices, and half-open `start`/
+`end` in that original OCR line's transcription. Synthetic newlines have no span.
+An empty result has `mentions: []`. Layout objects, chunk IDs, prompts, credentials
+and app identities are excluded. This snapshot is an inspection interface, not
+ALTO/PAGE annotation export, database persistence or document clustering.
