@@ -74,6 +74,122 @@ Searches PeopleGatorApp for a person using a proposed name. Selects a single mat
 
 The LLM settings come from `LLMBasedEngine` in `people_gator/engines/llm.py`. Run detection before face assignment, and face assignment before entity matching when using all three stages.
 
+## Reusable text chunking
+
+`people_gator.text.text_chunker_factory(config)` returns a `TextChunker` for use
+inside a future text detection engine. That engine owns the chunker's lifecycle.
+Its existing `[ENGINE_*]` section will contain prefixed `CHUNKING_*` options:
+
+```ini
+[ENGINE_1]
+METHOD = TEXT_ENTITY_DETECTION
+# Other NER/LLM options...
+CHUNKING_METHOD = LINES
+CHUNKING_MAX_CHARS = 4000
+CHUNKING_OVERLAP_CHARS = 400
+```
+
+This is a configuration convention for the **future** NER engine; that engine
+is not yet implemented or registered. Its adapter extracts only `CHUNKING_*`
+keys and strips that prefix before calling the independent factory. The engine's
+own `METHOD` and other NER/LLM settings must not be forwarded to the factory.
+No global `[TEXT_CHUNKING]` or nested `[ENGINE_*.TEXT_CHUNKING]` section is used.
+`DocumentParser` and `load_engines()` remain unchanged.
+
+The factory receives a dedicated mapping or ConfigParser section containing only
+the **unprefixed** options below. Other consumers can use this contract directly.
+Keys are case-insensitive, while the method value is exact. Unknown/duplicate
+keys, unsupported methods, noninteger values (including booleans/floats), and
+invalid ranges raise `ValueError` naming the option. Integer strings are accepted.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `METHOD` | `LINES` | Reading-order, line-aware character chunking; `LINE_AWARE` remains an alias. |
+| `MAX_CHARS` | `4096` | Positive hard limit on Python Unicode characters, including separators. |
+| `OVERLAP_CHARS` | `0` | Canonical text characters repeated between consecutive chunks on the same page; `0 <= OVERLAP_CHARS < MAX_CHARS`. |
+
+Pages retain `document.page_layouts` order. Chunks never cross pages and overlap
+resets at each page. Regions use a sorted copy of `page.reading_order` (ID keys
+from XML or object keys supported by the layout library), with unlisted regions
+last in their original order. Without reading order, existing region order is
+retained; ALTO's supported order is the loaded TextBlock order. Lines retain each
+region's existing OCR line order. Regions whose category is `text` or `None` are
+eligible, matching the existing layout text convention. Other categories,
+including image/face regions, are excluded. Empty regions and missing, empty or
+non-string transcriptions are skipped. Missing OCR is represented by a
+`None` transcription. Layout objects must expose their model fields (`id`,
+`regions`, `reading_order`, `category`, `lines`, `transcription` as applicable);
+these are accessed directly. The `regions` and `lines` fields are lists; empty
+lists represent pages without regions or regions without lines.
+Whitespace-only strings are preserved. Region-level
+transcription is not used as fallback for absent lines.
+
+The canonical text of each page joins eligible nonempty line transcriptions with
+one synthetic `\n`, also between regions. Original whitespace, newlines, Unicode
+and hyphenation are preserved verbatim. There is no trailing separator or
+separator for a skipped line. Empty pages yield no chunks. The chunker greedily
+prefers the last complete line end within the budget that advances beyond the
+previous chunk and leaves room for the configured overlap. Otherwise it cuts at
+the hard budget, including inside a long line. The next window starts exactly
+`OVERLAP_CHARS` before the previous end in canonical page text. This definition
+includes synthetic separators: overlap can contain fewer OCR characters than
+its configured size. Each chunk adds at least one new canonical character.
+With small budgets, chunks can begin/end with a separator or contain only that
+separator. Such characters remain explicitly synthetic. No source character is
+omitted; all repetition is explained by overlapping windows.
+
+All result records are frozen dataclasses and collections use tuples:
+
+| Record | Fields / semantics |
+| --- | --- |
+| `TextChunkCollection` | Ordered `chunks` tuple. |
+| `TextChunk` | Exact `text`, contiguous document-wide `index` starting at zero, `page_index`, half-open `page_start`/`page_end` in canonical page text, and ordered `mappings`. |
+| `ChunkMapping` | Half-open chunk `start`/`end`; `source` address and original transcription `line_start`/`line_end`. Synthetic newlines have `source=None` and both line offsets `None`. Mappings partition the full chunk text. |
+| `SourceLine` | `page_id`, `region_id`, `line_id` plus zero-based `page_index`, `region_index`, `line_index` in the **original** document lists. Indices distinguish reused or missing IDs; IDs remain verbatim, including `None`. |
+| `SourceSpan` | `source`, `start`, `end` in original OCR text; hashable occurrence key, independent of chunk boundaries. |
+
+`chunk.resolve(start, end)` clips mappings for a substring and retains separators;
+returned chunk offsets remain relative to the full chunk. `chunk.source_spans`
+returns a tuple of canonical `SourceSpan` keys, excluding separators and merging
+adjacent contiguous spans of the same line. Both accept half-open integer offsets
+within the chunk (including empty intervals), rejecting invalid offsets with
+`ValueError`. Multiline matches yield several source spans without searching OCR
+again or guessing coordinates. These keys identify overlap-induced repeats
+within the same unchanged document; downstream consumers must retain their own
+document identity when comparing across documents. Reordering/editing source
+layouts invalidates addresses. Occurrence de-duplication itself is not performed.
+
+Minimal adapter inside a future detector, with `engine_config` referring to its
+own ConfigParser engine section (ConfigParser lowercases option keys by default):
+
+```python
+from people_gator.text import text_chunker_factory
+
+chunker_config = {
+    key.upper().removeprefix("CHUNKING_"): value
+    for key, value in engine_config.items()
+    if key.upper().startswith("CHUNKING_")
+}
+chunker = text_chunker_factory(chunker_config)
+collection = chunker.chunk_document(document)
+for chunk in collection.chunks:
+    # Send chunk.text to the detector, which returns character offsets.
+    start, end = 0, len(chunk.text)
+    mappings = chunk.resolve(start, end)  # includes explicit synthetic newlines
+    occurrence_key = chunk.source_spans(start, end)  # tuple of OCR spans
+```
+
+For the INI example above, the adapter passes
+`{"METHOD": "LINES", "MAX_CHARS": "4000", "OVERLAP_CHARS": "400"}`.
+Omitted `CHUNKING_*` options use factory defaults: `LINES`, `4096`, and `0`.
+An unsupported prefixed option is passed through with its prefix removed so the
+factory can reject it, rather than silently ignoring a typo. Passing prefixed
+keys or the entire NER section directly to the factory is invalid.
+
+Chunking requires no page images, LLM, database or GPU and does not access image
+loading methods, create mentions, or modify existing OCR/annotations. No package
+dependencies, XML output or identity contracts change.
+
 ## Database API
 
 The `[DB_API]` section configures the PeopleGatorApp database connection. `DatabaseApiService` reads these parameters:

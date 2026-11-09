@@ -85,6 +85,7 @@ The broader system design also includes occurrences of person names in OCR text.
 | `people_gator/core/document_parser.py` | Configured engine orchestration and application import/export. |
 | `people_gator/core/layout.py` | Page/document objects, face-region metadata, ALTO/PAGE I/O and rendering. |
 | `people_gator/engines/base.py` | Common processing-engine interfaces. |
+| `people_gator/text/` | Reusable text chunker, factory and exact OCR source mappings; consumed internally by future text detectors. |
 | `people_gator/engines/face_detection.py` | YOLO detection in selected image regions; boxes and five landmarks. |
 | `people_gator/engines/face_assignment.py` | LLM-supported single/batch naming using images, captions and OCR text. |
 | `people_gator/engines/entity_matching.py` | Candidate-entity lookup, LLM disambiguation and creation through the app API. |
@@ -92,6 +93,19 @@ The broader system design also includes occurrences of person names in OCR text.
 | `people_gator/core/db.py`, `connector.py` | Authenticated client for documents, pages, faces and person records. |
 | `user_scripts/parse_folder.py` | Local processing entry point. |
 | `processing_api/api.py`, `client.py`, `worker.py` | Processing job API, CLI client and worker based on DocAPI. |
+
+The public `people_gator.text` imports expose `TextChunker`,
+`LineAwareTextChunker`, `text_chunker_factory`, `TextChunkCollection`, `TextChunk`,
+`ChunkMapping`, `SourceLine`, and `SourceSpan`. This component reads a
+`PeopleGatorDocument` and returns an immutable chunk collection without changing
+the document. It uses only standard-library runtime imports. It is not registered
+as a `DocumentProcessingEngine`. The future NER engine owns its lifecycle and
+extracts `CHUNKING_*` settings from its own `[ENGINE_*]` section, stripping the
+prefix before calling the factory with `METHOD`, `MAX_CHARS`, and
+`OVERLAP_CHARS`. There is no global or nested chunking section and no change to
+`DocumentParser` engine loading. Text detection,
+mention construction and overlap de-duplication remain future work under #33.
+See [text chunking](PROCESSING.md#reusable-text-chunking) for the public contract.
 
 ## Related software and services
 

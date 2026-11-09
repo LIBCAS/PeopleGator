@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<alto xmlns="http://www.loc.gov/standards/alto/ns-v4#">
+  <Description><MeasurementUnit>pixel</MeasurementUnit></Description>
+  <Layout><Page ID="repeated-page" PHYSICAL_IMG_NR="1" WIDTH="100" HEIGHT="100">
+    <PrintSpace ID="ps" HPOS="0" VPOS="0" WIDTH="100" HEIGHT="100">
+      <TextBlock ID="r2" HPOS="0" VPOS="0" WIDTH="90" HEIGHT="10">
+        <TextLine ID="l3" HPOS="0" VPOS="0" WIDTH="90" HEIGHT="10"><String CONTENT="Čapek 😀" HPOS="0" VPOS="0" WIDTH="90" HEIGHT="10"/></TextLine>
+      </TextBlock>
+      <TextBlock ID="r1" HPOS="0" VPOS="10" WIDTH="90" HEIGHT="30">
+        <TextLine ID="l1" HPOS="0" VPOS="10" WIDTH="90" HEIGHT="10"><String CONTENT=" Karel " HPOS="0" VPOS="10" WIDTH="90" HEIGHT="10"/></TextLine>
+        <TextLine ID="l2" HPOS="0" VPOS="20" WIDTH="90" HEIGHT="10"><String CONTENT="Marie" HPOS="0" VPOS="20" WIDTH="90" HEIGHT="10"/></TextLine>
+        <TextLine ID="empty" HPOS="0" VPOS="30" WIDTH="90" HEIGHT="10"/>
+      </TextBlock>
+      <Illustration ID="image" HPOS="0" VPOS="40" WIDTH="90" HEIGHT="10"/>
+    </PrintSpace>
+  </Page></Layout>
+</alto>
