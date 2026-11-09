@@ -209,13 +209,13 @@ def test_configured_template_and_model_schema(tmp_path):
     import json
     from people_gator.engines.text_entity_detection import TextEntityDetectionResult
 
-    (tmp_path / 'prompt.json').write_text(json.dumps({'system': 'custom', 'user': '{{ chunk_text }}'}))
+    (tmp_path / 'prompt.json').write_text(json.dumps({'system': 'custom', 'user': '{{ text }}'}))
     # Shared LLM configuration still supports this path, but response_model takes
     # precedence as in the existing face/entity engines.
     schema = {'type': 'object', 'properties': {'unrelated': {'type': 'string'}}}
     (tmp_path / 'schema.json').write_text(json.dumps(schema))
     detector = engine(PROMPT_TEMPLATE_PATH=str(tmp_path / 'prompt.json'), JSON_SCHEMA_PATH=str(tmp_path / 'schema.json'))
-    request = detector.llm_prompter._prepare_request_args({'chunk_text': 'OCR'}, response_model=TextEntityDetectionResult)
+    request = detector.llm_prompter._prepare_request_args({'text': 'OCR'}, response_model=TextEntityDetectionResult)
     assert request['input'][0]['content'][0]['text'] == 'custom'
     assert request['input'][1]['content'][0]['text'] == 'OCR'
     assert request['text']['format']['schema'] == TextEntityDetectionResult.model_json_schema()
@@ -291,6 +291,7 @@ def test_engine_passes_response_class_and_consumes_typed_result():
     detector.llm_prompter = Mock(return_value=typed)
     doc = document('Karel came')
     detector.process_document(doc)
+    assert detector.llm_prompter.call_args.args[0] == {'text': 'Karel came'}
     assert detector.llm_prompter.call_args.kwargs['response_model'] is TextEntityDetectionResult
     assert doc.page_layouts[0].text_entities[0].proposed_name == 'Karel Čapek'
 

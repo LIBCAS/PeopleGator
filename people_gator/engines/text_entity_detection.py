@@ -241,7 +241,7 @@ class LLMTextEntityDetectionEngine(DocumentProcessingEngine, LLMBasedEngine):
             if not chunk.text.strip():
                 continue
             try:
-                result = self.llm_prompter({'text': chunk.text, 'chunk_text': chunk.text},
+                result = self.llm_prompter({'text': chunk.text},
                                            response_model=TextEntityDetectionResult)
                 result = TextEntityDetectionResult.model_validate(result)
             except Exception as exc:

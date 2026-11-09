@@ -347,7 +347,7 @@ raise an error. `MENTION_MATCH_SCORE_CUTOFF` must be finite and numeric in 0–1
 The detector has no built-in prompt or handwritten JSON schema. Supply
 `PROMPT_TEMPLATE_PATH` using the shared `LLMBasedEngine` JSON format, with `system`
 and/or `user` Jinja2 templates. Relative paths resolve from the INI directory.
-Both `text` and `chunk_text` contain the current OCR chunk. For example, create
+`text` contains the current OCR chunk and is the only supplied template variable. For example, create
 `prompts/text_entities.json` with instructions appropriate for your data:
 
 ```json
