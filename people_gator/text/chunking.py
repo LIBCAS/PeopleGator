@@ -245,11 +245,13 @@ def _region_rank(region, order):
 
 
 def text_chunker_factory(config: Mapping) -> TextChunker:
-    """Create LINE_AWARE from a mapping or ConfigParser section.
+    """Create LINES from an unprefixed mapping or ConfigParser section.
 
     Args:
         config: Case-insensitive METHOD, MAX_CHARS, OVERLAP_CHARS options.
-            Missing options default to LINE_AWARE, 4096 and 0 respectively.
+            Missing options default to LINES, 4096 and 0 respectively.
+            LINE_AWARE is an alias for LINES. The future NER engine extracts
+            CHUNKING_* options and strips their prefix before calling here.
             Unknown or duplicate keys and malformed values raise ValueError.
     """
     if not isinstance(config, Mapping):
@@ -262,9 +264,9 @@ def text_chunker_factory(config: Mapping) -> TextChunker:
         if key in options:
             raise ValueError(f"Duplicate chunker option {key}")
         options[key] = value
-    method = options.get("METHOD", "LINE_AWARE")
-    if method != "LINE_AWARE":
-        raise ValueError(f"Unsupported chunker METHOD {method!r}; expected LINE_AWARE")
+    method = options.get("METHOD", "LINES")
+    if method not in ("LINES", "LINE_AWARE"):
+        raise ValueError(f"Unsupported chunker METHOD {method!r}; expected LINES (alias LINE_AWARE)")
     budgets = []
     for key, default in (("MAX_CHARS", 4096), ("OVERLAP_CHARS", 0)):
         value = options.get(key, default)

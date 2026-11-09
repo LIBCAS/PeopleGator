@@ -30,13 +30,14 @@ def page(*regions, id="p", reading_order=None):
               text_entities=["existing mention"])
 
 
-def test_public_contract_and_factory():
+@pytest.mark.parametrize("method", ["LINES", "LINE_AWARE"])
+def test_public_contract_and_factory(method):
     chunker = text_chunker_factory({})
     assert isinstance(chunker, TextChunker)
     assert isinstance(chunker, LineAwareTextChunker)
     assert (chunker.max_chars, chunker.overlap_chars) == (4096, 0)
     config = ConfigParser()
-    config.read_dict({"chunker": {"METHOD": "LINE_AWARE", "MAX_CHARS": " 12 ", "OVERLAP_CHARS": "3"}})
+    config.read_dict({"chunker": {"METHOD": method, "MAX_CHARS": " 12 ", "OVERLAP_CHARS": "3"}})
     configured = text_chunker_factory(config["chunker"])
     assert (configured.max_chars, configured.overlap_chars) == (12, 3)
     assert configured.chunk_document(document()) == TextChunkCollection(())
@@ -44,9 +45,54 @@ def test_public_contract_and_factory():
         TextChunker()
 
 
+@pytest.mark.parametrize("settings,expected", [
+    ({"CHUNKING_METHOD": "LINES", "CHUNKING_MAX_CHARS": "4000",
+      "CHUNKING_OVERLAP_CHARS": "400"}, (4000, 400)),
+    ({"chunking_max_chars": "12"}, (12, 0)),
+    ({}, (4096, 0)),
+])
+def test_future_ner_configuration_boundary(settings, expected):
+    config = ConfigParser()
+    config.read_dict({"ENGINE_1": {
+        "METHOD": "TEXT_ENTITY_DETECTION", "model_name": "example-model",
+        "max_output_tokens": "1000", **settings,
+    }})
+    engine_config = config["ENGINE_1"]
+    original = dict(engine_config)
+    # Example adapter belongs in the future detector, not DocumentParser.
+    chunker_config = {
+        key.upper().removeprefix("CHUNKING_"): value
+        for key, value in engine_config.items()
+        if key.upper().startswith("CHUNKING_")
+    }
+    assert set(chunker_config) <= {"METHOD", "MAX_CHARS", "OVERLAP_CHARS"}
+    assert chunker_config.get("METHOD") != engine_config["METHOD"]
+    chunker = text_chunker_factory(chunker_config)
+    assert isinstance(chunker, LineAwareTextChunker)
+    assert (chunker.max_chars, chunker.overlap_chars) == expected
+    assert dict(engine_config) == original
+    with pytest.raises(ValueError):
+        text_chunker_factory(engine_config)
+
+
+def test_future_ner_unknown_chunking_option():
+    config = ConfigParser()
+    config.read_dict({"ENGINE_1": {
+        "METHOD": "TEXT_ENTITY_DETECTION", "CHUNKING_MAX_CHAR": "4000",
+    }})
+    chunker_config = {
+        key.upper().removeprefix("CHUNKING_"): value
+        for key, value in config["ENGINE_1"].items()
+        if key.upper().startswith("CHUNKING_")
+    }
+    with pytest.raises(ValueError, match="Unknown chunker option 'MAX_CHAR'"):
+        text_chunker_factory(chunker_config)
+
+
 @pytest.mark.parametrize("config,match", [
     (None, "mapping"), ([], "mapping"), ("LINE_AWARE", "mapping"),
     ({"METHOD": "unknown"}, "METHOD"), ({"METHOD": None}, "METHOD"),
+    ({"CHUNKING_METHOD": "LINES"}, "Unknown chunker option"),
     ({"max_chars": 1, "MAX_CHARS": 2}, "Duplicate"),
     ({"MAX_CHAR": 2}, "Unknown"), ({1: 2}, "Unknown"),
     ({"MAX_CHARS": 0}, "MAX_CHARS"), ({"MAX_CHARS": -2}, "MAX_CHARS"),

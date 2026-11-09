@@ -99,7 +99,11 @@ The public `people_gator.text` imports expose `TextChunker`,
 `ChunkMapping`, `SourceLine`, and `SourceSpan`. This component reads a
 `PeopleGatorDocument` and returns an immutable chunk collection without changing
 the document. It uses only standard-library runtime imports. It is not registered
-as a `DocumentProcessingEngine` and has no `[ENGINE_*]` section. Text detection,
+as a `DocumentProcessingEngine`. The future NER engine owns its lifecycle and
+extracts `CHUNKING_*` settings from its own `[ENGINE_*]` section, stripping the
+prefix before calling the factory with `METHOD`, `MAX_CHARS`, and
+`OVERLAP_CHARS`. There is no global or nested chunking section and no change to
+`DocumentParser` engine loading. Text detection,
 mention construction and overlap de-duplication remain future work under #33.
 See [text chunking](PROCESSING.md#reusable-text-chunking) for the public contract.
 

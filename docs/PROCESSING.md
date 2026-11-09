@@ -77,15 +77,34 @@ The LLM settings come from `LLMBasedEngine` in `people_gator/engines/llm.py`. Ru
 ## Reusable text chunking
 
 `people_gator.text.text_chunker_factory(config)` returns a `TextChunker` for use
-inside a future text detection engine. Pass a dedicated mapping or ConfigParser
-section containing the options below; no top-level engine section is added.
+inside a future text detection engine. That engine owns the chunker's lifecycle.
+Its existing `[ENGINE_*]` section will contain prefixed `CHUNKING_*` options:
+
+```ini
+[ENGINE_1]
+METHOD = TEXT_ENTITY_DETECTION
+# Other NER/LLM options...
+CHUNKING_METHOD = LINES
+CHUNKING_MAX_CHARS = 4000
+CHUNKING_OVERLAP_CHARS = 400
+```
+
+This is a configuration convention for the **future** NER engine; that engine
+is not yet implemented or registered. Its adapter extracts only `CHUNKING_*`
+keys and strips that prefix before calling the independent factory. The engine's
+own `METHOD` and other NER/LLM settings must not be forwarded to the factory.
+No global `[TEXT_CHUNKING]` or nested `[ENGINE_*.TEXT_CHUNKING]` section is used.
+`DocumentParser` and `load_engines()` remain unchanged.
+
+The factory receives a dedicated mapping or ConfigParser section containing only
+the **unprefixed** options below. Other consumers can use this contract directly.
 Keys are case-insensitive, while the method value is exact. Unknown/duplicate
 keys, unsupported methods, noninteger values (including booleans/floats), and
 invalid ranges raise `ValueError` naming the option. Integer strings are accepted.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `METHOD` | `LINE_AWARE` | Reading-order, line-aware character chunking. |
+| `METHOD` | `LINES` | Reading-order, line-aware character chunking; `LINE_AWARE` remains an alias. |
 | `MAX_CHARS` | `4096` | Positive hard limit on Python Unicode characters, including separators. |
 | `OVERLAP_CHARS` | `0` | Canonical text characters repeated between consecutive chunks on the same page; `0 <= OVERLAP_CHARS < MAX_CHARS`. |
 
@@ -140,14 +159,18 @@ within the same unchanged document; downstream consumers must retain their own
 document identity when comparing across documents. Reordering/editing source
 layouts invalidates addresses. Occurrence de-duplication itself is not performed.
 
-Minimal usage inside a future detector:
+Minimal adapter inside a future detector, with `engine_config` referring to its
+own ConfigParser engine section (ConfigParser lowercases option keys by default):
 
 ```python
 from people_gator.text import text_chunker_factory
 
-chunker = text_chunker_factory({
-    "METHOD": "LINE_AWARE", "MAX_CHARS": 4096, "OVERLAP_CHARS": 256,
-})
+chunker_config = {
+    key.upper().removeprefix("CHUNKING_"): value
+    for key, value in engine_config.items()
+    if key.upper().startswith("CHUNKING_")
+}
+chunker = text_chunker_factory(chunker_config)
 collection = chunker.chunk_document(document)
 for chunk in collection.chunks:
     # Send chunk.text to the detector, which returns character offsets.
@@ -155,6 +178,13 @@ for chunk in collection.chunks:
     mappings = chunk.resolve(start, end)  # includes explicit synthetic newlines
     occurrence_key = chunk.source_spans(start, end)  # tuple of OCR spans
 ```
+
+For the INI example above, the adapter passes
+`{"METHOD": "LINES", "MAX_CHARS": "4000", "OVERLAP_CHARS": "400"}`.
+Omitted `CHUNKING_*` options use factory defaults: `LINES`, `4096`, and `0`.
+An unsupported prefixed option is passed through with its prefix removed so the
+factory can reject it, rather than silently ignoring a typo. Passing prefixed
+keys or the entire NER section directly to the factory is invalid.
 
 Chunking requires no page images, LLM, database or GPU and does not access image
 loading methods, create mentions, or modify existing OCR/annotations. No package

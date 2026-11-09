@@ -72,6 +72,11 @@ Syntax checks complement behavioral tests; they do not prove an issue is impleme
 `tests/test_text_chunking.py` tests factory validation, public imports without
 site packages, empty/irregular OCR, region reading order, page-local boundaries,
 verbatim whitespace/Unicode, deterministic results and input preservation.
+Configuration tests extract and strip `CHUNKING_*` keys from a sample future
+NER `[ENGINE_1]` section while leaving its own `METHOD` and LLM settings intact.
+They cover `LINES`/`LINE_AWARE`, defaults, partial options, lowercase ConfigParser
+keys, unknown extracted options and rejection of whole-engine/prefixed config.
+These are lightweight adapter examples; no NER engine is introduced.
 It enumerates budgets 1–12 and every valid overlap for several line patterns,
 reconstructs canonical page text and checks every mapped source character,
 exact overlap, progress and hard limits. Substring tests cover split lines,
