@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15">
+  <Metadata><Creator>chunker test</Creator><Created>2026-01-01T00:00:00Z</Created><LastChange>2026-01-01T00:00:00Z</LastChange></Metadata>
+  <Page imageFilename="repeated-page" imageWidth="100" imageHeight="100">
+    <ReadingOrder><OrderedGroup id="order"><RegionRefIndexed regionRef="r2" index="0"/><RegionRefIndexed regionRef="r1" index="1"/></OrderedGroup></ReadingOrder>
+    <TextRegion id="r1"><Coords points="0,0 90,0 90,90 0,90"/>
+      <TextLine id="l1"><Coords points="0,0 90,0 90,10 0,10"/><Baseline points="0,8 90,8"/><TextEquiv><Unicode> Karel </Unicode></TextEquiv></TextLine>
+      <TextLine id="l2"><Coords points="0,10 90,10 90,20 0,20"/><Baseline points="0,18 90,18"/><TextEquiv><Unicode>Marie</Unicode></TextEquiv></TextLine>
+      <TextLine id="empty"><Coords points="0,20 90,20 90,30 0,30"/><Baseline points="0,28 90,28"/></TextLine>
+    </TextRegion>
+    <TextRegion id="r2"><Coords points="0,0 90,0 90,10 0,10"/>
+      <TextLine id="l3"><Coords points="0,0 90,0 90,10 0,10"/><Baseline points="0,8 90,8"/><TextEquiv><Unicode>Čapek 😀</Unicode></TextEquiv></TextLine>
+    </TextRegion>
+    <TextRegion id="nontext" custom='{"category":"image"}'><Coords points="0,0 90,0 90,10 0,10"/>
+      <TextLine id="ignored"><Coords points="0,0 90,0 90,10 0,10"/><Baseline points="0,8 90,8"/><TextEquiv><Unicode>ignore</Unicode></TextEquiv></TextLine>
+    </TextRegion>
+    <ImageRegion id="image" custom='{"category":"image"}'><Coords points="0,0 90,0 90,10 0,10"/></ImageRegion>
+  </Page>
+</PcGts>

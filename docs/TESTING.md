@@ -67,6 +67,27 @@ python -m compileall -q people_gator user_scripts
 
 Syntax checks complement behavioral tests; they do not prove an issue is implemented. When dependencies or test tooling are unavailable, record the exact blocker and which acceptance criteria remain unverified. Keep the PR in draft while essential validation is incomplete.
 
+## Text chunking
+
+`tests/test_text_chunking.py` tests factory validation, public imports without
+site packages, empty/irregular OCR, region reading order, page-local boundaries,
+verbatim whitespace/Unicode, deterministic results and input preservation.
+It enumerates budgets 1–12 and every valid overlap for several line patterns,
+reconstructs canonical page text and checks every mapped source character,
+exact overlap, progress and hard limits. Substring tests cover split lines,
+multiline matches, synthetic separators and canonical overlap occurrence keys.
+The ALTO/PAGE fixtures in `tests/resources/text_chunking/` load through the real
+document model for one and two pages, including repeated IDs and PAGE reading
+order. Only those XML integration cases require processing extras (and are
+explicitly skipped in client mode); all other chunker tests use the standard
+library plus pytest. Run:
+
+```bash
+python -m pytest -q tests/test_text_chunking.py tests/test_documentation.py
+python -m pytest -q --runtime-mode=full
+python -m compileall -q people_gator
+```
+
 ## How to write new tests
 
 1. Translate the issue's acceptance criteria into specific test cases. For a bug, add a regression case that exposes the old behavior when feasible.
