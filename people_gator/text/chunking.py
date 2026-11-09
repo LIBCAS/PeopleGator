@@ -203,26 +203,25 @@ def _page_text(page, page_index):
         page: Layout with regions and optional reading_order mapping.
         page_index: Position in the original document page list.
     """
-    regions = list(enumerate(getattr(page, "regions", None) or ()))
-    order = getattr(page, "reading_order", None) or {}
+    regions = list(enumerate(page.regions or ()))
+    order = page.reading_order or {}
     # Support the upstream object-key convention and XML reader's ID keys.
     regions.sort(key=lambda pair: _region_rank(pair[1], order))
     parts, mappings, line_ends = [], [], []
     offset = 0
     for region_index, region in regions:
-        if getattr(region, "category", None) not in {None, "text"}:
+        if region.category not in {None, "text"}:
             continue
-        for line_index, line in enumerate(getattr(region, "lines", None) or ()):
-            value = getattr(line, "transcription", None)
+        for line_index, line in enumerate(region.lines or ()):
+            value = line.transcription
             if not isinstance(value, str) or not value:
                 continue
             if parts:
                 parts.append("\n")
                 mappings.append(ChunkMapping(offset, offset + 1))
                 offset += 1
-            source = SourceLine(page_index, getattr(page, "id", None), region_index,
-                                getattr(region, "id", None), line_index,
-                                getattr(line, "id", None))
+            source = SourceLine(page_index, page.id, region_index,
+                                region.id, line_index, line.id)
             parts.append(value)
             mappings.append(ChunkMapping(offset, offset + len(value), source, 0, len(value)))
             offset += len(value)
@@ -242,7 +241,7 @@ def _region_rank(region, order):
             return order[region]
     except TypeError:
         pass
-    return order.get(getattr(region, "id", None), float("inf"))
+    return order.get(region.id, float("inf"))
 
 
 def text_chunker_factory(config: Mapping) -> TextChunker:

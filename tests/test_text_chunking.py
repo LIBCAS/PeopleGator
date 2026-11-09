@@ -153,10 +153,12 @@ def test_substring_mapping_and_overlap_keys():
 
 def test_empty_irregular_nontext_and_immutability():
     text = region(None, "", 42, ["bad"], " \t", "Čapek😀")
-    text.lines.insert(0, NS())
-    source = document(page(None, region("ignored", category="image"),
+    text.lines.insert(0, NS(id=None, transcription=None))
+    empty_region = region()
+    empty_region.lines = None
+    source = document(page(region(), region("ignored", category="image"),
                            region("ignored", category="face"), text,
-                           NS(category="text", lines=None)), page())
+                           empty_region), page())
     original = deepcopy(source)
     chunker = LineAwareTextChunker(6, 2)
     first = chunker.chunk_document(source)
@@ -165,7 +167,9 @@ def test_empty_irregular_nontext_and_immutability():
     assert first.chunks[0].text.startswith(" \t\n")
     assert first.chunks[0].mappings[0].source.region_index == 3
     assert first.chunks[0].mappings[0].source.line_index == 5
-    assert chunker.chunk_document(document(page(NS()), NS(regions=None))).chunks == ()
+    empty_page = page()
+    empty_page.regions = None
+    assert chunker.chunk_document(document(page(region()), empty_page)).chunks == ()
 
 
 def test_reading_order_ids_objects_and_stable_addresses():
@@ -201,7 +205,10 @@ import sys
 sys.path.insert(0, {str(root)!r})
 from types import SimpleNamespace as N
 from people_gator.text import text_chunker_factory
-document = N(page_layouts=[N(regions=[N(lines=[N(transcription='OCR')])])])
+line = N(id='line', transcription='OCR')
+region = N(id='region', category='text', lines=[line])
+page = N(id='page', reading_order=None, regions=[region])
+document = N(page_layouts=[page])
 assert text_chunker_factory({{}}).chunk_document(document).chunks[0].text == 'OCR'
 assert not any(name in sys.modules for name in ('torch', 'cv2', 'numpy', 'openai', 'requests'))
 """], cwd=tmp_path, text=True, capture_output=True)
