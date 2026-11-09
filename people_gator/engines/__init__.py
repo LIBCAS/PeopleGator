@@ -5,3 +5,5 @@ from .entity_matching import EntityMatchingEngine
 
 from .face_detection import FaceDetectionYoloEngine
 from .face_assignment import LLMFaceAssignmentEngine, LLMBatchFaceAssignmentEngine
+
+from .text_entity_detection import LLMTextEntityDetectionEngine

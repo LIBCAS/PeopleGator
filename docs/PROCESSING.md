@@ -77,8 +77,8 @@ The LLM settings come from `LLMBasedEngine` in `people_gator/engines/llm.py`. Ru
 ## Reusable text chunking
 
 `people_gator.text.text_chunker_factory(config)` returns a `TextChunker` for use
-inside a future text detection engine. That engine owns the chunker's lifecycle.
-Its existing `[ENGINE_*]` section will contain prefixed `CHUNKING_*` options:
+inside the text detection engine. That engine owns the chunker's lifecycle.
+Its existing `[ENGINE_*]` section contains prefixed `CHUNKING_*` options:
 
 ```ini
 [ENGINE_1]
@@ -89,8 +89,7 @@ CHUNKING_MAX_CHARS = 4000
 CHUNKING_OVERLAP_CHARS = 400
 ```
 
-This is a configuration convention for the **future** NER engine; that engine
-is not yet implemented or registered. Its adapter extracts only `CHUNKING_*`
+The registered `TEXT_ENTITY_DETECTION` engine adapter extracts only `CHUNKING_*`
 keys and strips that prefix before calling the independent factory. The engine's
 own `METHOD` and other NER/LLM settings must not be forwarded to the factory.
 No global `[TEXT_CHUNKING]` or nested `[ENGINE_*.TEXT_CHUNKING]` section is used.
@@ -159,7 +158,7 @@ within the same unchanged document; downstream consumers must retain their own
 document identity when comparing across documents. Reordering/editing source
 layouts invalidates addresses. Occurrence de-duplication itself is not performed.
 
-Minimal adapter inside a future detector, with `engine_config` referring to its
+Minimal adapter inside the detector, with `engine_config` referring to its
 own ConfigParser engine section (ConfigParser lowercases option keys by default):
 
 ```python
@@ -316,3 +315,93 @@ The worker retains the subprocess failure propagation introduced by
 The entity-merging CLI reports its document page count and completion at `INFO`,
 with at most ten page-count progress updates per document. Page identifiers and
 individual merge details remain at `DEBUG`.
+
+## Text entity detection (`TEXT_ENTITY_DETECTION`)
+
+`LLMTextEntityDetectionEngine` receives and returns the same document, runs the
+independent chunker once, and attaches unresolved mentions to page layouts. It
+needs processing extras and the configured OpenAI-compatible Responses service;
+it never loads images or requires GPU inference or PeopleGatorApp credentials.
+Configure it in ordinary engine order, for example:
+
+```ini
+[ENGINE_1]
+METHOD = TEXT_ENTITY_DETECTION
+API_URL = https://example.invalid/v1
+API_KEY = your-service-key
+MODEL_NAME = your-model
+REASONING_EFFORT = low
+MAX_OUTPUT_TOKENS = 2000
+CHUNKING_METHOD = LINES
+CHUNKING_MAX_CHARS = 4000
+CHUNKING_OVERLAP_CHARS = 400
+MENTION_MATCH_SCORE_CUTOFF = 80
+```
+
+Shared LLM defaults are `REASONING_EFFORT=low`, `MAX_OUTPUT_TOKENS=1000` and
+three request attempts. Only extracted, stripped `CHUNKING_*` options reach the
+chunker factory; omitted options retain its defaults, and unknown chunking keys
+raise an error. `MENTION_MATCH_SCORE_CUTOFF` must be finite and numeric in 0–100.
+
+The deterministic `DEFAULT_PROMPT` and `DEFAULT_SCHEMA` live in
+`people_gator/engines/text_entity_detection.py`. They request real, fictional,
+mythological and other person-like beings only, retaining the boundary label
+`beeing`. The Responses schema is object-wrapped:
+
+```json
+{"entities": [{"name": "canonical proposed name", "type": "beeing",
+  "info": "source-language description or null",
+  "mentions": [{"name": "verbatim OCR name", "context": "contiguous OCR context"}]}]}
+```
+
+`PROMPT_TEMPLATE_PATH` overrides system/user Jinja2 templates via the existing
+JSON file format. Both `text` and `chunk_text` contain the current OCR chunk.
+`JSON_SCHEMA_PATH` overrides the provider generation schema. The detector always
+validates the envelope and individual candidates against its extraction contract,
+independently of provider enforcement. A legacy top-level array is normalized to
+the same semantics. No intermediate JSON files are needed.
+
+Matching searches contiguous context first, then names inside that context. Exact
+matches take precedence; repeated contexts are accepted only if they identify one
+unique name occurrence. Otherwise the prediction is rejected. Normalized matching
+casefolds Unicode, collapses whitespace and removes line-break hyphenation while
+retaining original offsets. The final fuzzy fallback uses standard-library
+`SequenceMatcher` similarity and the configured score cutoff. It accepts only one
+winning word-boundary interval with no alternative within two score points.
+Fuzzy evidence must be 5–512 normalized characters, windows must be 80–120% of
+evidence length, and searches are bounded to 512 word starts and 32 ends per start.
+Larger or ambiguous searches are rejected. Both context and name need supported
+evidence; an unrelated context is never reconstructed from a guessed name.
+This is intentionally more conservative than the development reference's final
+name-only fallback. Evidence wholly lost across a non-overlapping chunk boundary
+cannot be recovered; configure sufficient overlap for expected mentions.
+
+Accepted `name` and `text` store actual OCR substrings, including Unicode,
+hyphenation and synthetic inter-line newlines. `source_spans` is an ordered tuple
+of the chunker's immutable `SourceSpan` records, retaining page/region/line IDs,
+original list indices and half-open transcription offsets. Synthetic separators
+never receive OCR addresses. Single-line mentions also populate legacy `line`
+and `span`; multiline mentions use `None` for both. `page_identity` is optional,
+and `identity_name` safely returns `None` for unresolved mentions. Canonical name
+and supporting description are stored separately as `proposed_name` and
+`description`, ready for subsequent clustering. Addresses remain valid only while
+the original OCR/layout ordering is unchanged.
+
+Occurrences deduplicate by the complete source-span tuple, independent of chunk
+ID. Distinct positions remain distinct. The first candidate in document/chunk/
+response order wins conflicting metadata deterministically; existing annotations
+always win, including legacy manual single-line annotations matched by line object
+and offsets. Repeated runs append no duplicates and never rewrite manual metadata.
+The engine creates no document clusters or database IDs.
+
+Empty source and whitespace-only chunks trigger no request. Valid empty arrays
+produce no mentions. Malformed entities, unsupported types and invalid/unmatched
+mentions are skipped individually with safe rejection counts. Transport, JSON and
+invalid-envelope responses retry through `LLMPrompter`; unrecoverable failures raise
+`RuntimeError` naming numeric page/chunk positions. New annotations are staged until
+all chunks succeed, so failure leaves the document unchanged. Logs contain counts,
+positions and failure types, never OCR, names, response payloads or credentials.
+
+Text-mention ALTO/PAGE serialization, app persistence, clustering and face
+cooperation remain follow-up work in #33; XML export does not persist this engine's
+in-memory text detections.

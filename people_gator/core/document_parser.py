@@ -1,7 +1,7 @@
 import logging
 
 from people_gator.core.layout import PeopleGatorDocument, PeopleGatorFaceRegionLayout
-from people_gator.engines import FaceDetectionYoloEngine, LLMFaceAssignmentEngine, LLMBatchFaceAssignmentEngine, EntityMatchingEngine
+from people_gator.engines import FaceDetectionYoloEngine, LLMFaceAssignmentEngine, LLMBatchFaceAssignmentEngine, EntityMatchingEngine, LLMTextEntityDetectionEngine
 from people_gator.core.services import UuidService
 from people_gator.core.db import DatabaseApiService
 
@@ -94,6 +94,9 @@ def engine_factory(config, config_path, device, db_api_service=None):
     elif method == "LLM_BATCH_FACE_ASSIGNMENT":
         logger.info("Creating LLMBatchFaceAssignmentEngine engine")
         engine = LLMBatchFaceAssignmentEngine(config, device, config_path=config_path)
+
+    elif method == "TEXT_ENTITY_DETECTION":
+        engine = LLMTextEntityDetectionEngine(config, device, config_path=config_path)
 
     elif method == "ENTITY_MATCHING":
         logger.info("Creating EntityMatchingEngine engine")

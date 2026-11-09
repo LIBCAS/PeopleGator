@@ -13,6 +13,7 @@ from anno_page.core.metadata import BaseMetadata as AnnoPageBaseMetadata
 from anno_page.core.utils import find_or_create_tags_element, get_root_element, find_or_create_element
 from anno_page.enums import Language
 
+from people_gator.text import SourceSpan
 from people_gator import globals
 from people_gator.core.utils import load_image, find_source_region_by_bounding_box
 from people_gator.core.services import DateTimeService
@@ -788,14 +789,22 @@ class PeopleGatorFaceRegionLayout(RegionLayout):
 
 
 class PeopleGatorTextEntityMention:
-    """A person-name occurrence with an OCR line, character span, and identity."""
+    """An OCR occurrence with optional identity and ordered SourceSpan provenance.
+
+    Single-line callers retain line/span. Multiline detection uses None for both
+    and stores every original line interval in source_spans. Names and contexts
+    retain OCR spelling; proposed_name/description are separate model evidence.
+    """
 
     def __init__(self,
                  name: str,
                  text: str,
-                 line: TextLine,
-                 span: tuple[int, int],
-                 page_identity: PeopleGatorPageIdentity):
+                 line: TextLine | None = None,
+                 span: tuple[int, int] | None = None,
+                 page_identity: PeopleGatorPageIdentity | None = None,
+                 source_spans: tuple[SourceSpan, ...] = (),
+                 proposed_name: str | None = None,
+                 description: str | None = None):
         """Initialize PeopleGatorTextEntityMention from the supplied settings and data.
 
         Args:
@@ -803,18 +812,24 @@ class PeopleGatorTextEntityMention:
             text: OCR text containing the person mention.
             line: OCR line containing the mention.
             span: Character start/end offsets within the line.
-            page_identity: Page-local metadata for the linked person identity.
+            page_identity: Optional page-local metadata for a linked identity.
+            source_spans: Ordered original OCR addresses; empty for legacy mentions.
+            proposed_name: Optional canonical detection name, separate from OCR.
+            description: Optional detection context in the source language.
         """
+        self.source_spans = tuple(source_spans)
+        self.proposed_name = proposed_name
+        self.description = description
         self.name: str = name
         self.text: str = text
-        self.line: TextLine = line
-        self.span: tuple[int, int] = span
-        self.page_identity: PeopleGatorPageIdentity = page_identity
+        self.line: TextLine | None = line
+        self.span: tuple[int, int] | None = span
+        self.page_identity: PeopleGatorPageIdentity | None = page_identity
 
     @property
     def identity_name(self):
         """Return the associated person name."""
-        return self.page_identity.identity.name
+        return self.page_identity.identity.name if self.page_identity and self.page_identity.identity else None
 
     def __repr__(self):
         """Return a diagnostic representation of the stored fields.
@@ -822,7 +837,7 @@ class PeopleGatorTextEntityMention:
         Returns:
             A diagnostic string; it may contain document or person data.
         """
-        return f"PeopleGatorTextEntityMention(name={self.name}, text={self.text}, line_id={self.line.id}, span={self.span}, identity={repr(self.page_identity) if self.page_identity else None})"
+        return f"PeopleGatorTextEntityMention(name={self.name}, text={self.text}, line_id={self.line.id if self.line is not None else None}, span={self.span}, identity={repr(self.page_identity) if self.page_identity else None})"
 
 
 class PeopleGatorPageLayout(AnnoPagePageLayout):
@@ -1208,7 +1223,8 @@ class PeopleGatorDocument:
         identity_to_cluster = {}
         for page_layout in self.page_layouts:
             for text_entity in page_layout.text_entities:
-                identity_id = text_entity.page_identity.identity.peoplegator_id
+                identity = text_entity.page_identity.identity if text_entity.page_identity else None
+                identity_id = identity.peoplegator_id if identity else None
                 if identity_id is None and not create_clusters_without_identity:
                     continue
 
@@ -1216,11 +1232,11 @@ class PeopleGatorDocument:
                     cluster = identity_to_cluster[identity_id]
                     cluster.text_entities.append(text_entity)
                 else:
-                    cluster = PeopleGatorTextEntityCluster(text_entities=[text_entity], identity=text_entity.page_identity.identity)
+                    cluster = PeopleGatorTextEntityCluster(text_entities=[text_entity], identity=identity)
                     clusters.append(cluster)
                     identity_to_cluster[identity_id] = cluster
 
-                if drop_mentions_identities:
+                if drop_mentions_identities and text_entity.page_identity:
                     text_entity.page_identity.identity = None
 
         self.text_entity_clusters = clusters
@@ -1229,7 +1245,10 @@ class PeopleGatorDocument:
         """Copy each cluster identity back to its member text mentions."""
         for cluster in self.text_entity_clusters:
             for text_entity in cluster.text_entities:
-                text_entity.page_identity.identity = cluster.identity
+                if text_entity.page_identity is None:
+                    text_entity.page_identity = PeopleGatorPageIdentity(tag_id=None, mods_id=None, identity=cluster.identity)
+                else:
+                    text_entity.page_identity.identity = cluster.identity
 
 
 def remove_peoplegator_elements(alto_root):

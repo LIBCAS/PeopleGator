@@ -72,11 +72,11 @@ Syntax checks complement behavioral tests; they do not prove an issue is impleme
 `tests/test_text_chunking.py` tests factory validation, public imports without
 site packages, empty/irregular OCR, region reading order, page-local boundaries,
 verbatim whitespace/Unicode, deterministic results and input preservation.
-Configuration tests extract and strip `CHUNKING_*` keys from a sample future
+Configuration tests extract and strip `CHUNKING_*` keys from a sample
 NER `[ENGINE_1]` section while leaving its own `METHOD` and LLM settings intact.
 They cover `LINES`/`LINE_AWARE`, defaults, partial options, lowercase ConfigParser
 keys, unknown extracted options and rejection of whole-engine/prefixed config.
-These are lightweight adapter examples; no NER engine is introduced.
+These lightweight examples complement the registered detector tests below.
 It enumerates budgets 1–12 and every valid overlap for several line patterns,
 reconstructs canonical page text and checks every mapped source character,
 exact overlap, progress and hard limits. Substring tests cover split lines,
@@ -129,3 +129,24 @@ These tests make no live model/service requests. They check the current worker
 success/failure contract from PR #31. Existing LLM response/validation behavior,
 including known limitations, is preserved; passing tests do not establish that
 those separate LLM defects are fixed.
+
+## Text entity detection
+
+`tests/test_text_entity_detection.py` uses mocked prompter/Responses results for
+factory configuration, engine ordering, default/override prompts and schemas,
+malformed/empty/partial results, retries, failure atomicity, safe logs, occurrence
+ambiguity, normalized/fuzzy OCR matching, Unicode and multiline spans, overlap
+and rerun deduplication, legacy manual annotations and unresolved identity helpers.
+Real ALTO/PAGE fixtures run through `DocumentParser` without images or app access,
+retaining original OCR and pre-existing face annotations. These tests require
+processing extras and skip explicitly in client mode. Run:
+
+```bash
+python -m pytest -q tests/test_text_entity_detection.py tests/test_text_chunking.py tests/test_documentation.py tests/test_logging.py
+python -m pytest -q --runtime-mode=full
+python -m pip check
+python -m compileall -q people_gator
+```
+
+No live LLM, database or GPU inference is required. Passing mocked tests does not
+establish extraction quality for a particular model or OCR corpus.
