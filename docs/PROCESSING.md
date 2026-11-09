@@ -476,3 +476,12 @@ IDs (possibly missing/repeated), zero-based list indices, and half-open `start`/
 An empty result has `mentions: []`. Layout objects, chunk IDs, prompts, credentials
 and app identities are excluded. This snapshot is an inspection interface, not
 ALTO/PAGE annotation export, database persistence or document clustering.
+
+The diagnostic CLI accepts `--logging-level DEBUG|INFO|WARNING|ERROR` (default
+`INFO`), matching the main processing CLI. For example, append
+`--logging-level DEBUG` to inspect initialization and engine diagnostics, or use
+`--logging-level ERROR` to show only failures. Logging is initialized before
+loading configuration; diagnostics use the module logger and stderr, and repeated
+initialization reuses existing handlers. Mention listings remain stdout data and
+JSON files retain the same schema at every logging level. Logs report counts and
+failure types without printing OCR, names, credentials or provider payloads.

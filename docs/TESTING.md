@@ -163,3 +163,7 @@ processing extras (they skip explicitly in client mode):
 ```bash
 python -m pytest -q tests/test_detect_text_entities_cli.py tests/test_text_entity_detection.py tests/test_documentation.py
 ```
+
+The diagnostic CLI tests also cover the default `INFO` level, all supported
+`--logging-level` values, invalid-level rejection, repeated logging setup without
+duplicate handlers, captured error records, and unchanged stdout/JSON behavior.

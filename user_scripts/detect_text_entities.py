@@ -3,14 +3,18 @@
 import argparse
 import configparser
 import json
+import logging
 import os
 from pathlib import Path
 import sys
 import tempfile
 
 
+logger = logging.getLogger(__name__)
+
+
 class InputError(ValueError):
-    """An actionable CLI validation error safe to print without private payloads."""
+    """An actionable CLI validation error safe to log without private payloads."""
 
 
 def parse_arguments(argv=None):
@@ -25,7 +29,22 @@ def parse_arguments(argv=None):
     inputs.add_argument('--input-alto-path', help='Directory containing ALTO XML pages.')
     inputs.add_argument('--input-xml-path', help='Directory containing PAGE XML pages.')
     parser.add_argument('--output-path', help='Write UTF-8 JSON instead of a readable stdout summary.')
+    parser.add_argument('--logging-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                        default='INFO', help='Diagnostic logging level (default: INFO).')
     return parser.parse_args(argv)
+
+
+def setup_logging(logging_level):
+    """Configure stderr diagnostics, preserving existing handlers on repeated calls.
+
+    Args:
+        logging_level: DEBUG, INFO, WARNING or ERROR selected by the CLI.
+    """
+    level = logging.getLevelName(logging_level)
+    logging.basicConfig(level=level,
+                        format='[%(levelname)s|%(asctime)s|%(name)s]: %(message)s',
+                        datefmt='%Y-%m-%d_%H-%M-%S')
+    logging.getLogger().setLevel(level)
 
 
 def load_detector(config_path):
@@ -149,12 +168,15 @@ def main(argv=None):
         argv: Optional argument list; None uses the process arguments.
     """
     args = parse_arguments(argv)
+    setup_logging(args.logging_level)
     stage = 'Configuration'
     try:
+        logger.debug('Initializing configured text detector')
         detector = load_detector(args.config)
         stage = 'XML loading'
         document = load_document(args.input_alto_path or args.input_xml_path,
                                  alto=args.input_alto_path is not None)
+        logger.info('Loaded %d pages for text detection', len(document.page_layouts))
         stage = 'Text detection'
         document = detector.process_document(document)
         result = detection_result(document)
@@ -164,13 +186,14 @@ def main(argv=None):
         else:
             sys.stdout.write(readable_result(result))
     except InputError as exc:
-        print(f'Error: {exc}', file=sys.stderr)
+        logger.error('Error: %s', exc)
         return 1
     except Exception as exc:
         # Exception messages from providers/XML/config parsing can expose private data.
-        print(f'Error: {stage} failed ({type(exc).__name__}); check the '
-              'configuration, input files, service, or output permissions.', file=sys.stderr)
+        logger.error('Error: %s failed (%s); check the configuration, input files, '
+                     'service, or output permissions.', stage, type(exc).__name__)
         return 1
+    logger.info('Text detection CLI completed: %d mentions', len(result['mentions']))
     return 0
 
 

@@ -116,19 +116,19 @@ def test_stdout_and_empty_modes(tmp_path, cli_input, capsys):
 
 @pytest.mark.parametrize('config_text,count', [('[ENGINE_FACE]\nMETHOD=FACE_DETECTION_YOLO\n', 0),
     ('[ENGINE_A]\nMETHOD=TEXT_ENTITY_DETECTION\n[ENGINE_B]\nMETHOD=TEXT_ENTITY_DETECTION\n', 2)])
-def test_missing_or_ambiguous_detector(config_text, count, tmp_path, capsys):
+def test_missing_or_ambiguous_detector(config_text, count, tmp_path, capsys, caplog):
     from user_scripts import detect_text_entities as cli
     config = tmp_path / 'config.ini'
     config.write_text(config_text)
     target = tmp_path / 'output.json'
     assert cli.main(['--config', str(config), '--input-xml-path', str(tmp_path), '--output-path', str(target)]) == 1
     captured = capsys.readouterr()
-    assert not captured.out and f'found {count}' in captured.err and 'exactly one' in captured.err
+    assert not captured.out and f'found {count}' in caplog.text and 'exactly one' in caplog.text
     assert not target.exists()
 
 
 @pytest.mark.parametrize('kind', ['missing', 'not-directory', 'empty', 'malformed', 'wrong-format', 'no-page', 'unreadable'])
-def test_bad_xml_inputs(kind, tmp_path, cli_input, capsys, monkeypatch):
+def test_bad_xml_inputs(kind, tmp_path, cli_input, capsys, monkeypatch, caplog):
     from user_scripts import detect_text_entities as cli
     config, prompter = cli_input
     directory = tmp_path / 'input'
@@ -144,13 +144,13 @@ def test_bad_xml_inputs(kind, tmp_path, cli_input, capsys, monkeypatch):
             monkeypatch.setattr(etree, 'parse', Mock(side_effect=PermissionError('private credentials')))
     assert cli.main(['--config', str(config), '--input-xml-path', str(directory)]) == 1
     captured = capsys.readouterr()
-    assert not captured.out and 'Error:' in captured.err
-    assert 'private' not in captured.err
+    assert not captured.out and 'Error:' in caplog.text
+    assert 'private' not in caplog.text
     prompter.assert_not_called()
 
 
 @pytest.mark.parametrize('kind', ['missing', 'malformed', 'invalid-option', 'unreadable'])
-def test_bad_config(kind, tmp_path, capsys, monkeypatch):
+def test_bad_config(kind, tmp_path, capsys, monkeypatch, caplog):
     from user_scripts import detect_text_entities as cli
     config = tmp_path / 'config.ini'
     if kind != 'missing':
@@ -160,12 +160,12 @@ def test_bad_config(kind, tmp_path, capsys, monkeypatch):
         monkeypatch.setattr(Path, 'open', Mock(side_effect=PermissionError('secret credentials')))
     assert cli.main(['--config', str(config), '--input-xml-path', str(tmp_path)]) == 1
     captured = capsys.readouterr()
-    assert not captured.out and 'Configuration failed' in captured.err
-    assert 'secret' not in captured.err
+    assert not captured.out and 'Configuration failed' in caplog.text
+    assert 'secret' not in caplog.text
 
 
 @pytest.mark.parametrize('existing', [False, True])
-def test_detection_failure_no_partial_output(tmp_path, cli_input, capsys, existing):
+def test_detection_failure_no_partial_output(tmp_path, cli_input, capsys, existing, caplog):
     from user_scripts import detect_text_entities as cli
     config, prompter = cli_input
     directory = xml_directory(tmp_path, 'page')
@@ -175,11 +175,11 @@ def test_detection_failure_no_partial_output(tmp_path, cli_input, capsys, existi
         output.write_text('previous complete result')
     assert cli.main(['--config', str(config), '--input-xml-path', str(directory), '--output-path', str(output)]) == 1
     captured = capsys.readouterr()
-    assert not captured.out and 'Text detection failed' in captured.err and 'secret' not in captured.err
+    assert not captured.out and 'Text detection failed' in caplog.text and 'secret' not in caplog.text
     assert output.read_text() == 'previous complete result' if existing else not output.exists()
 
 
-def test_atomic_output_write_failure(tmp_path, cli_input, monkeypatch, capsys):
+def test_atomic_output_write_failure(tmp_path, cli_input, monkeypatch, capsys, caplog):
     from user_scripts import detect_text_entities as cli
     config, _ = cli_input
     directory = xml_directory(tmp_path, 'page', pages=1)
@@ -188,19 +188,19 @@ def test_atomic_output_write_failure(tmp_path, cli_input, monkeypatch, capsys):
     monkeypatch.setattr(cli.os, 'replace', Mock(side_effect=PermissionError('secret')))
     assert cli.main(['--config', str(config), '--input-xml-path', str(directory), '--output-path', str(output)]) == 1
     captured = capsys.readouterr()
-    assert not captured.out and 'Output writing failed' in captured.err and 'secret' not in captured.err
+    assert not captured.out and 'Output writing failed' in caplog.text and 'secret' not in caplog.text
     assert output.read_text() == 'previous complete result'
     assert not list(tmp_path.glob('.entities-*.tmp'))
 
 
-def test_output_parent_failure(tmp_path, cli_input, capsys):
+def test_output_parent_failure(tmp_path, cli_input, capsys, caplog):
     from user_scripts import detect_text_entities as cli
     config, _ = cli_input
     directory = xml_directory(tmp_path, 'page', pages=1)
     parent = tmp_path / 'file'
     parent.write_text('existing')
     assert cli.main(['--config', str(config), '--input-xml-path', str(directory), '--output-path', str(parent / 'out.json')]) == 1
-    assert 'Output writing failed' in capsys.readouterr().err
+    assert 'Output writing failed' in caplog.text
     assert parent.read_text() == 'existing'
 
 
@@ -216,7 +216,7 @@ def test_module_help_and_nonzero_process(tmp_path):
     result = subprocess.run([sys.executable, '-m', 'user_scripts.detect_text_entities', '--help'],
                             text=True, capture_output=True, cwd=tmp_path)
     assert result.returncode == 0
-    assert all(option in result.stdout for option in ('--config', '--input-alto-path', '--input-xml-path', '--output-path'))
+    assert all(option in result.stdout for option in ('--config', '--input-alto-path', '--input-xml-path', '--output-path', '--logging-level'))
     result = subprocess.run([sys.executable, '-m', 'user_scripts.detect_text_entities', '--config', str(tmp_path / 'missing'),
                              '--input-xml-path', str(tmp_path)], text=True, capture_output=True, cwd=tmp_path)
     assert result.returncode != 0 and not result.stdout and 'Configuration failed' in result.stderr
@@ -238,3 +238,60 @@ def test_nullable_detection_metadata_and_missing_ids():
     assert result['mentions'][0]['source_spans'] == [
         {'page_id': None, 'region_id': None, 'line_id': None, 'page_index': 0,
          'region_index': 1, 'line_index': 2, 'start': 3, 'end': 5}]
+
+
+@pytest.mark.parametrize('level,debug_visible,info_visible', [
+    ('DEBUG', True, True), ('INFO', False, True), ('WARNING', False, False), ('ERROR', False, False),
+])
+def test_logging_levels_preserve_output(level, debug_visible, info_visible, tmp_path, cli_input, caplog, capsys):
+    import logging
+    from user_scripts import detect_text_entities as cli
+    config, _ = cli_input
+    directory = xml_directory(tmp_path, 'page', pages=1)
+    assert cli.main(['--config', str(config), '--input-xml-path', str(directory), '--logging-level', level]) == 0
+    records = [record for record in caplog.records if record.name == cli.__name__]
+    assert any(record.levelno == logging.DEBUG for record in records) == debug_visible
+    assert any(record.levelno == logging.INFO for record in records) == info_visible
+    assert 'Detected 2' in capsys.readouterr().out
+    assert not any(value in caplog.text for value in ('Čapek', 'Marie', 'spisovatel'))
+
+
+def test_logging_defaults_and_handler_reuse(monkeypatch):
+    import logging
+    from user_scripts import detect_text_entities as cli
+    assert cli.parse_arguments(['--config', 'c', '--input-xml-path', 'p']).logging_level == 'INFO'
+    root = logging.getLogger()
+    monkeypatch.setattr(root, 'level', root.level)
+    handlers = list(root.handlers)
+    cli.setup_logging('DEBUG')
+    assert root.level == logging.DEBUG
+    cli.setup_logging('ERROR')
+    assert root.level == logging.ERROR
+    assert root.handlers == handlers
+
+
+def test_invalid_logging_level():
+    from user_scripts.detect_text_entities import parse_arguments
+    with pytest.raises(SystemExit) as error:
+        parse_arguments(['--config', 'c', '--input-xml-path', 'p', '--logging-level', 'INVALID'])
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize('level,has_logs', [('DEBUG', True), ('ERROR', False)])
+def test_logging_uses_stderr_with_json_output(level, has_logs, tmp_path, cli_input):
+    config, _ = cli_input
+    directory = xml_directory(tmp_path, 'page', pages=1)
+    output = tmp_path / 'result.json'
+    process = subprocess.run([sys.executable, '-c', '''
+import sys
+from people_gator.engines.llm import LLMPrompter
+from user_scripts.detect_text_entities import main
+LLMPrompter.__call__ = lambda self, *args, **kwargs: {'entities': []}
+sys.exit(main(sys.argv[1:]))
+''', '--config', str(config), '--input-xml-path', str(directory),
+        '--output-path', str(output), '--logging-level', level],
+        cwd=tmp_path, capture_output=True, text=True)
+    assert process.returncode == 0, process.stderr
+    assert process.stdout == ''
+    assert ('Text detection CLI completed' in process.stderr) == has_logs
+    assert json.loads(output.read_text()) == {'document_id': None, 'mentions': []}
