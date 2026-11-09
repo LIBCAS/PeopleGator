@@ -133,7 +133,7 @@ those separate LLM defects are fixed.
 ## Text entity detection
 
 `tests/test_text_entity_detection.py` uses mocked prompter/Responses results for
-factory configuration, engine ordering, default/override prompts and schemas,
+factory configuration, engine ordering, external prompt templates and generated model schemas,
 malformed/empty/partial results, retries, failure atomicity, safe logs, occurrence
 ambiguity, normalized/fuzzy OCR matching, Unicode and multiline spans, overlap
 and rerun deduplication, legacy manual annotations and unresolved identity helpers.
@@ -167,3 +167,10 @@ python -m pytest -q tests/test_detect_text_entities_cli.py tests/test_text_entit
 The diagnostic CLI tests also cover the default `INFO` level, all supported
 `--logging-level` values, invalid-level rejection, repeated logging setup without
 duplicate handlers, captured error records, and unchanged stdout/JSON behavior.
+
+Text-detector response-model tests verify nested Pydantic types, generated
+provider schema and class-based prompter calls, typed response consumption,
+strict candidate/evidence validation, partial-invalid filtering, private rejection
+counts, unchanged Unicode/whitespace, legacy arrays, invalid envelopes and absence
+of a built-in prompt/schema. The inherited JSON schema setting cannot override
+the response model's generated schema.

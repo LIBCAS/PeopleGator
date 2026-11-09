@@ -205,16 +205,94 @@ def test_responses_retry_empty_and_partial(monkeypatch):
         detector.process_document(doc)
 
 
-def test_template_and_schema_override(tmp_path):
+def test_configured_template_and_model_schema(tmp_path):
     import json
-    schema = {'type': 'object', 'properties': {'entities': {'type': 'array'}}, 'required': ['entities']}
+    from people_gator.engines.text_entity_detection import TextEntityDetectionResult
+
     (tmp_path / 'prompt.json').write_text(json.dumps({'system': 'custom', 'user': '{{ chunk_text }}'}))
+    # Shared LLM configuration still supports this path, but response_model takes
+    # precedence as in the existing face/entity engines.
+    schema = {'type': 'object', 'properties': {'unrelated': {'type': 'string'}}}
     (tmp_path / 'schema.json').write_text(json.dumps(schema))
     detector = engine(PROMPT_TEMPLATE_PATH=str(tmp_path / 'prompt.json'), JSON_SCHEMA_PATH=str(tmp_path / 'schema.json'))
-    assert detector.json_schema == schema
-    request = detector.llm_prompter._prepare_request_args({'chunk_text': 'OCR'})
+    request = detector.llm_prompter._prepare_request_args({'chunk_text': 'OCR'}, response_model=TextEntityDetectionResult)
     assert request['input'][0]['content'][0]['text'] == 'custom'
     assert request['input'][1]['content'][0]['text'] == 'OCR'
+    assert request['text']['format']['schema'] == TextEntityDetectionResult.model_json_schema()
+    assert request['text']['format']['schema'] != schema
+    assert request['text']['format']['name'] == 'TextEntityDetectionResult'
+
+
+def test_no_built_in_prompt_or_schema():
+    detector = engine()
+    assert detector.prompt_template_system is detector.prompt_template_user is None
+    assert detector.json_schema is None
+    assert detector.llm_prompter.prompt_template_system is detector.llm_prompter.prompt_template_user is None
+    assert detector.llm_prompter.json_schema is None
+
+
+def test_pydantic_models_filter_candidates_without_losing_valid_mentions():
+    from pydantic import BaseModel
+    from people_gator.engines.text_entity_detection import (
+        TextEntityDetectionResult, TextEntityResult, TextEntityMentionResult,
+    )
+    assert all(issubclass(model, BaseModel) for model in (
+        TextEntityDetectionResult, TextEntityResult, TextEntityMentionResult))
+    good = entity(' Karel\nČapek ', ' Karel\nČapek came ')
+    raw = {'entities': [None, {**entity(), 'type': 'place'}, {**entity(), 'name': 3},
+                        {**entity(), 'name': '  '},
+                        {**good, 'mentions': [None, {'name': 3, 'context': 'bad'},
+                                             {'name': 'Karel', 'context': '  '}, *good['mentions']]}]}
+    before = deepcopy(raw)
+    result = TextEntityDetectionResult.model_validate(raw)
+    assert raw == before
+    assert result._rejected_candidates == 7
+    assert len(result.entities) == 1
+    assert isinstance(result.entities[0], TextEntityResult)
+    mention = result.entities[0].mentions[0]
+    assert isinstance(mention, TextEntityMentionResult)
+    assert mention.name == good['mentions'][0]['name']
+    assert mention.context == good['mentions'][0]['context']
+    assert result.model_dump() == {'entities': [good]}
+    assert TextEntityDetectionResult.model_validate(result) is result
+    legacy = TextEntityDetectionResult.model_validate([entity()])
+    assert legacy.entities[0].type == 'being'
+    missing_info = entity()
+    del missing_info['info']
+    assert TextEntityDetectionResult.model_validate([missing_info]).entities[0].info is None
+
+
+@pytest.mark.parametrize('payload', [None, {}, {'entities': None}, {'entities': 'invalid'}, {'entities': [], 'extra': True}])
+def test_pydantic_response_rejects_invalid_envelopes(payload):
+    from pydantic import ValidationError
+    from people_gator.engines.text_entity_detection import TextEntityDetectionResult
+    with pytest.raises(ValidationError):
+        TextEntityDetectionResult.model_validate(payload)
+
+
+def test_model_schema_has_typed_required_fields_only():
+    from people_gator.engines.text_entity_detection import TextEntityDetectionResult
+    schema = TextEntityDetectionResult.model_json_schema()
+    assert schema['required'] == ['entities']
+    assert schema['additionalProperties'] is False
+    assert schema['properties']['entities']['items'] == {'$ref': '#/$defs/TextEntityResult'}
+    candidate = schema['$defs']['TextEntityResult']
+    assert set(candidate['required']) == {'name', 'type', 'info', 'mentions'}
+    assert candidate['properties']['type']['const'] == 'being'
+    assert candidate['properties']['mentions']['items'] == {'$ref': '#/$defs/TextEntityMentionResult'}
+    assert set(schema['$defs']['TextEntityMentionResult']['required']) == {'name', 'context'}
+    assert '_rejected' not in str(schema)
+
+
+def test_engine_passes_response_class_and_consumes_typed_result():
+    from people_gator.engines.text_entity_detection import TextEntityDetectionResult
+    detector = engine()
+    typed = TextEntityDetectionResult.model_validate({'entities': [entity()]})
+    detector.llm_prompter = Mock(return_value=typed)
+    doc = document('Karel came')
+    detector.process_document(doc)
+    assert detector.llm_prompter.call_args.kwargs['response_model'] is TextEntityDetectionResult
+    assert doc.page_layouts[0].text_entities[0].proposed_name == 'Karel Čapek'
 
 
 def test_conflicting_metadata_first_wins_and_long_line_offsets():

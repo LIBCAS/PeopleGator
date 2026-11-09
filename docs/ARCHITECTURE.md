@@ -120,7 +120,8 @@ The broader data model includes **Entity** (a person), **Face** (a detected face
 
 `people_gator/engines/text_entity_detection.py` registers `TEXT_ENTITY_DETECTION`
 through the existing factory. It composes the independent chunker and shared
-`LLMBasedEngine`/`LLMPrompter`, stages source-mapped mentions, then updates page
+`LLMBasedEngine`/`LLMPrompter` with nested Pydantic response models and externally
+configured prompt templates, stages source-mapped mentions, then updates page
 `text_entities` atomically. Optional identity and multiline `SourceSpan` tuples
 extend the existing mention model; canonical names/descriptions are detection
 metadata, not app identities. Clustering, face cooperation and persistence remain
