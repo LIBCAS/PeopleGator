@@ -12,7 +12,7 @@ from people_gator.text import text_chunker_factory
 logger = logging.getLogger(__name__)
 
 DEFAULT_PROMPT = """Detect only person-like beings: real people, fictional characters,
-mythological beings and gods. Use type 'beeing', never organizations or places.
+mythological beings and gods. Use type 'being', never organizations or places.
 Return an object with entities: [{name, type, info, mentions: [{name, context}]}].
 Entity name is a proposed canonical name; info is a description in the source
 language or null. Each mention name and its contiguous context must be verbatim
@@ -25,7 +25,7 @@ MENTION_SCHEMA = {"type": "object", "additionalProperties": False,
                   "properties": {"name": {"type": "string"}, "context": {"type": "string"}},
                   "required": ["name", "context"]}
 ENTITY_SCHEMA = {"type": "object", "additionalProperties": False,
-                 "properties": {"name": {"type": "string"}, "type": {"type": "string", "enum": ["beeing"]},
+                 "properties": {"name": {"type": "string"}, "type": {"type": "string", "enum": ["being"]},
                                 "info": {"type": ["string", "null"]},
                                 "mentions": {"type": "array", "items": MENTION_SCHEMA}},
                  "required": ["name", "type", "info", "mentions"]}
@@ -224,7 +224,7 @@ class LLMTextEntityDetectionEngine(DocumentProcessingEngine, LLMBasedEngine):
                                    'check LLM service and response format') from None
             rejected = 0
             for entity in entities:
-                if (not isinstance(entity, dict) or entity.get('type') != 'beeing'
+                if (not isinstance(entity, dict) or entity.get('type') != 'being'
                         or not isinstance(entity.get('name'), str) or not entity['name'].strip()
                         or not isinstance(entity.get('mentions'), list)
                         or (entity.get('info') is not None and not isinstance(entity['info'], str))):

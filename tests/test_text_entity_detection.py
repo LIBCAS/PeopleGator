@@ -31,7 +31,7 @@ def document(*texts):
 
 
 def entity(name='Karel', context='Karel came', proposed='Karel Čapek'):
-    return {'name': proposed, 'type': 'beeing', 'info': 'spisovatel',
+    return {'name': proposed, 'type': 'being', 'info': 'spisovatel',
             'mentions': [{'name': name, 'context': context}]}
 
 

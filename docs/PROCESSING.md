@@ -345,11 +345,11 @@ raise an error. `MENTION_MATCH_SCORE_CUTOFF` must be finite and numeric in 0–1
 
 The deterministic `DEFAULT_PROMPT` and `DEFAULT_SCHEMA` live in
 `people_gator/engines/text_entity_detection.py`. They request real, fictional,
-mythological and other person-like beings only, retaining the boundary label
-`beeing`. The Responses schema is object-wrapped:
+mythological and other person-like beings only, using the boundary label
+`being`. The Responses schema is object-wrapped:
 
 ```json
-{"entities": [{"name": "canonical proposed name", "type": "beeing",
+{"entities": [{"name": "canonical proposed name", "type": "being",
   "info": "source-language description or null",
   "mentions": [{"name": "verbatim OCR name", "context": "contiguous OCR context"}]}]}
 ```
