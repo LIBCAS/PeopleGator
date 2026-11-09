@@ -155,7 +155,6 @@ def test_empty_irregular_nontext_and_immutability():
     text = region(None, "", 42, ["bad"], " \t", "Čapek😀")
     text.lines.insert(0, NS(id=None, transcription=None))
     empty_region = region()
-    empty_region.lines = None
     source = document(page(region(), region("ignored", category="image"),
                            region("ignored", category="face"), text,
                            empty_region), page())
@@ -168,7 +167,6 @@ def test_empty_irregular_nontext_and_immutability():
     assert first.chunks[0].mappings[0].source.region_index == 3
     assert first.chunks[0].mappings[0].source.line_index == 5
     empty_page = page()
-    empty_page.regions = None
     assert chunker.chunk_document(document(page(region()), empty_page)).chunks == ()
 
 

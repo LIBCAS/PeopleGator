@@ -96,11 +96,13 @@ last in their original order. Without reading order, existing region order is
 retained; ALTO's supported order is the loaded TextBlock order. Lines retain each
 region's existing OCR line order. Regions whose category is `text` or `None` are
 eligible, matching the existing layout text convention. Other categories,
-including image/face regions, are excluded. Missing/empty regions and missing,
-empty or non-string transcriptions are skipped. Missing OCR is represented by a
+including image/face regions, are excluded. Empty regions and missing, empty or
+non-string transcriptions are skipped. Missing OCR is represented by a
 `None` transcription. Layout objects must expose their model fields (`id`,
 `regions`, `reading_order`, `category`, `lines`, `transcription` as applicable);
-these are accessed directly. Whitespace-only strings are preserved. Region-level
+these are accessed directly. The `regions` and `lines` fields are lists; empty
+lists represent pages without regions or regions without lines.
+Whitespace-only strings are preserved. Region-level
 transcription is not used as fallback for absent lines.
 
 The canonical text of each page joins eligible nonempty line transcriptions with

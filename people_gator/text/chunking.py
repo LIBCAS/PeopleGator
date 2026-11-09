@@ -203,7 +203,7 @@ def _page_text(page, page_index):
         page: Layout with regions and optional reading_order mapping.
         page_index: Position in the original document page list.
     """
-    regions = list(enumerate(page.regions or ()))
+    regions = list(enumerate(page.regions))
     order = page.reading_order or {}
     # Support the upstream object-key convention and XML reader's ID keys.
     regions.sort(key=lambda pair: _region_rank(pair[1], order))
@@ -212,7 +212,7 @@ def _page_text(page, page_index):
     for region_index, region in regions:
         if region.category not in {None, "text"}:
             continue
-        for line_index, line in enumerate(region.lines or ()):
+        for line_index, line in enumerate(region.lines):
             value = line.transcription
             if not isinstance(value, str) or not value:
                 continue
