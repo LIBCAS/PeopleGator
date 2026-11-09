@@ -18,9 +18,14 @@ Implement LIBCAS/PeopleGator issue #N
 
 Codex loads the repository-root `AGENTS.md` at session start; the agent must follow its temporary-clone policy without a longer task prompt. Do **not** use `codex --worktree`. If the expected rules are not loaded, check the starting directory and whether an `AGENTS.override.md` or global guidance supersedes them; restart Codex after changing instruction files.
 
+Official Codex references: [repository instructions](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
+and [sandbox and approvals](https://learn.chatgpt.com/docs/security). Actual writable roots
+and approval requirements depend on the active session; the repository policy does
+not grant permissions by itself.
+
 ## Required lifecycle (agent-owned)
 
-1. **Inspect, without modifying the primary checkout.** Read the complete issue, comments, relevant PRs, `AGENTS.md`, and applicable docs. Verify that the checkout's `origin` points to the official `LIBCAS/PeopleGator` GitHub repository (HTTPS or SSH, with normal existing authentication). Check for an existing issue branch/PR. If the issue is not implementation-ready, resolve the blocker before coding.
+1. **Inspect, without modifying the primary checkout.** Read the complete issue, comments, relevant PRs, `AGENTS.md`, and applicable docs. Verify that the checkout's `origin` points to the official `LIBCAS/PeopleGator` GitHub repository (HTTPS or SSH, with normal existing authentication). Confirm access using a remote Git operation; do not print tokens, credential files or credential-bearing URLs. Check for an existing issue branch/PR. If the issue is not implementation-ready, resolve the blocker before coding.
 2. **Create a unique temporary clone.** Use the operating system's temporary-directory facility (e.g. Python `tempfile.mkdtemp(prefix="peoplegator-issue-<N>-")`). This respects `TMPDIR`/`TEMP`/`TMP` as appropriate. Store the created root path for later verification. Clone the **official remote URL**, not `.`, a local path, or the primary checkout. Never copy local ignored files or credentials into the clone.
 3. **Check out the issue branch within the clone.** Fetch and inspect `origin/develop`. For a new issue, create `issue/<number>-short-description` from that current remote commit. If continuing an existing PR, fetch and check out its **existing remote issue branch**, verifying the PR head and owner first; do not create a competing branch or force-push over another agent's work. Use a distinct issue branch for distinct simultaneous tasks.
 4. **Keep all mutations inside the clone.** Execute source edits, patch tools, dependency installation, tests, `git add`/`commit`/`push`, and PR preparation with the temporary clone as their explicit working directory. A `cd` from one shell invocation may not affect later commands; set each command's `cwd`/`workdir`, use `git -C <clone>`, and ensure patch tools target clone paths. **Never** switch branches, reset/clean, edit, stage or commit in the primary checkout or another agent's directory.
@@ -42,13 +47,22 @@ remote = subprocess.check_output(
     ["git", "-C", str(primary), "remote", "get-url", "origin"],
     text=True,
 ).strip()
-# Verify that this is the official LIBCAS/PeopleGator HTTPS/SSH remote
-# before running git clone. Do not clone from a local filesystem path.
+allowed_remotes = {
+    "https://github.com/LIBCAS/PeopleGator.git",
+    "https://github.com/LIBCAS/PeopleGator",
+    "git@github.com:LIBCAS/PeopleGator.git",
+    "ssh://git@github.com/LIBCAS/PeopleGator.git",
+}
+if remote not in allowed_remotes:
+    raise SystemExit("Verify the official LIBCAS/PeopleGator remote before cloning.")
 
 temp_root = Path(
     tempfile.mkdtemp(prefix=f"peoplegator-issue-{issue_number}-")
 ).resolve()
 clone = temp_root / "PeopleGator"
+# Record recovery paths before network operations, which can fail.
+print(f"Temporary root: {temp_root}", flush=True)
+print(f"Clone: {clone}", flush=True)
 subprocess.run(["git", "clone", remote, str(clone)], check=True)
 subprocess.run(["git", "-C", str(clone), "fetch", "origin", "develop"], check=True)
 subprocess.run(
@@ -58,9 +72,6 @@ subprocess.run(
     ],
     check=True,
 )
-# Record paths for subsequent tool calls and for safe cleanup checks.
-print(f"Temporary root: {temp_root}")
-print(f"Clone: {clone}")
 # Subsequent tool operations must explicitly target clone, not primary.
 ```
 
@@ -92,3 +103,25 @@ For a later review iteration, make a fresh temporary clone, fetch the already-pu
 - Verify that fresh `origin/develop` is used for new issues; review iterations correctly reuse their existing remote issue branch.
 - Verify the clone remains intact when changes are uncommitted, unpushed or PR creation fails; successful push plus PR handoff permits safe deletion.
 - Confirm cross-platform temporary paths, link targets and documentation consistency. Record exactly which Codex/sandbox/remote checks were executed and which were blocked.
+
+### Evidence to record
+
+Use the current one-line implementation session as the live workflow check when
+it started at the official checkout with root instructions loaded. Record the
+Codex version, OS, initial branch/HEAD/status, fetched `origin/develop` SHA,
+agent-owned clone paths, existing PR head (for revisions), and the scoped
+permission prompts actually encountered. Do not launch another implementation
+of the same issue just to test instruction discovery.
+
+For the concurrent-clone smoke test, compare absolute Git directories and create
+different local issue/test branches from the fetched base. Compare the primary
+checkout's branch, HEAD, status and tracked file contents before and after the
+work; a clean status alone cannot detect an unintended branch switch. Test
+untracked work, unpushed commits, missing PR handoff and uncertain paths against
+the cleanup gate without deleting the affected clone. Disposable test probes
+must be explicitly accounted for before intentionally removing test fixtures.
+Do not push test branches or create extra PRs just for this smoke test.
+
+Record the real implementation push, PR target/head and final remote equality
+check in the PR, then report the actual cleanup result in the handoff. Clearly
+distinguish live checks from simulated failure cases and untested platforms.
