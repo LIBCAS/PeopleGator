@@ -295,3 +295,47 @@ sys.exit(main(sys.argv[1:]))
     assert process.stdout == ''
     assert ('Text detection CLI completed' in process.stderr) == has_logs
     assert json.loads(output.read_text()) == {'document_id': None, 'mentions': []}
+
+
+def test_direct_script_uses_checkout_instead_of_stale_package(tmp_path):
+    import os
+    from lxml import etree
+
+    root = Path(__file__).resolve().parents[1]
+    script = root / 'user_scripts' / 'detect_text_entities.py'
+    stale = tmp_path / 'stale-installation' / 'people_gator'
+    (stale / 'core').mkdir(parents=True)
+    # Match PeopleGator's namespace-package distribution layout.
+    (stale / 'core' / 'document_parser.py').write_text("raise RuntimeError('stale PeopleGator installation imported')\n")
+    config = tmp_path / 'config.ini'
+    config.write_text('[ENGINE_1]\nMETHOD=TEXT_ENTITY_DETECTION\n')
+    pages = xml_directory(tmp_path, 'page', pages=1)
+    # Exercise the real engine without a model-service request.
+    path = pages / '0.xml'
+    tree = etree.parse(str(path))
+    for element in tree.xpath("//*[local-name()='Unicode']"):
+        element.text = None
+    tree.write(str(path), encoding='utf-8')
+    output = tmp_path / 'output.json'
+    result = subprocess.run([sys.executable, '-B', '-u', str(script), '--config=' + str(config),
+                             '--input-xml-path=' + str(pages), '--logging-level=DEBUG',
+                             '--output-path=' + str(output)], cwd=tmp_path, capture_output=True, text=True,
+                            env={**os.environ, 'PYTHONPATH': str(stale.parent), 'PYTHONDONTWRITEBYTECODE': '1'})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ''
+    assert 'Loaded 1 pages' in result.stderr
+    assert 'Unknown METHOD' not in result.stderr
+    assert json.loads(output.read_text()) == {'document_id': None, 'mentions': []}
+
+
+def test_unavailable_factory_engine_fails_during_configuration(tmp_path, monkeypatch, caplog):
+    from user_scripts import detect_text_entities as cli
+    import people_gator.core.document_parser as parser
+    config = tmp_path / 'config.ini'
+    config.write_text('[ENGINE_1]\nMETHOD=TEXT_ENTITY_DETECTION\n')
+    monkeypatch.setattr(parser, 'engine_factory', Mock(return_value=None))
+    loader = Mock(side_effect=AssertionError('XML must not load without a detector'))
+    monkeypatch.setattr(cli, 'load_document', loader)
+    assert cli.main(['--config', str(config), '--input-alto-path', str(tmp_path)]) == 1
+    assert 'TEXT_ENTITY_DETECTION is unavailable' in caplog.text
+    loader.assert_not_called()

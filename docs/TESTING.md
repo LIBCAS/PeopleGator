@@ -174,3 +174,9 @@ strict candidate/evidence validation, partial-invalid filtering, private rejecti
 counts, unchanged Unicode/whitespace, legacy arrays, invalid envelopes and absence
 of a built-in prompt/schema. The inherited JSON schema setting cannot override
 the response model's generated schema.
+
+The diagnostic CLI's direct-file regression runs its absolute script path from
+outside the checkout, with a stale `people_gator` package on `PYTHONPATH`. It loads
+empty synthetic OCR through the real engine without model requests and checks
+successful JSON output. A separate regression requires an unavailable factory
+engine to fail during configuration before any XML loading.

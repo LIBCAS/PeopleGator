@@ -10,6 +10,12 @@ import sys
 import tempfile
 
 
+# Direct file execution otherwise searches user_scripts/ and installed packages,
+# which can silently select an older PeopleGator than this checkout.
+if __package__ in (None, ''):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,7 +71,11 @@ def load_detector(config_path):
     if len(sections) != 1:
         raise InputError('Configuration must contain exactly one [ENGINE_*] section '
                          f'with METHOD = TEXT_ENTITY_DETECTION; found {len(sections)}.')
-    return engine_factory(config[sections[0]], config_path=str(config_path.parent), device='cpu')
+    detector = engine_factory(config[sections[0]], config_path=str(config_path.parent), device='cpu')
+    if detector is None:
+        raise InputError('TEXT_ENTITY_DETECTION is unavailable in the loaded PeopleGator package; '
+                         'use a checkout or installation containing that engine.')
+    return detector
 
 
 def load_document(directory, alto):

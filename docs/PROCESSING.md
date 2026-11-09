@@ -510,3 +510,16 @@ loading configuration; diagnostics use the module logger and stderr, and repeate
 initialization reuses existing handlers. Mention listings remain stdout data and
 JSON files retain the same schema at every logging level. Logs report counts and
 failure types without printing OCR, names, credentials or provider payloads.
+
+The diagnostic utility also supports direct script execution, including from a
+different working directory:
+
+```bash
+python -u /path/to/PeopleGator/user_scripts/detect_text_entities.py \
+  --config=/path/to/config.ini --input-alto-path=/path/to/alto --logging-level=DEBUG
+```
+
+This form explicitly uses the PeopleGator sources alongside the script, preventing
+an older installed package from masking the checkout's detector implementation.
+Runtime dependencies must still be available in the selected Python environment.
+An unavailable detector is reported during configuration, before XML loading.
