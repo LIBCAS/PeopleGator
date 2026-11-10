@@ -153,7 +153,7 @@ establish extraction quality for a particular model or OCR corpus.
 
 `tests/test_detect_text_entities_cli.py` exercises the standalone diagnostic
 `main()` with real ALTO/PAGE fixtures and mocked LLM results, including Unicode,
-multiline provenance, repeated page IDs, ordering, stdout/JSON/empty output,
+multiline provenance, page-grouped stdout/JSON, repeated page IDs, stable page ordering, empty pages and documents,
 exclusive detector selection despite face/linking/DB configuration, required
 arguments and failures in configuration, XML, detection and writing. Atomic-write
 regressions preserve an existing output and remove temporary files on failure.
