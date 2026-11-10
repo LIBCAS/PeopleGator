@@ -198,11 +198,21 @@ and repeated/missing page IDs disambiguated by original indices. They verify
 Unicode/multiline evidence and ordered source spans survive the page grouping;
 zero-page documents still produce an empty pages array and the no-mentions message.
 
-`tests/test_text_entity_prompt.py` covers the accepted PR #41 / issue #40 review:
-text detection requires a readable external prompt with nonblank system/user
-content at initialization. Tests cover missing/blank paths, missing/unreadable
-files, empty/malformed JSON, invalid encoding, absent/null/blank roles, invalid
-value types and Jinja2 syntax. They assert no prompter/client construction or XML
-loading occurs on failure, the CLI returns a safe actionable nonzero error while
-preserving existing output, and valid `{{ text }}` templates work. Separate tests
-verify other LLM engines retain their existing optional-prompt behavior.
+`tests/test_llm_prompts.py` covers the updated shared prompt contract in
+`LLMBasedEngine` for face assignment, batch face assignment, entity matching and
+text detection. Missing/blank paths, unreadable/malformed/empty JSON, invalid
+encoding, object/role types, blank content and Jinja2 syntax fail before prompter
+or client construction. Valid system/user combinations use config-relative paths;
+the text detector has no validation override. CLI failures load no OCR and leave
+existing output unchanged.
+
+Sequential and parallel prompter tests verify missing/unused key warnings, typo
+handling, system/user union, shared variables, loop locals/globals, normal undefined
+rendering, safe variable-name-only warnings and unchanged Pydantic response models
+for every inheritor. The existing single/batch assignment request-flow regressions
+now initialize real engines with explicit valid prompt files.
+
+```bash
+python -m pytest -q tests/test_llm_prompts.py tests/test_text_entity_detection.py tests/test_detect_text_entities_cli.py tests/test_llm_responses.py tests/test_logging.py tests/test_documentation.py
+python -m pytest -q --runtime-mode=full
+```

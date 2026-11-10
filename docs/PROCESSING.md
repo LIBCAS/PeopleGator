@@ -74,6 +74,33 @@ Searches PeopleGatorApp for a person using a proposed name. Selects a single mat
 
 The LLM settings come from `LLMBasedEngine` in `people_gator/engines/llm.py`. Run detection before face assignment, and face assignment before entity matching when using all three stages.
 
+## Shared LLM prompt configuration and data diagnostics
+
+Every engine inheriting `LLMBasedEngine` requires a nonblank
+`PROMPT_TEMPLATE_PATH`: `LLM_FACE_ASSIGNMENT`, `LLM_BATCH_FACE_ASSIGNMENT`,
+`ENTITY_MATCHING` and `TEXT_ENTITY_DETECTION`. The base class resolves relative
+paths from the INI directory and validates readable UTF-8 JSON, an object root,
+and at least one nonblank string `system` and/or `user` template with valid Jinja2
+syntax. A role may be absent or a blank string when the other role is usable;
+provided roles must be strings. Blank roles are omitted. Invalid configuration
+raises `LLMPromptConfigurationError` before prompter construction or processing.
+Error messages omit file paths, prompt contents and credentials. This is a shared
+requirement, not an optional detector-specific setting.
+
+At request preparation, `LLMPrompter` compares supplied `data` keys against the
+**union** of undeclared Jinja2 variables in both configured templates. Each missing
+placeholder and each unused data key produces a `WARNING` containing only its
+name. A key used in either role counts as used; loop-local variables and Jinja2
+globals are not falsely reported. For example, `{{ texxt }}` with data containing
+`text` warns that `texxt` is missing and `text` is unused.
+
+These diagnostics do not raise, filter data or change rendering. Jinja2's existing
+undefined-variable behavior remains in effect (a plain missing placeholder
+normally renders as an empty string; expressions retain normal Jinja2 semantics).
+Both sequential and parallel requests use this shared preparation path. Variable
+values, OCR, rendered prompts and credentials are excluded from these warnings.
+Pydantic response classes, generated schemas and response handling are unchanged.
+
 ## Reusable text chunking
 
 `people_gator.text.text_chunker_factory(config)` returns a `TextChunker` for use
@@ -357,15 +384,12 @@ and/or `user` Jinja2 templates. Relative paths resolve from the INI directory.
 }
 ```
 
-Prompt loading uses the shared LLM path conventions, but the text detector
-requires a readable `PROMPT_TEMPLATE_PATH` at initialization. Its JSON must
-provide nonblank string content in `system` and/or `user`, with valid Jinja2
-syntax. Missing/blank paths, unreadable or invalid JSON, unusable sections and
-malformed templates raise an actionable configuration error before the prompter
-is constructed or OCR pages are loaded. Blank optional roles are omitted when
-the other role is usable. Errors do not expose prompt contents or credentials.
-This requirement is local to `TEXT_ENTITY_DETECTION`; other LLM engines keep
-their existing behavior. There is no built-in fallback prompt.
+Prompt configuration validation is inherited from `LLMBasedEngine`, as for all
+LLM engines. `LLMTextEntityDetectionEngine` has no prompt-loading override or
+separate path checks. Missing/broken prompts fail during initialization before
+prompter construction or OCR loading, with safe actionable errors. There is no
+built-in fallback prompt. See the
+[shared prompt contract](#shared-llm-prompt-configuration-and-data-diagnostics).
 
 `TextEntityMentionResult`, `TextEntityResult` and `TextEntityDetectionResult` are
 Pydantic models in `people_gator/engines/text_entity_detection.py`. The engine

@@ -89,7 +89,7 @@ The broader system design also includes occurrences of person names in OCR text.
 | `people_gator/engines/face_detection.py` | YOLO detection in selected image regions; boxes and five landmarks. |
 | `people_gator/engines/face_assignment.py` | LLM-supported single/batch naming using images, captions and OCR text. |
 | `people_gator/engines/entity_matching.py` | Candidate-entity lookup, LLM disambiguation and creation through the app API. |
-| `people_gator/engines/llm.py` | Prompt assembly and structured responses from a configured LLM service. |
+| `people_gator/engines/llm.py` | Shared required-prompt validation, template/data key diagnostics, prompt assembly and structured LLM responses. |
 | `people_gator/core/db.py`, `connector.py` | Authenticated client for documents, pages, faces and person records. |
 | `user_scripts/parse_folder.py` | Local processing entry point. |
 | `processing_api/api.py`, `client.py`, `worker.py` | Processing job API, CLI client and worker based on DocAPI. |

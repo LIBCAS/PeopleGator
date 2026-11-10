@@ -2,6 +2,7 @@
 
 import configparser
 import importlib
+import json
 import logging
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -343,14 +344,18 @@ def test_authentication_failure_does_not_log_response(processing, monkeypatch, c
     assert not any(secret in caplog.text for secret in ("private-user", "secret-password", "secret-response"))
 
 
-def test_single_assignment_request_contract(processing, caplog):
+def test_single_assignment_request_contract(processing, caplog, tmp_path):
     from people_gator.engines.face_assignment import LLMFaceAssignmentEngine, FaceAssignmentData, FaceAssignmentResult
 
     identity = processing.PeopleGatorIdentity("before", None)
     face = SimpleNamespace(id="f1", face_metadata=SimpleNamespace(page_identity=SimpleNamespace(identity=identity)))
     data = FaceAssignmentData(face, None, (10, 20), None, context_text="private OCR")
     page = SimpleNamespace(id="P1")
-    engine = object.__new__(LLMFaceAssignmentEngine)
+    prompt = tmp_path / 'single-prompt.json'
+    prompt.write_text(json.dumps({'user': '{{ face_coordinates }} {{ context_text }} {{ caption_text }}'}))
+    config = configparser.ConfigParser()
+    config.read_dict({'engine': {'PROMPT_TEMPLATE_PATH': str(prompt)}})
+    engine = LLMFaceAssignmentEngine(config['engine'], 'cpu', str(tmp_path))
     engine.prepare_face_data = Mock(return_value=[data])
     engine.llm_prompter = Mock(return_value=(None, []))
     with caplog.at_level(logging.DEBUG):
@@ -369,7 +374,7 @@ def test_single_assignment_request_contract(processing, caplog):
 
 
 @pytest.mark.parametrize("parallel", [False, True])
-def test_batch_assignment_page_requests(processing, parallel, caplog):
+def test_batch_assignment_page_requests(processing, parallel, caplog, tmp_path):
     from people_gator.engines.face_assignment import LLMBatchFaceAssignmentEngine, BatchFaceAssignmentData, BatchFaceAssignmentResult, BatchFaceAssignmentResultItem
     from people_gator.enums import ProcessingMode
 
@@ -377,7 +382,11 @@ def test_batch_assignment_page_requests(processing, parallel, caplog):
     face = SimpleNamespace(id="f1", face_metadata=SimpleNamespace(page_identity=SimpleNamespace(identity=identity)))
     data = BatchFaceAssignmentData(faces=[{"id": 0, "coordinates": (10, 20)}], face_regions=[face])
     page = SimpleNamespace(id="P1")
-    engine = object.__new__(LLMBatchFaceAssignmentEngine)
+    prompt = tmp_path / 'batch-prompt.json'
+    prompt.write_text(json.dumps({'user': '{{ faces }} {{ context_text }} {{ caption_text }}'}))
+    config = configparser.ConfigParser()
+    config.read_dict({'engine': {'PROMPT_TEMPLATE_PATH': str(prompt)}})
+    engine = LLMBatchFaceAssignmentEngine(config['engine'], 'cpu', str(tmp_path))
     engine.processing_mode = ProcessingMode.PAGE_PARALLEL if parallel else ProcessingMode.SEQUENTIAL
     engine.prepare_face_data = Mock(return_value=[data])
     result = BatchFaceAssignmentResult(faces=[BatchFaceAssignmentResultItem(id=0, coordinates=[10, 20], name_normalized="after", name_in_text=None)])

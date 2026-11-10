@@ -7,7 +7,7 @@ import multiprocessing
 
 from typing import Any
 from openai import OpenAI
-from jinja2 import Template
+from jinja2 import Template, TemplateError, meta
 from functools import partial
 from jsonschema import validate, ValidationError
 
@@ -16,6 +16,10 @@ from people_gator.core.utils import compose_path
 
 
 logger = logging.getLogger(__name__)
+
+
+class LLMPromptConfigurationError(ValueError):
+    """Safe, actionable prompt-file configuration error for every LLM engine."""
 
 
 class LLMPrompter:
@@ -53,6 +57,11 @@ class LLMPrompter:
         self.max_output_tokens = max_output_tokens
         self.prompt_template_system = Template(prompt_template_system) if prompt_template_system else None
         self.prompt_template_user = Template(prompt_template_user) if prompt_template_user else None
+        self._template_variables = set()
+        for source, template in ((prompt_template_system, self.prompt_template_system),
+                                 (prompt_template_user, self.prompt_template_user)):
+            if template is not None:
+                self._template_variables.update(meta.find_undeclared_variables(template.environment.parse(source)))
         self.json_schema = json_schema
         self.max_attempts = max_attempts
         self.num_processes = num_processes
@@ -194,6 +203,7 @@ class LLMPrompter:
         Returns:
             Responses API keyword arguments with an optional output schema.
         """
+        self._warn_template_data(data)
         messages = []
 
         if self.prompt_template_system:
@@ -249,6 +259,18 @@ class LLMPrompter:
 
         return request_args
 
+    def _warn_template_data(self, data: dict):
+        """Warn once per mismatch against the union of both template roles.
+
+        Args:
+            data: Rendering mapping; only key names are logged, never values.
+        """
+        supplied = set(data)
+        for name in sorted(self._template_variables - supplied):
+            logger.warning("LLM template placeholder %s is missing from data", name)
+        for name in sorted(supplied - self._template_variables, key=str):
+            logger.warning("LLM data key %s is unused by system/user templates", name)
+
     def eval_prompt_template(self, template: Template, data: dict):
         """Return a Jinja2 template rendered with the supplied context.
 
@@ -302,22 +324,51 @@ class LLMBasedEngine(BaseEngine):
         )
 
     def load_prompt_template(self):
-        """Load configured system/user templates from JSON when a path is present.
+        """Require readable prompt JSON with a usable system and/or user template.
 
         Raises:
-            OSError: If the configured resource cannot be read.
-            ValueError: If the resource contains invalid JSON.
+            LLMPromptConfigurationError: If path, file, JSON structure, role types,
+                content or Jinja2 syntax is invalid. Errors omit private paths
+                and prompt contents. Validation precedes prompter construction.
         """
-        if self.prompt_template_path:
-            prompt_template_path = compose_path(self.prompt_template_path, self.config_path)
-            with open(prompt_template_path, "r") as f:
-                prompt_template = json.load(f)
-
-            if "system" in prompt_template:
-                self.prompt_template_system = prompt_template["system"]
-
-            if "user" in prompt_template:
-                self.prompt_template_user = prompt_template["user"]
+        if not isinstance(self.prompt_template_path, str) or not self.prompt_template_path.strip():
+            raise LLMPromptConfigurationError(
+                'LLM engines require PROMPT_TEMPLATE_PATH pointing to a readable prompt JSON '
+                'object with nonblank system and/or user strings.')
+        try:
+            path = compose_path(self.prompt_template_path, self.config_path)
+            with open(path, 'r', encoding='utf-8') as stream:
+                prompt = json.load(stream)
+        except (OSError, ValueError):
+            raise LLMPromptConfigurationError(
+                'Could not read valid prompt JSON; check PROMPT_TEMPLATE_PATH, file permissions '
+                'and UTF-8 JSON syntax.') from None
+        if not isinstance(prompt, dict):
+            raise LLMPromptConfigurationError(
+                'PROMPT_TEMPLATE_PATH must reference a JSON object with system/user templates.')
+        templates = {}
+        for role in ('system', 'user'):
+            if role not in prompt:
+                templates[role] = None
+                continue
+            value = prompt[role]
+            if not isinstance(value, str):
+                raise LLMPromptConfigurationError('Prompt JSON system/user values must be strings.')
+            if not value.strip():
+                templates[role] = None
+                continue
+            try:
+                Template(value)
+            except TemplateError:
+                raise LLMPromptConfigurationError(
+                    'Prompt JSON must contain valid Jinja2 system/user templates.') from None
+            templates[role] = value
+        if not any(templates.values()):
+            raise LLMPromptConfigurationError(
+                'Prompt JSON must contain a nonblank system and/or user string; '
+                'check PROMPT_TEMPLATE_PATH.')
+        self.prompt_template_system = templates['system']
+        self.prompt_template_user = templates['user']
 
     def load_json_schema(self):
         """Load the optional response JSON schema when a path is present.
