@@ -150,6 +150,6 @@ python -m user_scripts.detect_text_entities --config ./config.ini --input-alto-p
 ```
 
 Use `--input-xml-path` for PAGE XML and `--output-path ./output/entities.json`
-to save UTF-8 JSON containing exact OCR mentions and source spans. See the
+to save UTF-8 JSON grouped by source page (including pages with no mentions), containing exact OCR mentions and source spans. See the
 [diagnostic CLI contract](docs/PROCESSING.md#standalone-text-detection-inspection-cli)
 for configuration, output fields and failure behavior.
