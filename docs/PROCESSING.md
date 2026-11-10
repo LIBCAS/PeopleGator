@@ -607,8 +607,8 @@ Responses API identifies this as `status=incomplete` with reason
 the same request with the same allowance does not resolve that condition.
 
 The shared prompter now rejects these incomplete responses before JSON decoding,
-reports the configured cap and recommends increasing `MAX_OUTPUT_TOKENS` or
-reducing `CHUNKING_MAX_CHARS`, and stops identical retries. The configured limit
+reports the configured cap, recommends increasing `MAX_OUTPUT_TOKENS`, and
+stops identical retries. The configured limit
 remains a hard limit; the client never silently raises it. For the configured
 reasoning model tested with roughly 3,600 synthetic source characters, 1,500
 output tokens truncated the result while 6,000 allowed complete JSON. Choose a

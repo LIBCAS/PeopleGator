@@ -148,7 +148,7 @@ class LLMPrompter:
                     reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
                     if reason == "max_output_tokens":
                         logger.error("LLM response reached MAX_OUTPUT_TOKENS=%s before completing JSON; "
-                                     "increase MAX_OUTPUT_TOKENS or reduce CHUNKING_MAX_CHARS. "
+                                     "increase MAX_OUTPUT_TOKENS. "
                                      "The output allowance includes reasoning tokens. No identical retry will help.",
                                      request_args.get("max_output_tokens", "unknown"))
                         return None
