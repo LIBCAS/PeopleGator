@@ -49,7 +49,7 @@ flowchart TD
     SAVE --> XML
 ```
 
-The available engines perform text entity detection, face detection, LLM-assisted naming, and entity matching. See [Processing](PROCESSING.md).
+The available engines perform text entity detection and clustering, face detection, LLM-assisted naming, and entity matching. See [Processing](PROCESSING.md).
 
 ## Data model
 
@@ -105,7 +105,7 @@ prefix before calling the factory with `METHOD`, `MAX_CHARS`, and
 `OVERLAP_CHARS`. There is no global or nested chunking section and no change to
 `DocumentParser` engine loading. Text detection,
 mention construction and overlap de-duplication are owned by the detector;
-clustering and linking remain future work under #33.
+document clustering is described below; linking remains future work under #33.
 See [text chunking](PROCESSING.md#reusable-text-chunking) for the public contract.
 
 ## Related software and services
@@ -116,7 +116,7 @@ See [text chunking](PROCESSING.md#reusable-text-chunking) for the public contrac
 - [PeopleGatorApp](https://github.com/DCGM/PeopleGatorApp) provides the person/face database API and the interface for reviewing and correcting assigned identities.
 - The configured YOLO and LLM engines supply detection and contextual identification.
 
-The broader data model includes **Entity** (a person), **Face** (a detected face occurrence), **Source** (document/page reference), and source-mapped person mentions in page text; independent document clustering is planned. An occurrence is linked to source material and may refer to an entity. The [Processing](PROCESSING.md) guide describes the matching stages.
+The broader data model includes **Entity** (a person), **Face** (a detected face occurrence), **Source** (document/page reference), and source-mapped person mentions in page text; independent document clustering operates before app linking. An occurrence is linked to source material and may refer to an entity. The [Processing](PROCESSING.md) guide describes the matching stages.
 
 `people_gator/engines/text_entity_detection.py` registers `TEXT_ENTITY_DETECTION`
 through the existing factory. It composes the independent chunker and shared
@@ -124,8 +124,8 @@ through the existing factory. It composes the independent chunker and shared
 configured prompt templates, stages source-mapped mentions, then updates page
 `text_entities` atomically. Optional identity and multiline `SourceSpan` tuples
 extend the existing mention model; canonical names/descriptions are detection
-metadata, not app identities. Clustering, face cooperation and persistence remain
-separate #33 tasks. See [the detector contract](PROCESSING.md#text-entity-detection-text_entity_detection).
+metadata, not app identities. Document clustering is a separate engine; face
+cooperation and persistence remain separate #33 tasks. See [the detector contract](PROCESSING.md#text-entity-detection-text_entity_detection).
 
 `user_scripts/detect_text_entities.py` is a standalone diagnostic path: validate
 an ALTO/PAGE directory, load it through `PeopleGatorDocument`, select exactly one
@@ -134,3 +134,13 @@ an atomic JSON snapshot grouped by source page (including empty pages),
 with mentions and their OCR provenance. It does not
 construct `DocumentParser` or execute other configured engines/app services. The
 module CLI uses processing extras and introduces no package dependency changes.
+
+`people_gator/engines/text_entity_clustering.py` registers
+`TEXT_ENTITY_CLUSTERING` after detection in configured INI order. It adapts
+weighted canonical/alias fuzzy components and shared LLM disambiguation to
+request-local, one-mention records, preserving direct member references. Strict
+Pydantic partitions and staged commit retain every occurrence, while existing
+clusters and page identities are protected. Unlinked clusters use `identity=None`,
+consolidated `name`/`description` and optional `short_description`. This stage
+requires neither image loading nor app access and adds no XML persistence. See
+[the clustering contract](PROCESSING.md#document-text-entity-clustering-text_entity_clustering).

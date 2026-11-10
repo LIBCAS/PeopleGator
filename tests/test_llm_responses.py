@@ -67,3 +67,32 @@ def test_complete_json_response_still_succeeds(monkeypatch):
     llm, create = prompter_client(monkeypatch, [NS(status='completed', output_text='{"entities": []}')])
     assert llm.LLMPrompter._send_request('https://example.invalid', 'secret', {}, 3, None) == {'entities': []}
     assert create.call_count == 1
+
+
+@pytest.mark.parametrize('kind', ['json', 'schema', 'transport', 'http-json', 'incomplete', 'token-limit'])
+@pytest.mark.parametrize('parallel', [False, True])
+def test_opt_in_failure_types_preserve_request_vs_content(kind, parallel, monkeypatch, caplog):
+    from people_gator.engines import llm
+    from test_llm_prompts import InlinePool
+    invalid = {
+        'json': NS(output_text='private invalid JSON'),
+        'schema': NS(output_text='{"private": "data"}'),
+        'transport': OSError('private transport'),
+        'http-json': json.JSONDecodeError('bad', 'private HTTP', 0),
+        'incomplete': NS(status='incomplete', incomplete_details=NS(reason='other')),
+        'token-limit': NS(status='incomplete', incomplete_details=NS(reason='max_output_tokens')),
+    }[kind]
+    create = Mock(side_effect=invalid if isinstance(invalid, Exception) else None, return_value=invalid)
+    monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=create))))
+    monkeypatch.setattr(llm.multiprocessing, 'Pool', InlinePool)
+    prompter = llm.LLMPrompter('https://example.invalid', 'private-key', 'mock',
+        prompt_template_user='{{ entities }}', json_schema={'type': 'object', 'required': ['clusters']},
+        max_attempts=2, raise_on_failure=True)
+    error = llm.LLMResponseError if kind in ['json', 'schema'] else llm.LLMRequestError
+    with pytest.raises(error) as caught:
+        if parallel:
+            prompter.process_parallel([{'entities': 'private OCR'}])
+        else:
+            prompter({'entities': 'private OCR'})
+    assert create.call_count == (1 if kind == 'token-limit' else 2)
+    assert 'private' not in str(caught.value) + caplog.text

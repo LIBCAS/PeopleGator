@@ -31,6 +31,7 @@ tool = [
     "opencv-python",
     # ConfigDict and model_validator require Pydantic v2.
     "pydantic>=2",
+    "rapidfuzz>=3",
     "requests",
     "safe-gpu>=1.5.1",
     "shapely",
@@ -52,6 +53,7 @@ full = [
     "opencv-python",
     # ConfigDict and model_validator require Pydantic v2.
     "pydantic>=2",
+    "rapidfuzz>=3",
     "requests",
     "safe-gpu>=1.5.1",
     "shapely",

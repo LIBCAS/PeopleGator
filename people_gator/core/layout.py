@@ -924,25 +924,28 @@ class PeopleGatorPageLayout(AnnoPagePageLayout):
 
 
 class PeopleGatorTextEntityCluster:
-    """Text mentions sharing one person identity across a document."""
+    """Document-wide mention group with a proposed name and optional app identity."""
 
     def __init__(self,
                  text_entities: list[PeopleGatorTextEntityMention],
-                 identity: PeopleGatorIdentity,
+                 identity: PeopleGatorIdentity | None = None,
                  name: str|None = None,
-                 description: str|None = None):
+                 description: str|None = None,
+                 short_description: str|None = None):
         """Initialize PeopleGatorTextEntityCluster from the supplied settings and data.
 
         Args:
             text_entities: Text mentions belonging to this identity cluster.
-            identity: Person identity shared by the occurrences.
+            identity: Optional shared app identity; None before linking.
             name: Proposed person name, or None when unknown.
             description: Optional long person or cluster description.
+            short_description: Optional concise evidence-based description.
         """
         self.text_entities: list[PeopleGatorTextEntityMention] = text_entities
-        self.identity: PeopleGatorIdentity = identity
+        self.identity: PeopleGatorIdentity | None = identity
         self.name: str|None = name
         self.description: str|None = description
+        self.short_description: str|None = short_description
 
     def __repr__(self):
         """Return a diagnostic representation of the stored fields.

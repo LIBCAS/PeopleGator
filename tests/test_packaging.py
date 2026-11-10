@@ -47,7 +47,7 @@ def test_metadata_and_direct_dependencies():
         "numpy": "numpy", "lxml": "lxml", "shapely": "shapely",
         "torch": "torch", "ultralytics": "ultralytics", "pydantic": "pydantic",
         "openai": "openai", "jinja2": "jinja2", "jsonschema": "jsonschema",
-        "requests": "requests", "safe_gpu": "safe-gpu",
+        "requests": "requests", "safe_gpu": "safe-gpu", "rapidfuzz": "rapidfuzz",
         "doc_api": "doc-api", "doc_worker": "doc-api", "doc_client": "doc-api",
     }
     base = {canonicalize_name(Requirement(d).name) for d in project["dependencies"]}

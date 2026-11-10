@@ -216,3 +216,29 @@ now initialize real engines with explicit valid prompt files.
 python -m pytest -q tests/test_llm_prompts.py tests/test_text_entity_detection.py tests/test_detect_text_entities_cli.py tests/test_llm_responses.py tests/test_logging.py tests/test_documentation.py
 python -m pytest -q --runtime-mode=full
 ```
+
+## Document text clustering
+
+`tests/test_text_entity_clustering.py` tests weighted canonical/alias fuzzy
+candidates, thresholds/weights/aggregation, OCR/Unicode/initial/reordered names,
+contextual homonym splits, strict typed request-local partitions, missing/extra/
+duplicate/noninteger/empty memberships, unsupported names, singleton fallback,
+transport/exhaustion atomicity, deterministic ordering, reruns/new mentions,
+protected manual/pre-linked clusters, conflicting IDs and invalid prior groups.
+It verifies exact object/source-span preservation and image/face retention. Real
+ALTO/PAGE fixtures pass through detection then clustering via `DocumentParser`,
+with mocked Responses and no app, image loading or GPU inference. Shared prompt
+tests include the new inheritor and generated Pydantic schema. Run:
+
+```bash
+python -m pytest -q tests/test_text_entity_clustering.py tests/test_text_entity_detection.py tests/test_llm_prompts.py tests/test_llm_responses.py tests/test_documentation.py
+python -m pytest -q --runtime-mode=full
+python -m build --no-isolation
+python -m pip check
+python -m compileall -q people_gator processing_api user_scripts
+```
+
+RapidFuzz is declared only in processing extras (`tool` and `full`); packaging
+checks continue to exercise dependency-free base/client boundaries. Mocked
+resolution tests do not establish model accuracy or factual summary quality on
+real OCR. Python 3.10 syntax is checked independently of runtime availability.
