@@ -108,13 +108,14 @@ def load_document(directory, alto):
 
 
 def detection_result(document):
-    """Return a JSON-safe snapshot in document/page/mention/source-span order.
+    """Return a JSON-safe snapshot grouped by source page in document order.
 
     Args:
         document: Detector-updated document; no layout objects are serialized.
     """
-    mentions = []
-    for page in document.page_layouts:
+    pages = []
+    for page_index, page in enumerate(document.page_layouts):
+        mentions = []
         for mention in page.text_entities:
             spans = []
             for span in mention.source_spans:
@@ -127,25 +128,28 @@ def detection_result(document):
             mentions.append({'name': mention.name, 'proposed_name': mention.proposed_name,
                              'description': mention.description, 'context': mention.text,
                              'source_spans': spans})
-    return {'document_id': document.id, 'mentions': mentions}
+        pages.append({'page_id': page.id, 'page_index': page_index, 'mentions': mentions})
+    return {'document_id': document.id, 'pages': pages}
 
 
 def readable_result(result):
-    """Format a compact listing, preserving readable Unicode and multiline names.
+    """Format a page-grouped listing, preserving Unicode and multiline names.
 
     Args:
         result: JSON-safe detection snapshot.
     """
-    if not result['mentions']:
+    total = sum(len(page['mentions']) for page in result['pages'])
+    if not total:
         return 'No text entity mentions detected.\n'
-    lines = [f"Detected {len(result['mentions'])} text entity mention(s):"]
-    for mention in result['mentions']:
-        name = json.dumps(mention['name'], ensure_ascii=False)
-        locations = [f"page {s['page_id']!r} [{s['page_index']}], "
-                     f"region {s['region_id']!r} [{s['region_index']}], "
-                     f"line {s['line_id']!r} [{s['line_index']}] "
-                     f"chars [{s['start']}, {s['end']})" for s in mention['source_spans']]
-        lines.append(f"- {name}: " + '; '.join(locations))
+    lines = [f"Detected {total} text entity mention(s) across {len(result['pages'])} page(s):"]
+    for page in result['pages']:
+        lines.append(f"Page {page['page_id']!r} [{page['page_index']}]: {len(page['mentions'])} mention(s)")
+        for mention in page['mentions']:
+            name = json.dumps(mention['name'], ensure_ascii=False)
+            locations = [f"region {s['region_id']!r} [{s['region_index']}], "
+                         f"line {s['line_id']!r} [{s['line_index']}] "
+                         f"chars [{s['start']}, {s['end']})" for s in mention['source_spans']]
+            lines.append(f"- {name}: " + '; '.join(locations))
     return '\n'.join(lines) + '\n'
 
 
@@ -203,7 +207,7 @@ def main(argv=None):
         logger.error('Error: %s failed (%s); check the configuration, input files, '
                      'service, or output permissions.', stage, type(exc).__name__)
         return 1
-    logger.info('Text detection CLI completed: %d mentions', len(result['mentions']))
+    logger.info('Text detection CLI completed: %d mentions', sum(len(page['mentions']) for page in result['pages']))
     return 0
 
 
