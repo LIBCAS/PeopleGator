@@ -9,7 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 
-ENGINE_METHODS = ['LLM_FACE_ASSIGNMENT', 'LLM_BATCH_FACE_ASSIGNMENT', 'ENTITY_MATCHING', 'TEXT_ENTITY_DETECTION']
+ENGINE_METHODS = ['LLM_FACE_ASSIGNMENT', 'LLM_BATCH_FACE_ASSIGNMENT', 'ENTITY_MATCHING', 'TEXT_ENTITY_DETECTION', 'TEXT_ENTITY_CLUSTERING']
 
 
 BAD_PROMPTS = [
@@ -137,7 +137,8 @@ def test_all_inheritors_use_shared_validation():
     from people_gator.engines.face_assignment import LLMFaceAssignmentEngine, LLMBatchFaceAssignmentEngine
     from people_gator.engines.entity_matching import EntityMatchingEngine
     from people_gator.engines.text_entity_detection import LLMTextEntityDetectionEngine
-    for cls in (LLMFaceAssignmentEngine, LLMBatchFaceAssignmentEngine, EntityMatchingEngine, LLMTextEntityDetectionEngine):
+    from people_gator.engines.text_entity_clustering import LLMTextEntityClusteringEngine
+    for cls in (LLMFaceAssignmentEngine, LLMBatchFaceAssignmentEngine, EntityMatchingEngine, LLMTextEntityDetectionEngine, LLMTextEntityClusteringEngine):
         assert cls.load_prompt_template is LLMBasedEngine.load_prompt_template
         assert 'load_prompt_template' not in cls.__dict__
 
@@ -175,7 +176,7 @@ def test_template_data_warnings_are_shared_nonfatal_and_safe(system, user, data,
     import logging
     from types import SimpleNamespace as NS
     from people_gator.engines import llm
-    create = Mock(return_value=NS(output_text='{"ok": true}'))
+    create = Mock(return_value=NS(status='completed', output_text='{"ok": true}'))
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=create))))
     monkeypatch.setattr(llm.multiprocessing, 'Pool', InlinePool)
     prompter = llm.LLMPrompter('https://example.invalid', 'private-api-value', 'mock',
@@ -213,7 +214,9 @@ def test_all_engine_response_models_keep_existing_shared_request_contract(method
     from people_gator.engines.face_assignment import FaceAssignmentResult, BatchFaceAssignmentResult
     from people_gator.engines.entity_matching import EntityMatchingResult
     from people_gator.engines.text_entity_detection import TextEntityDetectionResult
+    from people_gator.engines.text_entity_clustering import TextEntityClusteringResult
     cases = {
+        'TEXT_ENTITY_CLUSTERING': (TextEntityClusteringResult, {'entities': 'private-payload-value'}, {'clusters': []}),
         'LLM_FACE_ASSIGNMENT': (FaceAssignmentResult,
             {'face_coordinates': (0, 0, 1, 1), 'context_text': 'private-payload-value', 'caption_text': ''},
             {'name_normalized': 'Candidate', 'name_in_text': None}),
@@ -229,7 +232,7 @@ def test_all_engine_response_models_keep_existing_shared_request_contract(method
     config.read_dict({'ENGINE_1': {'METHOD': method, 'PROMPT_TEMPLATE_PATH': 'prompt.json',
                                   'API_URL': 'https://example.invalid', 'API_KEY': 'private-api-value', 'MODEL_NAME': 'mock'}})
     engine = engine_factory(config['ENGINE_1'], config_path=str(tmp_path), device='cpu')
-    create = Mock(return_value=NS(output_text=json.dumps(payload)))
+    create = Mock(return_value=NS(status='completed', output_text=json.dumps(payload)))
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=create))))
     monkeypatch.setattr(llm.multiprocessing, 'Pool', InlinePool)
     with caplog.at_level(logging.WARNING, logger=llm.__name__):

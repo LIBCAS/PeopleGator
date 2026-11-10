@@ -181,3 +181,13 @@ The JSON is formatted across lines and enclosed in single-quoted XML attribute d
 ## XML import and repeat processing
 
 The ALTO face readers and `altoxml_load_regions` hook are pending implementation. The PAGE writer currently emits `ImageRegion`, while the PAGE face import hook searches for `CustomRegion[@type='face']`. The ALTO cleanup helper `remove_peoplegator_elements()` currently preserves the input unchanged. Completing face round-trip and repeated-enrichment behavior is tracked in [TODO.md](TODO.md) and [Testing](TESTING.md).
+
+## In-memory text clusters
+
+`TEXT_ENTITY_CLUSTERING` populates `PeopleGatorDocument.text_entity_clusters`
+with original mention references, proposed names/descriptions and optional
+`short_description`. `identity=None` represents a group before app linking; no
+app ID or page identity is fabricated or propagated. This is an in-memory
+contract only: no new ALTO/PAGE text-cluster serialization or PeopleGatorApp
+persistence is implemented. Existing XML and face output remain unchanged. See
+[clustering configuration and safety](PROCESSING.md#document-text-entity-clustering-text_entity_clustering).

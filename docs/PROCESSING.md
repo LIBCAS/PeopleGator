@@ -78,7 +78,7 @@ The LLM settings come from `LLMBasedEngine` in `people_gator/engines/llm.py`. Ru
 
 Every engine inheriting `LLMBasedEngine` requires a nonblank
 `PROMPT_TEMPLATE_PATH`: `LLM_FACE_ASSIGNMENT`, `LLM_BATCH_FACE_ASSIGNMENT`,
-`ENTITY_MATCHING` and `TEXT_ENTITY_DETECTION`. The base class resolves relative
+`ENTITY_MATCHING`, `TEXT_ENTITY_DETECTION` and `TEXT_ENTITY_CLUSTERING`. The base class resolves relative
 paths from the INI directory and validates readable UTF-8 JSON, an object root,
 and at least one nonblank string `system` and/or `user` template with valid Jinja2
 syntax. A role may be absent or a blank string when the other role is usable;
@@ -606,7 +606,16 @@ Responses API identifies this as `status=incomplete` with reason
 `max_output_tokens`; any returned text may be empty or truncated JSON. Repeating
 the same request with the same allowance does not resolve that condition.
 
-The shared prompter now rejects these incomplete responses before JSON decoding,
+The shared prompter reads and parses output only when the response explicitly
+has `status=completed`. Failed, cancelled, queued, in-progress, unknown and
+missing/null statuses are request failures, even if the response includes
+plausible JSON. Such responses are retried within the configured attempt limit;
+exhaustion raises `LLMRequestError` with `raise_on_failure=True` or returns `None`
+in the default mode. They discard any earlier unvalidated payload and cannot
+trigger clustering's content-only singleton fallback. Clustering therefore leaves
+the original cluster list intact if any candidate request fails.
+
+The shared prompter rejects incomplete responses before JSON decoding,
 reports the configured cap, recommends increasing `MAX_OUTPUT_TOKENS`, and
 stops identical retries. The configured limit
 remains a hard limit; the client never silently raises it. For the configured
@@ -618,3 +627,111 @@ At `DEBUG`, response diagnostics include only text length and output/reasoning
 token counts. Genuine JSON decoding errors identify whether decoding failed in
 the SDK's HTTP response handling or in the model's output, plus the character
 position. These project diagnostics exclude response bodies, OCR, prompts and credentials.
+
+## Document text entity clustering (`TEXT_ENTITY_CLUSTERING`)
+
+`LLMTextEntityClusteringEngine` receives and returns the same document, populating
+`text_entity_clusters` in memory. Place its `[ENGINE_*]` section **after
+`TEXT_ENTITY_DETECTION` and before face detection, face assignment and identity
+linking**. Section insertion order controls execution, not the section suffix.
+It reads existing mentions across all pages without chunking, images, GPU, app
+access or intermediate files. Detection and clustering remain separate stages.
+
+| Option | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `METHOD` | Yes | — | `TEXT_ENTITY_CLUSTERING` |
+| `API_URL`, `API_KEY`, `MODEL_NAME` | Yes | — | Existing shared LLM connection settings, supplied externally. |
+| `PROMPT_TEMPLATE_PATH` | Yes | — | External JSON containing system/user Jinja2 templates; shared validation applies. |
+| `REASONING_EFFORT`, `MAX_OUTPUT_TOKENS` | No | Shared `LLMBasedEngine` settings | Existing request controls; size the token allowance for candidate groups. |
+| `CLUSTER_THRESHOLD` | No | `92` | Finite candidate score in `0–100`, inclusive. |
+| `NAME_WEIGHT` | No | `0.7` | Finite nonnegative canonical-name weight. |
+| `MENTION_WEIGHT` | No | `0.3` | Finite nonnegative OCR-alias weight; weights must have a finite positive sum. |
+| `SIMILARITY_AGGREGATION` | No | `max` | `max`, `mean` or `min` across weighted name/alias comparisons. |
+
+No prompt, provider/model choice or schema artifact is bundled. A
+`JSON_SCHEMA_PATH` is unnecessary: the nested Pydantic v2 response model always
+supplies the generated request schema. The existing shared template validation
+and missing/unused key warnings apply to this engine too.
+
+Each **mention is one record**, because extraction does not retain a separate
+NER entity grouping. The canonical name is `proposed_name` when nonblank,
+otherwise OCR `name`; its alias is the original OCR `name`. The reference fuzzy
+algorithm compares every canonical/alias pair using RapidFuzz
+`partial_token_sort_ratio` on NFKC/casefold/word-normalized comparison copies.
+The original evidence stays untouched. A pair score is multiplied by the sum of
+its two weights divided by twice the largest weight. `max`/`mean`/`min`
+aggregates the four scores. Threshold graph connected components are equivalent
+to reference DBSCAN with `min_samples=1`, including threshold `100` (exact
+candidate similarity); no distance matrix or extra scikit-learn dependency is
+needed. Comparisons take quadratic time and the grouping uses linear storage.
+Initials, reordered/omitted parts and OCR variants can become candidates.
+Alternative names can meet through existing canonical proposals. Unrelated
+aliases without that evidence remain separate. Context does not establish a
+fuzzy edge: it is supplied for LLM disambiguation, including conflicting
+homonyms. Similarity alone never merges records.
+
+A singleton copies its original proposed/OCR name and description without an LLM
+call. For each multi-record group, the engine sends one Jinja2 data key:
+`entities`, a UTF-8 JSON string of ordered records with `index` (one-based,
+restarted for each request), `name`, `aliases`, `description`, and OCR `context`.
+These local indices refer directly to original mention objects; they are not
+page/chunk IDs. Templates may render `{{ entities }}` or decode/format it using
+external template logic. The external prompt must ask for evidence-based
+resolution, permit homonym splits and uncertainty, choose a supplied name, and
+avoid facts outside the supplied evidence. Code contains no disambiguation
+wording.
+
+`TextEntityClusteringResult` has `clusters: list[TextEntityClusterResult]`. Each
+nested result has `name: str`, nullable `short_description` and
+`long_description`, and `entity_indices: list[int]`. All fields are required in
+the generated structured-output schema; use JSON `null` for absent descriptions.
+Extra fields and coercion (including string/float/bool indices) are rejected.
+Every request index must occur exactly once across nonempty groups. The chosen
+name must match a canonical name or OCR alias **of its own members** under the
+comparison normalization. Text must be nonblank and contain no control/surrogate
+characters except normal newline, carriage return or tab. Descriptions are LLM
+summaries of supplied evidence; structural validation cannot prove the factual
+accuracy of an arbitrary summary, so external prompts and human review remain
+responsible for that judgment.
+
+Unusable decoded content, unsupported names, or invalid membership rejects the
+**whole candidate partition**, logs a warning with counts, and preserves each
+record as a singleton using original metadata. The shared prompter owns JSON
+parsing and retries. Clustering enables the shared prompter’s opt-in
+`raise_on_failure` mode: exhausted invalid model JSON/schema raises
+`LLMResponseError` and uses singleton fallback; request/HTTP decoding, transport
+and all non-completed responses raise `LLMRequestError` and abort after request
+handling/retries. An earlier invalid payload cannot mask a subsequent request
+failure. Existing prompter callers
+retain their default return behavior. A raised request error or `None` from
+a request aborts processing with a safe error. All groups are staged before replacing the cluster
+list; no partial clustering is committed on failure. Diagnostics report only
+counts/failure types, never names, OCR, prompts or credentials.
+
+Existing clusters are protected as complete units, retaining their objects,
+membership, names, descriptions and identities. An unclustered mention with any
+`page_identity` is also protected, becoming a singleton with that existing
+identity (even when its app ID is null). Only unclustered mentions without page
+identity enter candidate grouping. Conflicting non-null app IDs within an
+existing cluster, empty/overlapping/foreign membership or a mention object reused
+in input raise `ValueError` before processing, leaving annotations intact rather
+than guessing how to repair them. Distinct objects with equal OCR or reused
+page/line IDs remain distinct records. Reruns preserve prior clusters and process
+only new mentions; they do not reopen earlier singleton or LLM decisions. To
+intentionally recluster, callers must explicitly remove the relevant unlinked
+clusters first. Existing app-ID-based helper behavior is unchanged.
+
+Every source mention appears exactly once. New members retain input order and
+clusters sort by their earliest document/page/mention position; existing member
+order is preserved. `PeopleGatorTextEntityCluster.identity` now defaults to
+`None`, while old positional constructor usage still works. `name` is the
+consolidated proposal, `description` stores the long description (or short when
+long is null), and the new optional `short_description` preserves the concise
+version. Original OCR spellings, line/span, ordered `source_spans`, extraction
+metadata and `page_identity` are never rewritten or distributed. No fabricated
+app ID or provisional database identity is created. Aliases remain available
+through the original members.
+
+This output is an in-memory handoff for later face cooperation and shared
+identity linking under #33. No new ALTO/PAGE text serialization, database
+persistence, face assignment or detection occurs here.

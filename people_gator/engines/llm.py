@@ -10,6 +10,7 @@ from openai import OpenAI
 from jinja2 import Template, TemplateError, meta
 from functools import partial
 from jsonschema import validate, ValidationError
+from pydantic import ValidationError as PydanticValidationError
 
 from people_gator.engines import BaseEngine
 from people_gator.core.utils import compose_path
@@ -20,6 +21,14 @@ logger = logging.getLogger(__name__)
 
 class LLMPromptConfigurationError(ValueError):
     """Safe, actionable prompt-file configuration error for every LLM engine."""
+
+
+class LLMRequestError(RuntimeError):
+    """Request transport, incomplete output or request exhaustion failed safely."""
+
+
+class LLMResponseError(ValueError):
+    """A completed provider response contained unusable structured content."""
 
 
 class LLMPrompter:
@@ -35,7 +44,8 @@ class LLMPrompter:
                  prompt_template_user: str|None = None,
                  json_schema = None,
                  max_attempts: int = 3,
-                 num_processes: int = 4):
+                 num_processes: int = 4,
+                 raise_on_failure: bool = False):
         """Configure prompt rendering, response validation, and LLM request limits.
 
         Args:
@@ -49,6 +59,7 @@ class LLMPrompter:
             json_schema: Optional output schema used when no response model is supplied.
             max_attempts: Maximum request attempts; defaults to 3.
             num_processes: Parallel request pool size; defaults to 4.
+            raise_on_failure: Raise safe request/content errors after retries; defaults to False.
         """
         self.api_url = api_url
         self.api_key = api_key
@@ -65,6 +76,7 @@ class LLMPrompter:
         self.json_schema = json_schema
         self.max_attempts = max_attempts
         self.num_processes = num_processes
+        self.raise_on_failure = raise_on_failure
 
     def __call__(self, data: dict, images: list|dict|None = None, response_model=None):
         """Delegate to the primary operation with the supplied arguments.
@@ -94,7 +106,7 @@ class LLMPrompter:
         request_args = [self._prepare_request_args(data, images, response_model) for data, images in zip(data_list, images_list)]
 
         with multiprocessing.Pool(processes=self.num_processes) as pool:
-            results = pool.starmap(self._send_request, [(self.api_url, self.api_key, args, self.max_attempts, self.json_schema, response_model) for args in request_args])
+            results = pool.starmap(self._send_request, [(self.api_url, self.api_key, args, self.max_attempts, self.json_schema, response_model, self.raise_on_failure) for args in request_args])
 
         return results
 
@@ -110,12 +122,12 @@ class LLMPrompter:
             The latest LLM result; see _send_request for failure semantics.
         """
         request_args = self._prepare_request_args(data, images, response_model)
-        result = self._send_request(self.api_url, self.api_key, request_args, self.max_attempts, self.json_schema, response_model)
+        result = self._send_request(self.api_url, self.api_key, request_args, self.max_attempts, self.json_schema, response_model, self.raise_on_failure)
 
         return result
 
     @staticmethod
-    def _send_request(api_url, api_key, request_args: dict, max_attempts: int, json_schema, response_model=None):
+    def _send_request(api_url, api_key, request_args: dict, max_attempts: int, json_schema, response_model=None, raise_on_failure=False):
         """Request and validate an LLM response with bounded retries.
 
         Args:
@@ -125,25 +137,32 @@ class LLMPrompter:
             max_attempts: Maximum number of request attempts.
             json_schema: Output schema used when no response model is supplied; may be None.
             response_model: Optional Pydantic response class; None returns decoded JSON.
+            raise_on_failure: Distinguish failed requests from invalid response content; defaults to False.
 
         Returns:
             The latest decoded result, optionally validated, or None. A decoded
             value can survive a subsequent validation failure, as in existing callers.
+            Only explicitly completed responses are parsed; other statuses are
+            request failures and discard earlier unvalidated content.
             Incomplete output is rejected; an exhausted output allowance stops
             retries immediately without parsing or accepting a partial result.
+            Opt-in raise_on_failure raises LLMRequestError or LLMResponseError
+            instead of returning stale content from an unsuccessful last attempt.
         """
         logger.debug("Starting structured LLM request; maximum attempts=%d", max_attempts)
         result = None
         validated = False
+        failure_type = LLMRequestError
         client = OpenAI(base_url=api_url, api_key=api_key)
 
         for attempt in range(max_attempts):
             validated = False
+            failure_type = LLMRequestError
             decode_stage = "HTTP response decoding"
             try:
                 response = client.responses.create(**request_args)
-                decode_stage = "model output decoding"
-                if getattr(response, "status", None) == "incomplete":
+                status = getattr(response, "status", None)
+                if status == "incomplete":
                     result = None
                     reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
                     if reason == "max_output_tokens":
@@ -151,10 +170,18 @@ class LLMPrompter:
                                      "increase MAX_OUTPUT_TOKENS. "
                                      "The output allowance includes reasoning tokens. No identical retry will help.",
                                      request_args.get("max_output_tokens", "unknown"))
+                        if raise_on_failure:
+                            raise LLMRequestError('LLM output allowance exhausted')
                         return None
                     logger.warning("LLM attempt %d/%d returned an incomplete response; retrying",
                                    attempt + 1, max_attempts)
                     continue
+                if status != "completed":
+                    result = None
+                    logger.warning("LLM attempt %d/%d returned a non-completed response; retrying",
+                                   attempt + 1, max_attempts)
+                    continue
+                decode_stage = "model output decoding"
                 output_text = response.output_text or ""
                 logger.debug("LLM response: text characters=%d, output tokens=%s, reasoning tokens=%s",
                              len(output_text), getattr(getattr(response, "usage", None), "output_tokens", None),
@@ -169,12 +196,17 @@ class LLMPrompter:
                 elif json_schema:
                     validate(instance=parsed_json, schema=json_schema)
 
+            except LLMRequestError:
+                raise
+
             except json.JSONDecodeError as e:
+                failure_type = LLMResponseError if decode_stage == "model output decoding" else LLMRequestError
                 logger.warning("LLM attempt %d/%d failed (JSONDecodeError) during %s at character %d",
                                attempt + 1, max_attempts, decode_stage, e.pos)
                 continue
 
-            except ValidationError as e:
+            except (ValidationError, PydanticValidationError) as e:
+                failure_type = LLMResponseError
                 logger.warning("LLM attempt %d/%d: response schema validation failed (%s)", attempt + 1, max_attempts, type(e).__name__)
                 continue
 
@@ -188,6 +220,8 @@ class LLMPrompter:
 
         if not validated or not result:
             logger.error("LLM request exhausted %d attempts without a usable response", max_attempts)
+            if raise_on_failure:
+                raise failure_type("LLM request exhausted without a usable result")
         else:
             logger.debug("LLM request completed")
         return result

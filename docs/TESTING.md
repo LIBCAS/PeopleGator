@@ -186,6 +186,13 @@ including empty, truncated and superficially valid JSON. None is accepted as a
 complete extraction or retried with an unchanged exhausted allowance. Tests also
 check safe token-count diagnostics, HTTP-versus-model JSON decoding errors,
 retention of the configured hard output limit and ordinary complete responses.
+Non-completed status regressions cover failed/cancelled/queued/in-progress/unknown
+and missing/null statuses with empty or apparently valid JSON, safe retries followed by a
+completed response, opt-in request errors versus default `None`, and discarding
+previous invalid content. Clustering regressions verify that a later failed
+candidate group leaves the exact original cluster list and mentions unchanged,
+without singleton fallback or a success log. Successful Responses mocks provide
+an explicit `completed` status, matching the provider contract.
 Run alongside detector, CLI, logging and documentation tests:
 
 ```bash
@@ -216,3 +223,29 @@ now initialize real engines with explicit valid prompt files.
 python -m pytest -q tests/test_llm_prompts.py tests/test_text_entity_detection.py tests/test_detect_text_entities_cli.py tests/test_llm_responses.py tests/test_logging.py tests/test_documentation.py
 python -m pytest -q --runtime-mode=full
 ```
+
+## Document text clustering
+
+`tests/test_text_entity_clustering.py` tests weighted canonical/alias fuzzy
+candidates, thresholds/weights/aggregation, OCR/Unicode/initial/reordered names,
+contextual homonym splits, strict typed request-local partitions, missing/extra/
+duplicate/noninteger/empty memberships, unsupported names, singleton fallback,
+transport/exhaustion atomicity, deterministic ordering, reruns/new mentions,
+protected manual/pre-linked clusters, conflicting IDs and invalid prior groups.
+It verifies exact object/source-span preservation and image/face retention. Real
+ALTO/PAGE fixtures pass through detection then clustering via `DocumentParser`,
+with mocked Responses and no app, image loading or GPU inference. Shared prompt
+tests include the new inheritor and generated Pydantic schema. Run:
+
+```bash
+python -m pytest -q tests/test_text_entity_clustering.py tests/test_text_entity_detection.py tests/test_llm_prompts.py tests/test_llm_responses.py tests/test_documentation.py
+python -m pytest -q --runtime-mode=full
+python -m build --no-isolation
+python -m pip check
+python -m compileall -q people_gator processing_api user_scripts
+```
+
+RapidFuzz is declared only in processing extras (`tool` and `full`); packaging
+checks continue to exercise dependency-free base/client boundaries. Mocked
+resolution tests do not establish model accuracy or factual summary quality on
+real OCR. Python 3.10 syntax is checked independently of runtime availability.

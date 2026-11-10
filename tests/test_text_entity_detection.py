@@ -190,18 +190,18 @@ def test_document_parser_xml(format, tmp_path, monkeypatch):
 def test_responses_retry_empty_and_partial(monkeypatch):
     import people_gator.engines.llm as llm
     detector = engine(API_URL='https://example.invalid', API_KEY='secret', MODEL_NAME='mock')
-    responses = Mock(side_effect=[NS(output_text='bad json'), NS(output_text='{}'),
-                                 NS(output_text='{"entities": []}')])
+    responses = Mock(side_effect=[NS(status='completed', output_text='bad json'), NS(status='completed', output_text='{}'),
+                                 NS(status='completed', output_text='{"entities": []}')])
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=responses))))
     doc = document('Karel came')
     detector.process_document(doc)
     assert responses.call_count == 3
     assert not doc.page_layouts[0].text_entities
     responses.side_effect = None
-    responses.return_value = NS(output_text='```json\n{"entities": [null]}\n```')
+    responses.return_value = NS(status='completed', output_text='```json\n{"entities": [null]}\n```')
     detector.process_document(doc)
     assert responses.call_count == 4
-    responses.return_value = NS(output_text='{}')
+    responses.return_value = NS(status='completed', output_text='{}')
     with pytest.raises(RuntimeError):
         detector.process_document(doc)
     responses.side_effect = OSError('private')
