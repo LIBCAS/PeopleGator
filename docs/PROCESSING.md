@@ -456,11 +456,17 @@ GPU inference, database credentials or DocAPI installation are needed.
 
 The directory must contain readable, valid XML pages in the selected format.
 Pages load as one `PeopleGatorDocument`, retaining the existing loader's page
-order. The results retain page, detection and ordered source-span order; repeated
-runs with the same page order and model results produce the same JSON. Output
-indices refer to these original loaded lists. Without `--output-path`, stdout
-lists mention names and page/region/line IDs, indices and half-open offsets; empty
-results print `No text entity mentions detected.`
+order. JSON and stdout results group mentions by original source page, ordered by
+the document's `page_layouts` list. **Every input page is represented**, including
+pages with zero detections. Page IDs can be absent or repeated: the zero-based
+`page_index` disambiguates them. Each page's mentions and each mention's source
+spans retain their existing order and original OCR provenance. Repeated runs
+with the same page order and model results produce the same JSON.
+
+Without `--output-path`, stdout prints the total mention count, then a header
+for each page (ID, index and per-page count), followed by its mentions and
+region/line IDs, indices and half-open offsets. If **no** page has any mentions,
+stdout prints `No text entity mentions detected.`
 
 With `--output-path`, missing parent directories are created and the complete
 UTF-8 JSON file is written via a temporary sibling and atomic replacement.
@@ -471,36 +477,72 @@ existing result and removes its temporary file. Provider/parser exception payloa
 are omitted from error messages. An existing output file from a previous successful
 run remains intact on failure; the exit status identifies whether this run succeeded.
 
-The diagnostic JSON contract is:
+The diagnostic JSON contract is **page-grouped**:
 
 ```json
 {
   "document_id": null,
-  "mentions": [
+  "pages": [
     {
-      "name": "Karel\nČapek",
-      "proposed_name": "Karel Čapek",
-      "description": "spisovatel",
-      "context": "Karel\nČapek napsal knihu.",
-      "source_spans": [
-        {"page_id": "p1", "region_id": "r1", "line_id": "l1",
-         "page_index": 0, "region_index": 0, "line_index": 0, "start": 0, "end": 5},
-        {"page_id": "p1", "region_id": "r1", "line_id": "l2",
-         "page_index": 0, "region_index": 0, "line_index": 1, "start": 0, "end": 5}
+      "page_id": "p1",
+      "page_index": 0,
+      "mentions": [
+        {
+          "name": "Karel\nČapek",
+          "proposed_name": "Karel Čapek",
+          "description": "spisovatel",
+          "context": "Karel\nČapek napsal knihu.",
+          "source_spans": [
+            {
+              "page_id": "p1",
+              "region_id": "r1",
+              "line_id": "l1",
+              "page_index": 0,
+              "region_index": 0,
+              "line_index": 0,
+              "start": 0,
+              "end": 5
+            },
+            {
+              "page_id": "p1",
+              "region_id": "r1",
+              "line_id": "l2",
+              "page_index": 0,
+              "region_index": 0,
+              "line_index": 1,
+              "start": 0,
+              "end": 5
+            }
+          ]
+        }
       ]
+    },
+    {
+      "page_id": "p1",
+      "page_index": 1,
+      "mentions": []
     }
   ]
 }
 ```
 
-`document_id` is nullable (the XML-only loader supplies no document metadata).
-`name` and `context` are exact source evidence; `proposed_name` and `description`
-are nullable detection metadata. Each span contains the original page/region/line
-IDs (possibly missing/repeated), zero-based list indices, and half-open `start`/
-`end` in that original OCR line's transcription. Synthetic newlines have no span.
-An empty result has `mentions: []`. Layout objects, chunk IDs, prompts, credentials
-and app identities are excluded. This snapshot is an inspection interface, not
-ALTO/PAGE annotation export, database persistence or document clustering.
+The top-level `document_id` is nullable (the XML-only loader supplies no
+document metadata); `pages` is an array of objects with `page_id`,
+`page_index`, and `mentions`. A document with no pages has `"pages": []`;
+a page with no detections has `"mentions": []`. Duplicate or missing page
+IDs are legal, so identify a source page by its `page_index` as well as its
+ID. The former flat, top-level `mentions` field is no longer emitted.
+
+Within each page, `name` and `context` are exact source evidence;
+`proposed_name` and `description` are nullable detection metadata. Each
+ordered `source_spans` element retains original page/region/line IDs (which
+may be missing/repeated), original zero-based list indices, and half-open
+`start`/`end` offsets in the OCR line transcription. Synthetic newlines
+have no span. Span-level page fields remain for complete standalone provenance
+even though mentions are grouped under their source page. Layout objects,
+chunk IDs, prompts, credentials and app identities are excluded. This is an
+inspection interface, not ALTO/PAGE annotation export, database persistence or
+document clustering.
 
 The diagnostic CLI accepts `--logging-level DEBUG|INFO|WARNING|ERROR` (default
 `INFO`), matching the main processing CLI. For example, append
