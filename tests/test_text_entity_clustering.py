@@ -379,22 +379,22 @@ def test_detection_then_clustering_parser_xml(format, engine, tmp_path, monkeypa
 def test_real_responses_typed_retry_invalid_partition_and_service_failure(engine, monkeypatch):
     from people_gator.engines import llm
     e = engine()
-    responses = Mock(side_effect=[NS(output_text='bad JSON'), NS(output_text=json.dumps({'clusters': [cluster([1, 2])]}))])
+    responses = Mock(side_effect=[NS(status='completed', output_text='bad JSON'), NS(status='completed', output_text=json.dumps({'clusters': [cluster([1, 2])]}))])
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=responses))))
     a, b = mention(), mention()
     doc = document([a, b])
     e.process_document(doc)
     assert responses.call_count == 2 and membership(doc) == [[a, b]]
     responses.side_effect = None
-    responses.return_value = NS(output_text=json.dumps({'clusters': [cluster([1, 1])]}))
+    responses.return_value = NS(status='completed', output_text=json.dumps({'clusters': [cluster([1, 1])]}))
     doc = document([a, b])
     e.process_document(doc)
     assert membership(doc) == [[a], [b]]
-    responses.return_value = NS(output_text='{"clusters": [null]}')
+    responses.return_value = NS(status='completed', output_text='{"clusters": [null]}')
     doc = document([a, b])
     e.process_document(doc)
     assert membership(doc) == [[a], [b]]
-    responses.return_value = NS(output_text='bad JSON')
+    responses.return_value = NS(status='completed', output_text='bad JSON')
     doc = document([a, b])
     e.process_document(doc)
     assert membership(doc) == [[a], [b]]
@@ -412,7 +412,7 @@ def test_real_responses_typed_retry_invalid_partition_and_service_failure(engine
 def test_prior_invalid_content_cannot_mask_later_transport_failure(engine, monkeypatch):
     from people_gator.engines import llm
     e = engine()
-    responses = Mock(side_effect=[NS(output_text='{"clusters": [null]}'),
+    responses = Mock(side_effect=[NS(status='completed', output_text='{"clusters": [null]}'),
                                   OSError('private transport'), OSError('private transport')])
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=responses))))
     doc = document([mention(), mention()])
@@ -451,3 +451,31 @@ def test_boolean_numeric_options_rejected(key):
     from people_gator.engines.text_entity_clustering import _number
     with pytest.raises(ValueError, match=key.upper()):
         _number({key: True}, key, 0)
+
+
+@pytest.mark.parametrize('text', ['', json.dumps({'clusters': [cluster([1, 2], name='Ada Lovelace')]})])
+def test_failed_response_on_later_group_preserves_original_cluster_list(engine, monkeypatch, caplog, text):
+    from people_gator.core.layout import PeopleGatorTextEntityCluster
+    from people_gator.engines import llm
+    e = engine()
+    manual = mention('Manual')
+    mentions = [manual, mention(), mention(), mention('Ada Lovelace'), mention('Ada Lovelace')]
+    doc = document(mentions[:3], mentions[3:])
+    protected = PeopleGatorTextEntityCluster([manual], name='protected')
+    doc.text_entity_clusters = [protected]
+    original = doc.text_entity_clusters
+    before = [m.__dict__.copy() for m in mentions]
+    successful = NS(status='completed', output_text=json.dumps({'clusters': [cluster([1, 2])]}))
+    failed = NS(status='failed', output_text=text)
+    responses = Mock(side_effect=[successful, failed, failed, failed])
+    monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=responses))))
+    caplog.set_level('DEBUG')
+    with pytest.raises(RuntimeError, match='Text clustering failed'):
+        e.process_document(doc)
+    assert responses.call_count == 4
+    assert doc.text_entity_clusters is original
+    assert doc.text_entity_clusters == [protected]
+    assert [m.__dict__ for m in mentions] == before
+    assert 'singletons' not in caplog.text
+    assert 'Text clustering completed' not in caplog.text
+    assert not any(value in caplog.text for value in ['Ada', 'Karel', 'private-key'])

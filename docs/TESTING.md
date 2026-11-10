@@ -186,6 +186,13 @@ including empty, truncated and superficially valid JSON. None is accepted as a
 complete extraction or retried with an unchanged exhausted allowance. Tests also
 check safe token-count diagnostics, HTTP-versus-model JSON decoding errors,
 retention of the configured hard output limit and ordinary complete responses.
+Non-completed status regressions cover failed/cancelled/queued/in-progress/unknown
+and missing/null statuses with empty or apparently valid JSON, safe retries followed by a
+completed response, opt-in request errors versus default `None`, and discarding
+previous invalid content. Clustering regressions verify that a later failed
+candidate group leaves the exact original cluster list and mentions unchanged,
+without singleton fallback or a success log. Successful Responses mocks provide
+an explicit `completed` status, matching the provider contract.
 Run alongside detector, CLI, logging and documentation tests:
 
 ```bash

@@ -606,7 +606,16 @@ Responses API identifies this as `status=incomplete` with reason
 `max_output_tokens`; any returned text may be empty or truncated JSON. Repeating
 the same request with the same allowance does not resolve that condition.
 
-The shared prompter now rejects these incomplete responses before JSON decoding,
+The shared prompter reads and parses output only when the response explicitly
+has `status=completed`. Failed, cancelled, queued, in-progress, unknown and
+missing/null statuses are request failures, even if the response includes
+plausible JSON. Such responses are retried within the configured attempt limit;
+exhaustion raises `LLMRequestError` with `raise_on_failure=True` or returns `None`
+in the default mode. They discard any earlier unvalidated payload and cannot
+trigger clustering's content-only singleton fallback. Clustering therefore leaves
+the original cluster list intact if any candidate request fails.
+
+The shared prompter rejects incomplete responses before JSON decoding,
 reports the configured cap, recommends increasing `MAX_OUTPUT_TOKENS`, and
 stops identical retries. The configured limit
 remains a hard limit; the client never silently raises it. For the configured
@@ -691,8 +700,9 @@ record as a singleton using original metadata. The shared prompter owns JSON
 parsing and retries. Clustering enables the shared prompter’s opt-in
 `raise_on_failure` mode: exhausted invalid model JSON/schema raises
 `LLMResponseError` and uses singleton fallback; request/HTTP decoding, transport
-and incomplete output raise `LLMRequestError` and abort. An earlier invalid
-payload cannot mask a subsequent request failure. Existing prompter callers
+and all non-completed responses raise `LLMRequestError` and abort after request
+handling/retries. An earlier invalid payload cannot mask a subsequent request
+failure. Existing prompter callers
 retain their default return behavior. A raised request error or `None` from
 a request aborts processing with a safe error. All groups are staged before replacing the cluster
 list; no partial clustering is committed on failure. Diagnostics report only

@@ -142,6 +142,8 @@ class LLMPrompter:
         Returns:
             The latest decoded result, optionally validated, or None. A decoded
             value can survive a subsequent validation failure, as in existing callers.
+            Only explicitly completed responses are parsed; other statuses are
+            request failures and discard earlier unvalidated content.
             Incomplete output is rejected; an exhausted output allowance stops
             retries immediately without parsing or accepting a partial result.
             Opt-in raise_on_failure raises LLMRequestError or LLMResponseError
@@ -159,8 +161,8 @@ class LLMPrompter:
             decode_stage = "HTTP response decoding"
             try:
                 response = client.responses.create(**request_args)
-                decode_stage = "model output decoding"
-                if getattr(response, "status", None) == "incomplete":
+                status = getattr(response, "status", None)
+                if status == "incomplete":
                     result = None
                     reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
                     if reason == "max_output_tokens":
@@ -174,6 +176,12 @@ class LLMPrompter:
                     logger.warning("LLM attempt %d/%d returned an incomplete response; retrying",
                                    attempt + 1, max_attempts)
                     continue
+                if status != "completed":
+                    result = None
+                    logger.warning("LLM attempt %d/%d returned a non-completed response; retrying",
+                                   attempt + 1, max_attempts)
+                    continue
+                decode_stage = "model output decoding"
                 output_text = response.output_text or ""
                 logger.debug("LLM response: text characters=%d, output tokens=%s, reasoning tokens=%s",
                              len(output_text), getattr(getattr(response, "usage", None), "output_tokens", None),

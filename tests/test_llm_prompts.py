@@ -176,7 +176,7 @@ def test_template_data_warnings_are_shared_nonfatal_and_safe(system, user, data,
     import logging
     from types import SimpleNamespace as NS
     from people_gator.engines import llm
-    create = Mock(return_value=NS(output_text='{"ok": true}'))
+    create = Mock(return_value=NS(status='completed', output_text='{"ok": true}'))
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=create))))
     monkeypatch.setattr(llm.multiprocessing, 'Pool', InlinePool)
     prompter = llm.LLMPrompter('https://example.invalid', 'private-api-value', 'mock',
@@ -232,7 +232,7 @@ def test_all_engine_response_models_keep_existing_shared_request_contract(method
     config.read_dict({'ENGINE_1': {'METHOD': method, 'PROMPT_TEMPLATE_PATH': 'prompt.json',
                                   'API_URL': 'https://example.invalid', 'API_KEY': 'private-api-value', 'MODEL_NAME': 'mock'}})
     engine = engine_factory(config['ENGINE_1'], config_path=str(tmp_path), device='cpu')
-    create = Mock(return_value=NS(output_text=json.dumps(payload)))
+    create = Mock(return_value=NS(status='completed', output_text=json.dumps(payload)))
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=create))))
     monkeypatch.setattr(llm.multiprocessing, 'Pool', InlinePool)
     with caplog.at_level(logging.WARNING, logger=llm.__name__):

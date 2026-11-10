@@ -156,7 +156,7 @@ def test_llm_failures_are_safe_and_keep_retry_semantics(processing, monkeypatch,
     if failure == "network":
         request.side_effect = RuntimeError(secret)
     else:
-        request.return_value = SimpleNamespace(output_text=secret if failure == "json" else '{"private": "' + secret + '"}')
+        request.return_value = SimpleNamespace(status='completed', output_text=secret if failure == "json" else '{"private": "' + secret + '"}')
     monkeypatch.setattr(llm, "OpenAI", Mock(return_value=SimpleNamespace(responses=SimpleNamespace(create=request))))
     schema = {"type": "object", "required": ["missing"]} if failure == "schema" else None
     with caplog.at_level(logging.DEBUG):
@@ -172,7 +172,7 @@ def test_llm_failures_are_safe_and_keep_retry_semantics(processing, monkeypatch,
 def test_llm_success_after_retry(processing, monkeypatch, caplog):
     from people_gator.engines import llm
 
-    request = Mock(side_effect=[RuntimeError("private"), SimpleNamespace(output_text='```json\n{"ok": true}\n```')])
+    request = Mock(side_effect=[RuntimeError("private"), SimpleNamespace(status='completed', output_text='```json\n{"ok": true}\n```')])
     monkeypatch.setattr(llm, "OpenAI", Mock(return_value=SimpleNamespace(responses=SimpleNamespace(create=request))))
     with caplog.at_level(logging.DEBUG):
         assert llm.LLMPrompter._send_request("https://example.invalid", "secret", {}, 2, None) == {"ok": True}
@@ -431,7 +431,7 @@ def test_http_transport_failure_propagates_without_payload(processing, caplog):
 def test_llm_last_invalid_response_is_not_logged_as_success(processing, monkeypatch, caplog):
     from people_gator.engines import llm
 
-    request = Mock(side_effect=[SimpleNamespace(output_text="{}"), SimpleNamespace(output_text='{"unexpected": true}')])
+    request = Mock(side_effect=[SimpleNamespace(status='completed', output_text="{}"), SimpleNamespace(status='completed', output_text='{"unexpected": true}')])
     monkeypatch.setattr(llm, "OpenAI", Mock(return_value=SimpleNamespace(responses=SimpleNamespace(create=request))))
     with caplog.at_level(logging.DEBUG):
         result = llm.LLMPrompter._send_request("https://example.invalid", "secret", {}, 2, {"type": "object", "additionalProperties": False})
