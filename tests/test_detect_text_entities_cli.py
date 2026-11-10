@@ -153,7 +153,7 @@ def test_empty_document_has_empty_pages_array():
 
     result = detection_result(NS(id=None, page_layouts=[]))
     assert result == {'document_id': None, 'pages': []}
-    assert readable_result(result) == 'No text entity mentions detected.\\n'
+    assert readable_result(result) == 'No text entity mentions detected.\n'
 
 
 @pytest.mark.parametrize('config_text,count', [('[ENGINE_FACE]\nMETHOD=FACE_DETECTION_YOLO\n', 0),
