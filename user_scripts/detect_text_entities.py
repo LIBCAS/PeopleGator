@@ -128,7 +128,7 @@ def detection_result(document):
             mentions.append({'name': mention.name, 'proposed_name': mention.proposed_name,
                              'description': mention.description, 'context': mention.text,
                              'source_spans': spans})
-        pages.append({'page_id': page.id, 'page_index': page_index, 'mentions': mentions})
+        pages.append({'page_id': getattr(page, 'id', None), 'page_index': page_index, 'mentions': mentions})
     return {'document_id': document.id, 'pages': pages}
 
 
