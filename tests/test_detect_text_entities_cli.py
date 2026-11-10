@@ -1,0 +1,467 @@
+"""Diagnostic CLI contracts using real XML loaders and mocked LLM responses."""
+
+from pathlib import Path
+import json
+import subprocess
+import sys
+from unittest.mock import Mock
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def processing_only(runtime_mode):
+    if runtime_mode == 'client':
+        pytest.skip('Diagnostic detection requires processing extras')
+
+
+@pytest.fixture
+def cli_input(tmp_path, monkeypatch):
+    from people_gator.engines.llm import LLMPrompter
+    from people_gator.core.layout import PeopleGatorDocument
+    from people_gator.core.db import DatabaseApiService
+
+    config = tmp_path / 'config.ini'
+    config.write_text('''[ENGINE_FACE]
+METHOD = FACE_DETECTION_YOLO
+MODEL_PATH = missing-model
+[ENGINE_TEXT]
+METHOD = TEXT_ENTITY_DETECTION
+PROMPT_TEMPLATE_PATH = prompt.json
+[ENGINE_LINK]
+METHOD = ENTITY_MATCHING
+[DB_API]
+api_url = invalid
+''')
+    (tmp_path / 'prompt.json').write_text(json.dumps({'user': '{{ text }}'}))
+    # Any image or database access must fail the test, even without credentials.
+    monkeypatch.setattr(PeopleGatorDocument, 'load_page_image', Mock(side_effect=AssertionError('images')))
+    monkeypatch.setattr(DatabaseApiService, '__init__', Mock(side_effect=AssertionError('database')))
+    response = {'entities': [{'name': 'Karel Čapek', 'type': 'being', 'info': 'spisovatel',
+                             'mentions': [{'name': 'Čapek', 'context': 'Čapek 😀'},
+                                          {'name': 'Karel \nMarie', 'context': ' Karel \nMarie'}]}]}
+    prompter = Mock(return_value=response)
+    monkeypatch.setattr(LLMPrompter, '__call__', prompter)
+    return config, prompter
+
+
+def xml_directory(tmp_path, format, pages=2):
+    directory = tmp_path / 'input'
+    directory.mkdir()
+    fixture = Path(__file__).parent / 'resources' / 'text_chunking' / f'input.{format}.xml'
+    for index in range(pages):
+        (directory / f'{index}.xml').write_text(fixture.read_text(), encoding='utf-8')
+    return directory
+
+
+@pytest.mark.parametrize('format,option', [('alto', '--input-alto-path'), ('page', '--input-xml-path')])
+def test_json_real_xml_and_only_detector(format, option, tmp_path, monkeypatch, cli_input, capsys):
+    from user_scripts import detect_text_entities as cli
+    import people_gator.core.document_parser as parser
+    config, prompter = cli_input
+    factory = Mock(wraps=parser.engine_factory)
+    monkeypatch.setattr(parser, 'engine_factory', factory)
+    directory = xml_directory(tmp_path, format)
+    output = tmp_path / 'new' / 'entities.json'
+    args = ['--config', str(config), option, str(directory), '--output-path', str(output)]
+    assert cli.main(args) == 0
+    factory.assert_called_once()
+    assert factory.call_args.args[0].name == 'ENGINE_TEXT'
+    assert factory.call_args.kwargs == {'config_path': str(tmp_path), 'device': 'cpu'}
+    assert prompter.call_count == 2
+    assert capsys.readouterr().out == ''
+    raw = output.read_text(encoding='utf-8')
+    assert 'Čapek' in raw and 'spisovatel' in raw
+    result = json.loads(raw)
+    assert set(result) == {'document_id', 'pages'}
+    assert result['document_id'] is None
+    assert len(result['pages']) == 2
+    assert [page['page_index'] for page in result['pages']] == [0, 1]
+    assert [len(page['mentions']) for page in result['pages']] == [2, 2]
+    assert all(set(page) == {'page_id', 'page_index', 'mentions'} for page in result['pages'])
+    # Both fixture pages reuse the same ID: original page indices disambiguate them.
+    assert result['pages'][0]['page_id'] == result['pages'][1]['page_id']
+    for index, mention in enumerate(
+            mention for page in result['pages'] for mention in page['mentions']):
+        assert set(mention) == {'name', 'proposed_name', 'description', 'context', 'source_spans'}
+        assert mention['proposed_name'] == 'Karel Čapek'
+        assert mention['description'] == 'spisovatel'
+        assert [s['page_index'] for s in mention['source_spans']] == [index // 2] * len(mention['source_spans'])
+        for span in mention['source_spans']:
+            assert set(span) == {'page_id', 'region_id', 'line_id', 'page_index',
+                                 'region_index', 'line_index', 'start', 'end'}
+    loaded_page = cli.load_document(directory, alto=format == 'alto').page_layouts[0]
+    region_index = next(i for i, region in enumerate(loaded_page.regions) if region.id == 'r2')
+    assert result['pages'][0]['page_id'] == loaded_page.id
+    assert result['pages'][0]['mentions'][0]['source_spans'][0] == {
+        'page_id': loaded_page.id, 'region_id': 'r2', 'line_id': 'l3', 'page_index': 0,
+        'region_index': region_index, 'line_index': 0, 'start': 0, 'end': 5}
+    multiline = result['pages'][0]['mentions'][1]
+    assert multiline['name'] == 'Karel \nMarie'
+    assert multiline['context'] == ' Karel \nMarie'
+    assert [(s['start'], s['end']) for s in multiline['source_spans']] == [(1, 7), (0, 5)]
+    assert [s['line_id'] for s in multiline['source_spans']] == ['l1', 'l2']
+    # Same established input ordering and deterministic responses yield stable JSON.
+    assert cli.main(args) == 0
+    assert output.read_text(encoding='utf-8') == raw
+
+
+def test_stdout_and_empty_modes(tmp_path, cli_input, capsys):
+    from user_scripts import detect_text_entities as cli
+    config, prompter = cli_input
+    directory = xml_directory(tmp_path, 'page', pages=1)
+    args = ['--config', str(config), '--input-xml-path', str(directory)]
+    assert cli.main(args) == 0
+    output = capsys.readouterr().out
+    assert 'Detected 2' in output and 'Čapek' in output and 'chars [0, 5)' in output
+    assert 'region' in output and 'line' in output and 'page' in output
+    prompter.return_value = {'entities': []}
+    assert cli.main(args) == 0
+    empty_listing = capsys.readouterr().out
+    assert 'No text entity mentions detected.\n' in empty_listing
+    assert 'Detected 0 text entity mention(s) across 1 page(s)' in empty_listing
+    assert '[0]: 0 mention(s)' in empty_listing
+    target = tmp_path / 'empty.json'
+    assert cli.main(args + ['--output-path', str(target)]) == 0
+    empty = json.loads(target.read_text())
+    assert empty['document_id'] is None
+    assert len(empty['pages']) == 1
+    assert empty['pages'][0]['page_index'] == 0
+    assert empty['pages'][0]['mentions'] == []
+
+
+def test_page_with_no_mentions_keeps_original_page_order(tmp_path, cli_input, capsys):
+    from user_scripts import detect_text_entities as cli
+    config, prompter = cli_input
+    directory = xml_directory(tmp_path, 'page')
+    detected = prompter.return_value
+    prompter.side_effect = [detected, {'entities': []}]
+    target = tmp_path / 'one-empty-page.json'
+    args = ['--config', str(config), '--input-xml-path', str(directory),
+            '--output-path', str(target)]
+    assert cli.main(args) == 0
+    result = json.loads(target.read_text(encoding='utf-8'))
+    assert [(p['page_index'], len(p['mentions'])) for p in result['pages']] == [(0, 2), (1, 0)]
+    assert result['pages'][0]['page_id'] == result['pages'][1]['page_id']
+    prompter.side_effect = [detected, {'entities': []}]
+    assert cli.main(args[:-2]) == 0
+    readable = capsys.readouterr().out
+    assert 'Detected 2 text entity mention(s) across 2 page(s)' in readable
+    assert 'Page ' in readable
+    assert '[0]: 2 mention(s)' in readable
+    assert '[1]: 0 mention(s)' in readable
+
+
+def test_empty_document_has_empty_pages_array():
+    from types import SimpleNamespace as NS
+    from user_scripts.detect_text_entities import detection_result, readable_result
+
+    result = detection_result(NS(id=None, page_layouts=[]))
+    assert result == {'document_id': None, 'pages': []}
+    assert readable_result(result) == 'No text entity mentions detected.\n'
+
+
+@pytest.mark.parametrize('config_text,count', [('[ENGINE_FACE]\nMETHOD=FACE_DETECTION_YOLO\n', 0),
+    ('[ENGINE_A]\nMETHOD=TEXT_ENTITY_DETECTION\n[ENGINE_B]\nMETHOD=TEXT_ENTITY_DETECTION\n', 2)])
+def test_missing_or_ambiguous_detector(config_text, count, tmp_path, capsys, caplog):
+    from user_scripts import detect_text_entities as cli
+    config = tmp_path / 'config.ini'
+    config.write_text(config_text)
+    target = tmp_path / 'output.json'
+    assert cli.main(['--config', str(config), '--input-xml-path', str(tmp_path), '--output-path', str(target)]) == 1
+    captured = capsys.readouterr()
+    assert not captured.out and f'found {count}' in caplog.text and 'exactly one' in caplog.text
+    assert not target.exists()
+
+
+@pytest.mark.parametrize('kind', ['missing', 'not-directory', 'empty', 'malformed', 'wrong-format', 'no-page', 'unreadable'])
+def test_bad_xml_inputs(kind, tmp_path, cli_input, capsys, monkeypatch, caplog):
+    from user_scripts import detect_text_entities as cli
+    config, prompter = cli_input
+    directory = tmp_path / 'input'
+    if kind == 'not-directory':
+        directory.write_text('file')
+    elif kind != 'missing':
+        directory.mkdir()
+        if kind in ('malformed', 'wrong-format', 'no-page', 'unreadable'):
+            (directory / 'input.xml').write_text({'malformed': '<private-ocr', 'wrong-format': '<alto><Page/></alto>',
+                                                'no-page': '<PcGts/>', 'unreadable': '<PcGts><Page/></PcGts>'}[kind])
+        if kind == 'unreadable':
+            from lxml import etree
+            monkeypatch.setattr(etree, 'parse', Mock(side_effect=PermissionError('private credentials')))
+    assert cli.main(['--config', str(config), '--input-xml-path', str(directory)]) == 1
+    captured = capsys.readouterr()
+    assert not captured.out and 'Error:' in caplog.text
+    assert 'private' not in caplog.text
+    prompter.assert_not_called()
+
+
+@pytest.mark.parametrize('kind', ['missing', 'malformed', 'invalid-option', 'unreadable'])
+def test_bad_config(kind, tmp_path, capsys, monkeypatch, caplog):
+    from user_scripts import detect_text_entities as cli
+    config = tmp_path / 'config.ini'
+    if kind != 'missing':
+        config.write_text('[secret credentials' if kind == 'malformed' else
+                          '[ENGINE_TEXT]\nMETHOD=TEXT_ENTITY_DETECTION\nCHUNKING_MAX_CHARS=invalid\n')
+    if kind == 'unreadable':
+        monkeypatch.setattr(Path, 'open', Mock(side_effect=PermissionError('secret credentials')))
+    assert cli.main(['--config', str(config), '--input-xml-path', str(tmp_path)]) == 1
+    captured = capsys.readouterr()
+    assert not captured.out and 'Configuration failed' in caplog.text
+    assert 'secret' not in caplog.text
+
+
+@pytest.mark.parametrize('existing', [False, True])
+def test_detection_failure_no_partial_output(tmp_path, cli_input, capsys, existing, caplog):
+    from user_scripts import detect_text_entities as cli
+    config, prompter = cli_input
+    directory = xml_directory(tmp_path, 'page')
+    prompter.side_effect = [prompter.return_value, RuntimeError('secret OCR and credentials')]
+    output = tmp_path / 'output.json'
+    if existing:
+        output.write_text('previous complete result')
+    assert cli.main(['--config', str(config), '--input-xml-path', str(directory), '--output-path', str(output)]) == 1
+    captured = capsys.readouterr()
+    assert not captured.out and 'Text detection failed' in caplog.text and 'secret' not in caplog.text
+    assert output.read_text() == 'previous complete result' if existing else not output.exists()
+
+
+def test_atomic_output_write_failure(tmp_path, cli_input, monkeypatch, capsys, caplog):
+    from user_scripts import detect_text_entities as cli
+    config, _ = cli_input
+    directory = xml_directory(tmp_path, 'page', pages=1)
+    output = tmp_path / 'output.json'
+    output.write_text('previous complete result')
+    monkeypatch.setattr(cli.os, 'replace', Mock(side_effect=PermissionError('secret')))
+    assert cli.main(['--config', str(config), '--input-xml-path', str(directory), '--output-path', str(output)]) == 1
+    captured = capsys.readouterr()
+    assert not captured.out and 'Output writing failed' in caplog.text and 'secret' not in caplog.text
+    assert output.read_text() == 'previous complete result'
+    assert not list(tmp_path.glob('.entities-*.tmp'))
+
+
+def test_output_parent_failure(tmp_path, cli_input, capsys, caplog):
+    from user_scripts import detect_text_entities as cli
+    config, _ = cli_input
+    directory = xml_directory(tmp_path, 'page', pages=1)
+    parent = tmp_path / 'file'
+    parent.write_text('existing')
+    assert cli.main(['--config', str(config), '--input-xml-path', str(directory), '--output-path', str(parent / 'out.json')]) == 1
+    assert 'Output writing failed' in caplog.text
+    assert parent.read_text() == 'existing'
+
+
+@pytest.mark.parametrize('arguments', [[], ['--config', 'c'], ['--config', 'c', '--input-alto-path', 'a', '--input-xml-path', 'p']])
+def test_required_arguments(arguments):
+    from user_scripts.detect_text_entities import main
+    with pytest.raises(SystemExit) as error:
+        main(arguments)
+    assert error.value.code == 2
+
+
+def test_module_help_and_nonzero_process(tmp_path):
+    result = subprocess.run([sys.executable, '-m', 'user_scripts.detect_text_entities', '--help'],
+                            text=True, capture_output=True, cwd=tmp_path)
+    assert result.returncode == 0
+    assert all(option in result.stdout for option in ('--config', '--input-alto-path', '--input-xml-path', '--output-path', '--logging-level'))
+    result = subprocess.run([sys.executable, '-m', 'user_scripts.detect_text_entities', '--config', str(tmp_path / 'missing'),
+                             '--input-xml-path', str(tmp_path)], text=True, capture_output=True, cwd=tmp_path)
+    assert result.returncode != 0 and not result.stdout and 'Configuration failed' in result.stderr
+
+
+def test_nullable_detection_metadata_and_missing_ids():
+    from types import SimpleNamespace as NS
+    from people_gator.core.layout import PeopleGatorDocument, PeopleGatorTextEntityMention
+    from people_gator.text import SourceSpan, SourceLine
+    from user_scripts.detect_text_entities import detection_result
+
+    spans = (SourceSpan(SourceLine(0, None, 1, None, 2, None), 3, 5),)
+    mention = PeopleGatorTextEntityMention('😀é', '😀é here', source_spans=spans)
+    doc = PeopleGatorDocument(page_layouts=[NS(text_entities=[mention])])
+    result = detection_result(doc)
+    assert result['document_id'] is None
+    assert result['pages'] == [{
+        'page_id': None, 'page_index': 0, 'mentions': result['pages'][0]['mentions']}]
+    assert result['pages'][0]['mentions'][0]['proposed_name'] is None
+    assert result['pages'][0]['mentions'][0]['description'] is None
+    assert result['pages'][0]['mentions'][0]['source_spans'] == [
+        {'page_id': None, 'region_id': None, 'line_id': None, 'page_index': 0,
+         'region_index': 1, 'line_index': 2, 'start': 3, 'end': 5}]
+
+
+@pytest.mark.parametrize('level,debug_visible,info_visible', [
+    ('DEBUG', True, True), ('INFO', False, True), ('WARNING', False, False), ('ERROR', False, False),
+])
+def test_logging_levels_preserve_output(level, debug_visible, info_visible, tmp_path, cli_input, caplog, capsys):
+    import logging
+    from user_scripts import detect_text_entities as cli
+    config, _ = cli_input
+    directory = xml_directory(tmp_path, 'page', pages=1)
+    assert cli.main(['--config', str(config), '--input-xml-path', str(directory), '--logging-level', level]) == 0
+    records = [record for record in caplog.records if record.name == cli.__name__]
+    assert any(record.levelno == logging.DEBUG for record in records) == debug_visible
+    assert any(record.levelno == logging.INFO for record in records) == info_visible
+    assert 'Detected 2' in capsys.readouterr().out
+    assert not any(value in caplog.text for value in ('Čapek', 'Marie', 'spisovatel'))
+
+
+def test_logging_defaults_and_handler_reuse(monkeypatch):
+    import logging
+    from user_scripts import detect_text_entities as cli
+    assert cli.parse_arguments(['--config', 'c', '--input-xml-path', 'p']).logging_level == 'INFO'
+    root = logging.getLogger()
+    monkeypatch.setattr(root, 'level', root.level)
+    handlers = list(root.handlers)
+    cli.setup_logging('DEBUG')
+    assert root.level == logging.DEBUG
+    cli.setup_logging('ERROR')
+    assert root.level == logging.ERROR
+    assert root.handlers == handlers
+
+
+def test_invalid_logging_level():
+    from user_scripts.detect_text_entities import parse_arguments
+    with pytest.raises(SystemExit) as error:
+        parse_arguments(['--config', 'c', '--input-xml-path', 'p', '--logging-level', 'INVALID'])
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize('level,has_logs', [('DEBUG', True), ('ERROR', False)])
+def test_logging_uses_stderr_with_json_output(level, has_logs, tmp_path, cli_input):
+    config, _ = cli_input
+    directory = xml_directory(tmp_path, 'page', pages=1)
+    output = tmp_path / 'result.json'
+    process = subprocess.run([sys.executable, '-c', '''
+import sys
+from people_gator.engines.llm import LLMPrompter
+from user_scripts.detect_text_entities import main
+LLMPrompter.__call__ = lambda self, *args, **kwargs: {'entities': []}
+sys.exit(main(sys.argv[1:]))
+''', '--config', str(config), '--input-xml-path', str(directory),
+        '--output-path', str(output), '--logging-level', level],
+        cwd=tmp_path, capture_output=True, text=True)
+    assert process.returncode == 0, process.stderr
+    assert process.stdout == ''
+    assert ('Text detection CLI completed' in process.stderr) == has_logs
+    empty = json.loads(output.read_text())
+    assert empty['document_id'] is None
+    assert len(empty['pages']) == 1
+    assert empty['pages'][0]['page_index'] == 0
+    assert empty['pages'][0]['mentions'] == []
+
+
+def test_direct_script_uses_checkout_instead_of_stale_package(tmp_path):
+    import os
+    from lxml import etree
+
+    root = Path(__file__).resolve().parents[1]
+    script = root / 'user_scripts' / 'detect_text_entities.py'
+    stale = tmp_path / 'stale-installation' / 'people_gator'
+    (stale / 'core').mkdir(parents=True)
+    # Match PeopleGator's namespace-package distribution layout.
+    (stale / 'core' / 'document_parser.py').write_text("raise RuntimeError('stale PeopleGator installation imported')\n")
+    config = tmp_path / 'config.ini'
+    config.write_text('[ENGINE_1]\nMETHOD=TEXT_ENTITY_DETECTION\n')
+    (tmp_path / 'prompt.json').write_text(json.dumps({'user': '{{ text }}'}))
+    config.write_text(config.read_text() + 'PROMPT_TEMPLATE_PATH=prompt.json\n')
+    pages = xml_directory(tmp_path, 'page', pages=1)
+    # Exercise the real engine without a model-service request.
+    path = pages / '0.xml'
+    tree = etree.parse(str(path))
+    for element in tree.xpath("//*[local-name()='Unicode']"):
+        element.text = None
+    tree.write(str(path), encoding='utf-8')
+    output = tmp_path / 'output.json'
+    result = subprocess.run([sys.executable, '-B', '-u', str(script), '--config=' + str(config),
+                             '--input-xml-path=' + str(pages), '--logging-level=DEBUG',
+                             '--output-path=' + str(output)], cwd=tmp_path, capture_output=True, text=True,
+                            env={**os.environ, 'PYTHONPATH': str(stale.parent), 'PYTHONDONTWRITEBYTECODE': '1'})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ''
+    assert 'Loaded 1 pages' in result.stderr
+    assert 'Unknown METHOD' not in result.stderr
+    empty = json.loads(output.read_text())
+    assert empty['document_id'] is None
+    assert len(empty['pages']) == 1
+    assert empty['pages'][0]['page_index'] == 0
+    assert empty['pages'][0]['mentions'] == []
+
+
+def test_unavailable_factory_engine_fails_during_configuration(tmp_path, monkeypatch, caplog):
+    from user_scripts import detect_text_entities as cli
+    import people_gator.core.document_parser as parser
+    config = tmp_path / 'config.ini'
+    config.write_text('[ENGINE_1]\nMETHOD=TEXT_ENTITY_DETECTION\n')
+    monkeypatch.setattr(parser, 'engine_factory', Mock(return_value=None))
+    loader = Mock(side_effect=AssertionError('XML must not load without a detector'))
+    monkeypatch.setattr(cli, 'load_document', loader)
+    assert cli.main(['--config', str(config), '--input-alto-path', str(tmp_path)]) == 1
+    assert 'TEXT_ENTITY_DETECTION is unavailable' in caplog.text
+    loader.assert_not_called()
+
+
+@pytest.mark.parametrize('format,option', [('alto', '--input-alto-path'), ('page', '--input-xml-path')])
+def test_all_empty_pages_remain_in_json_and_console(format, option, tmp_path, cli_input, capsys):
+    from user_scripts import detect_text_entities as cli
+    config, prompter = cli_input
+    prompter.return_value = {'entities': []}
+    directory = xml_directory(tmp_path, format)
+    args = ['--config', str(config), option, str(directory)]
+    assert cli.main(args) == 0
+    listing = capsys.readouterr().out
+    assert 'Detected 0 text entity mention(s) across 2 page(s)' in listing
+    assert 'No text entity mentions detected.' in listing
+    assert listing.index('[0]: 0 mention(s)') < listing.index('[1]: 0 mention(s)')
+    assert listing.count('Page ') == 2
+    output = tmp_path / 'empty-pages.json'
+    assert cli.main(args + ['--output-path', str(output)]) == 0
+    assert capsys.readouterr().out == ''
+    result = json.loads(output.read_text(encoding='utf-8'))
+    assert set(result) == {'document_id', 'pages'}
+    assert [p['page_index'] for p in result['pages']] == [0, 1]
+    assert [p['mentions'] for p in result['pages']] == [[], []]
+    assert result['pages'][0]['page_id'] == result['pages'][1]['page_id']
+
+
+def test_grouping_preserves_missing_duplicate_ids_and_evidence(tmp_path):
+    from types import SimpleNamespace as NS
+    from people_gator.core.layout import PeopleGatorTextEntityMention
+    from people_gator.text import SourceSpan, SourceLine
+    from user_scripts.detect_text_entities import detection_result, readable_result, write_json
+
+    page_ids = [None, None, 'repeated', 'repeated']
+    pages = []
+    for index, page_id in enumerate(page_ids):
+        mentions = []
+        if index in (1, 3):
+            for name in ('Karel\nČapek', '😀 Marie'):
+                spans = (SourceSpan(SourceLine(index, page_id, 2, 'r', 0, 'l'), 2, 7),
+                         SourceSpan(SourceLine(index, page_id, 2, 'r', 1, 'l'), 0, 5))
+                mentions.append(PeopleGatorTextEntityMention(name, 'exact supporting\ncontext',
+                                source_spans=spans, proposed_name='canonical proposal', description=None))
+        pages.append(NS(id=page_id, text_entities=mentions))
+    document = NS(id='document', page_layouts=pages)
+    result = detection_result(document)
+    assert set(result) == {'document_id', 'pages'}
+    assert result['document_id'] == 'document'
+    assert [p['page_id'] for p in result['pages']] == page_ids
+    assert [p['page_index'] for p in result['pages']] == [0, 1, 2, 3]
+    assert [len(p['mentions']) for p in result['pages']] == [0, 2, 0, 2]
+    for index in (1, 3):
+        mentions = result['pages'][index]['mentions']
+        assert [m['name'] for m in mentions] == ['Karel\nČapek', '😀 Marie']
+        for mention in mentions:
+            assert mention['context'] == 'exact supporting\ncontext'
+            assert mention['proposed_name'] == 'canonical proposal'
+            assert mention['description'] is None
+            assert [s['page_id'] for s in mention['source_spans']] == [page_ids[index]] * 2
+            assert [s['page_index'] for s in mention['source_spans']] == [index] * 2
+            assert [s['line_index'] for s in mention['source_spans']] == [0, 1]
+            assert [(s['start'], s['end']) for s in mention['source_spans']] == [(2, 7), (0, 5)]
+    headers = [line for line in readable_result(result).splitlines() if line.startswith('Page ')]
+    assert headers == ["Page None [0]: 0 mention(s)", "Page None [1]: 2 mention(s)",
+                       "Page 'repeated' [2]: 0 mention(s)", "Page 'repeated' [3]: 2 mention(s)"]
+    output = tmp_path / 'grouped.json'
+    write_json(output, result)
+    assert json.loads(output.read_text(encoding='utf-8')) == result
+    assert 'Čapek' in output.read_text(encoding='utf-8')

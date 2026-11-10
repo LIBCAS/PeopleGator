@@ -72,11 +72,11 @@ Syntax checks complement behavioral tests; they do not prove an issue is impleme
 `tests/test_text_chunking.py` tests factory validation, public imports without
 site packages, empty/irregular OCR, region reading order, page-local boundaries,
 verbatim whitespace/Unicode, deterministic results and input preservation.
-Configuration tests extract and strip `CHUNKING_*` keys from a sample future
+Configuration tests extract and strip `CHUNKING_*` keys from a sample
 NER `[ENGINE_1]` section while leaving its own `METHOD` and LLM settings intact.
 They cover `LINES`/`LINE_AWARE`, defaults, partial options, lowercase ConfigParser
 keys, unknown extracted options and rejection of whole-engine/prefixed config.
-These are lightweight adapter examples; no NER engine is introduced.
+These lightweight examples complement the registered detector tests below.
 It enumerates budgets 1–12 and every valid overlap for several line patterns,
 reconstructs canonical page text and checks every mapped source character,
 exact overlap, progress and hard limits. Substring tests cover split lines,
@@ -129,3 +129,90 @@ These tests make no live model/service requests. They check the current worker
 success/failure contract from PR #31. Existing LLM response/validation behavior,
 including known limitations, is preserved; passing tests do not establish that
 those separate LLM defects are fixed.
+
+## Text entity detection
+
+`tests/test_text_entity_detection.py` uses mocked prompter/Responses results for
+factory configuration, engine ordering, external prompt templates and generated model schemas,
+malformed/empty/partial results, retries, failure atomicity, safe logs, occurrence
+ambiguity, normalized/fuzzy OCR matching, Unicode and multiline spans, overlap
+and rerun deduplication, legacy manual annotations and unresolved identity helpers.
+Real ALTO/PAGE fixtures run through `DocumentParser` without images or app access,
+retaining original OCR and pre-existing face annotations. These tests require
+processing extras and skip explicitly in client mode. Run:
+
+```bash
+python -m pytest -q tests/test_text_entity_detection.py tests/test_text_chunking.py tests/test_documentation.py tests/test_logging.py
+python -m pytest -q --runtime-mode=full
+python -m pip check
+python -m compileall -q people_gator
+```
+
+No live LLM, database or GPU inference is required. Passing mocked tests does not
+establish extraction quality for a particular model or OCR corpus.
+
+`tests/test_detect_text_entities_cli.py` exercises the standalone diagnostic
+`main()` with real ALTO/PAGE fixtures and mocked LLM results, including Unicode,
+multiline provenance, page-grouped stdout/JSON, repeated page IDs, stable page ordering, empty pages and documents,
+exclusive detector selection despite face/linking/DB configuration, required
+arguments and failures in configuration, XML, detection and writing. Atomic-write
+regressions preserve an existing output and remove temporary files on failure.
+Module subprocess checks cover help and a nonzero error exit. Run these with
+processing extras (they skip explicitly in client mode):
+
+```bash
+python -m pytest -q tests/test_detect_text_entities_cli.py tests/test_text_entity_detection.py tests/test_documentation.py
+```
+
+The diagnostic CLI tests also cover the default `INFO` level, all supported
+`--logging-level` values, invalid-level rejection, repeated logging setup without
+duplicate handlers, captured error records, and unchanged stdout/JSON behavior.
+
+Text-detector response-model tests verify nested Pydantic types, generated
+provider schema and class-based prompter calls, typed response consumption,
+strict candidate/evidence validation, partial-invalid filtering, private rejection
+counts, unchanged Unicode/whitespace, legacy arrays, invalid envelopes and absence
+of a built-in prompt/schema. The inherited JSON schema setting cannot override
+the response model's generated schema.
+
+The diagnostic CLI's direct-file regression runs its absolute script path from
+outside the checkout, with a stale `people_gator` package on `PYTHONPATH`. It loads
+empty synthetic OCR through the real engine without model requests and checks
+successful JSON output. A separate regression requires an unavailable factory
+engine to fail during configuration before any XML loading.
+
+`tests/test_llm_responses.py` checks incomplete/token-limited Responses results,
+including empty, truncated and superficially valid JSON. None is accepted as a
+complete extraction or retried with an unchanged exhausted allowance. Tests also
+check safe token-count diagnostics, HTTP-versus-model JSON decoding errors,
+retention of the configured hard output limit and ordinary complete responses.
+Run alongside detector, CLI, logging and documentation tests:
+
+```bash
+python -m pytest -q tests/test_llm_responses.py tests/test_text_entity_detection.py tests/test_detect_text_entities_cli.py tests/test_logging.py tests/test_documentation.py
+```
+
+Page-grouped diagnostic output regressions cover all-empty ALTO/PAGE documents
+with every page retained in JSON and console headers, mixed empty/nonempty pages,
+and repeated/missing page IDs disambiguated by original indices. They verify
+Unicode/multiline evidence and ordered source spans survive the page grouping;
+zero-page documents still produce an empty pages array and the no-mentions message.
+
+`tests/test_llm_prompts.py` covers the updated shared prompt contract in
+`LLMBasedEngine` for face assignment, batch face assignment, entity matching and
+text detection. Missing/blank paths, unreadable/malformed/empty JSON, invalid
+encoding, object/role types, blank content and Jinja2 syntax fail before prompter
+or client construction. Valid system/user combinations use config-relative paths;
+the text detector has no validation override. CLI failures load no OCR and leave
+existing output unchanged.
+
+Sequential and parallel prompter tests verify missing/unused key warnings, typo
+handling, system/user union, shared variables, loop locals/globals, normal undefined
+rendering, safe variable-name-only warnings and unchanged Pydantic response models
+for every inheritor. The existing single/batch assignment request-flow regressions
+now initialize real engines with explicit valid prompt files.
+
+```bash
+python -m pytest -q tests/test_llm_prompts.py tests/test_text_entity_detection.py tests/test_detect_text_entities_cli.py tests/test_llm_responses.py tests/test_logging.py tests/test_documentation.py
+python -m pytest -q --runtime-mode=full
+```

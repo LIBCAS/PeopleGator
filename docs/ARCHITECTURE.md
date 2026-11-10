@@ -49,7 +49,7 @@ flowchart TD
     SAVE --> XML
 ```
 
-The available engines perform face detection, LLM-assisted naming, and entity matching. See [Processing](PROCESSING.md).
+The available engines perform text entity detection, face detection, LLM-assisted naming, and entity matching. See [Processing](PROCESSING.md).
 
 ## Data model
 
@@ -85,11 +85,11 @@ The broader system design also includes occurrences of person names in OCR text.
 | `people_gator/core/document_parser.py` | Configured engine orchestration and application import/export. |
 | `people_gator/core/layout.py` | Page/document objects, face-region metadata, ALTO/PAGE I/O and rendering. |
 | `people_gator/engines/base.py` | Common processing-engine interfaces. |
-| `people_gator/text/` | Reusable text chunker, factory and exact OCR source mappings; consumed internally by future text detectors. |
+| `people_gator/text/` | Reusable text chunker, factory and exact OCR source mappings; consumed internally by text detectors. |
 | `people_gator/engines/face_detection.py` | YOLO detection in selected image regions; boxes and five landmarks. |
 | `people_gator/engines/face_assignment.py` | LLM-supported single/batch naming using images, captions and OCR text. |
 | `people_gator/engines/entity_matching.py` | Candidate-entity lookup, LLM disambiguation and creation through the app API. |
-| `people_gator/engines/llm.py` | Prompt assembly and structured responses from a configured LLM service. |
+| `people_gator/engines/llm.py` | Shared required-prompt validation, template/data key diagnostics, prompt assembly and structured LLM responses. |
 | `people_gator/core/db.py`, `connector.py` | Authenticated client for documents, pages, faces and person records. |
 | `user_scripts/parse_folder.py` | Local processing entry point. |
 | `processing_api/api.py`, `client.py`, `worker.py` | Processing job API, CLI client and worker based on DocAPI. |
@@ -99,12 +99,13 @@ The public `people_gator.text` imports expose `TextChunker`,
 `ChunkMapping`, `SourceLine`, and `SourceSpan`. This component reads a
 `PeopleGatorDocument` and returns an immutable chunk collection without changing
 the document. It uses only standard-library runtime imports. It is not registered
-as a `DocumentProcessingEngine`. The future NER engine owns its lifecycle and
+as a `DocumentProcessingEngine`. The text detection engine owns its lifecycle and
 extracts `CHUNKING_*` settings from its own `[ENGINE_*]` section, stripping the
 prefix before calling the factory with `METHOD`, `MAX_CHARS`, and
 `OVERLAP_CHARS`. There is no global or nested chunking section and no change to
 `DocumentParser` engine loading. Text detection,
-mention construction and overlap de-duplication remain future work under #33.
+mention construction and overlap de-duplication are owned by the detector;
+clustering and linking remain future work under #33.
 See [text chunking](PROCESSING.md#reusable-text-chunking) for the public contract.
 
 ## Related software and services
@@ -115,4 +116,21 @@ See [text chunking](PROCESSING.md#reusable-text-chunking) for the public contrac
 - [PeopleGatorApp](https://github.com/DCGM/PeopleGatorApp) provides the person/face database API and the interface for reviewing and correcting assigned identities.
 - The configured YOLO and LLM engines supply detection and contextual identification.
 
-The broader data model includes **Entity** (a person), **Face** (a detected face occurrence), **Source** (document/page reference), and planned person mentions in text at page/document level. An occurrence is linked to source material and may refer to an entity. The [Processing](PROCESSING.md) guide describes the matching stages.
+The broader data model includes **Entity** (a person), **Face** (a detected face occurrence), **Source** (document/page reference), and source-mapped person mentions in page text; independent document clustering is planned. An occurrence is linked to source material and may refer to an entity. The [Processing](PROCESSING.md) guide describes the matching stages.
+
+`people_gator/engines/text_entity_detection.py` registers `TEXT_ENTITY_DETECTION`
+through the existing factory. It composes the independent chunker and shared
+`LLMBasedEngine`/`LLMPrompter` with nested Pydantic response models and externally
+configured prompt templates, stages source-mapped mentions, then updates page
+`text_entities` atomically. Optional identity and multiline `SourceSpan` tuples
+extend the existing mention model; canonical names/descriptions are detection
+metadata, not app identities. Clustering, face cooperation and persistence remain
+separate #33 tasks. See [the detector contract](PROCESSING.md#text-entity-detection-text_entity_detection).
+
+`user_scripts/detect_text_entities.py` is a standalone diagnostic path: validate
+an ALTO/PAGE directory, load it through `PeopleGatorDocument`, select exactly one
+text detector through the ordinary engine factory, then print per-page summaries or write
+an atomic JSON snapshot grouped by source page (including empty pages),
+with mentions and their OCR provenance. It does not
+construct `DocumentParser` or execute other configured engines/app services. The
+module CLI uses processing extras and introduces no package dependency changes.
