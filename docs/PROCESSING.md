@@ -466,7 +466,8 @@ with the same page order and model results produce the same JSON.
 Without `--output-path`, stdout prints the total mention count, then a header
 for each page (ID, index and per-page count), followed by its mentions and
 region/line IDs, indices and half-open offsets. If **no** page has any mentions,
-stdout prints `No text entity mentions detected.`
+stdout also prints `No text entity mentions detected.` and retains the zero-count
+page headers. For a document with no input pages, only that message is printed.
 
 With `--output-path`, missing parent directories are created and the complete
 UTF-8 JSON file is written via a temporary sibling and atomic replacement.

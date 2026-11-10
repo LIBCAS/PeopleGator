@@ -115,7 +115,10 @@ def test_stdout_and_empty_modes(tmp_path, cli_input, capsys):
     assert 'region' in output and 'line' in output and 'page' in output
     prompter.return_value = {'entities': []}
     assert cli.main(args) == 0
-    assert capsys.readouterr().out == 'No text entity mentions detected.\n'
+    empty_listing = capsys.readouterr().out
+    assert 'No text entity mentions detected.\n' in empty_listing
+    assert 'Detected 0 text entity mention(s) across 1 page(s)' in empty_listing
+    assert '[0]: 0 mention(s)' in empty_listing
     target = tmp_path / 'empty.json'
     assert cli.main(args + ['--output-path', str(target)]) == 0
     empty = json.loads(target.read_text())
@@ -391,3 +394,70 @@ def test_unavailable_factory_engine_fails_during_configuration(tmp_path, monkeyp
     assert cli.main(['--config', str(config), '--input-alto-path', str(tmp_path)]) == 1
     assert 'TEXT_ENTITY_DETECTION is unavailable' in caplog.text
     loader.assert_not_called()
+
+
+@pytest.mark.parametrize('format,option', [('alto', '--input-alto-path'), ('page', '--input-xml-path')])
+def test_all_empty_pages_remain_in_json_and_console(format, option, tmp_path, cli_input, capsys):
+    from user_scripts import detect_text_entities as cli
+    config, prompter = cli_input
+    prompter.return_value = {'entities': []}
+    directory = xml_directory(tmp_path, format)
+    args = ['--config', str(config), option, str(directory)]
+    assert cli.main(args) == 0
+    listing = capsys.readouterr().out
+    assert 'Detected 0 text entity mention(s) across 2 page(s)' in listing
+    assert 'No text entity mentions detected.' in listing
+    assert listing.index('[0]: 0 mention(s)') < listing.index('[1]: 0 mention(s)')
+    assert listing.count('Page ') == 2
+    output = tmp_path / 'empty-pages.json'
+    assert cli.main(args + ['--output-path', str(output)]) == 0
+    assert capsys.readouterr().out == ''
+    result = json.loads(output.read_text(encoding='utf-8'))
+    assert set(result) == {'document_id', 'pages'}
+    assert [p['page_index'] for p in result['pages']] == [0, 1]
+    assert [p['mentions'] for p in result['pages']] == [[], []]
+    assert result['pages'][0]['page_id'] == result['pages'][1]['page_id']
+
+
+def test_grouping_preserves_missing_duplicate_ids_and_evidence(tmp_path):
+    from types import SimpleNamespace as NS
+    from people_gator.core.layout import PeopleGatorTextEntityMention
+    from people_gator.text import SourceSpan, SourceLine
+    from user_scripts.detect_text_entities import detection_result, readable_result, write_json
+
+    page_ids = [None, None, 'repeated', 'repeated']
+    pages = []
+    for index, page_id in enumerate(page_ids):
+        mentions = []
+        if index in (1, 3):
+            for name in ('Karel\nČapek', '😀 Marie'):
+                spans = (SourceSpan(SourceLine(index, page_id, 2, 'r', 0, 'l'), 2, 7),
+                         SourceSpan(SourceLine(index, page_id, 2, 'r', 1, 'l'), 0, 5))
+                mentions.append(PeopleGatorTextEntityMention(name, 'exact supporting\ncontext',
+                                source_spans=spans, proposed_name='canonical proposal', description=None))
+        pages.append(NS(id=page_id, text_entities=mentions))
+    document = NS(id='document', page_layouts=pages)
+    result = detection_result(document)
+    assert set(result) == {'document_id', 'pages'}
+    assert result['document_id'] == 'document'
+    assert [p['page_id'] for p in result['pages']] == page_ids
+    assert [p['page_index'] for p in result['pages']] == [0, 1, 2, 3]
+    assert [len(p['mentions']) for p in result['pages']] == [0, 2, 0, 2]
+    for index in (1, 3):
+        mentions = result['pages'][index]['mentions']
+        assert [m['name'] for m in mentions] == ['Karel\nČapek', '😀 Marie']
+        for mention in mentions:
+            assert mention['context'] == 'exact supporting\ncontext'
+            assert mention['proposed_name'] == 'canonical proposal'
+            assert mention['description'] is None
+            assert [s['page_id'] for s in mention['source_spans']] == [page_ids[index]] * 2
+            assert [s['page_index'] for s in mention['source_spans']] == [index] * 2
+            assert [s['line_index'] for s in mention['source_spans']] == [0, 1]
+            assert [(s['start'], s['end']) for s in mention['source_spans']] == [(2, 7), (0, 5)]
+    headers = [line for line in readable_result(result).splitlines() if line.startswith('Page ')]
+    assert headers == ["Page None [0]: 0 mention(s)", "Page None [1]: 2 mention(s)",
+                       "Page 'repeated' [2]: 0 mention(s)", "Page 'repeated' [3]: 2 mention(s)"]
+    output = tmp_path / 'grouped.json'
+    write_json(output, result)
+    assert json.loads(output.read_text(encoding='utf-8')) == result
+    assert 'Čapek' in output.read_text(encoding='utf-8')

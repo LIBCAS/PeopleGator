@@ -139,9 +139,11 @@ def readable_result(result):
         result: JSON-safe detection snapshot.
     """
     total = sum(len(page['mentions']) for page in result['pages'])
-    if not total:
+    if not result['pages']:
         return 'No text entity mentions detected.\n'
     lines = [f"Detected {total} text entity mention(s) across {len(result['pages'])} page(s):"]
+    if not total:
+        lines.append('No text entity mentions detected.')
     for page in result['pages']:
         lines.append(f"Page {page['page_id']!r} [{page['page_index']}]: {len(page['mentions'])} mention(s)")
         for mention in page['mentions']:

@@ -191,3 +191,9 @@ Run alongside detector, CLI, logging and documentation tests:
 ```bash
 python -m pytest -q tests/test_llm_responses.py tests/test_text_entity_detection.py tests/test_detect_text_entities_cli.py tests/test_logging.py tests/test_documentation.py
 ```
+
+Page-grouped diagnostic output regressions cover all-empty ALTO/PAGE documents
+with every page retained in JSON and console headers, mixed empty/nonempty pages,
+and repeated/missing page IDs disambiguated by original indices. They verify
+Unicode/multiline evidence and ordered source spans survive the page grouping;
+zero-page documents still produce an empty pages array and the no-mentions message.
