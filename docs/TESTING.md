@@ -197,3 +197,12 @@ with every page retained in JSON and console headers, mixed empty/nonempty pages
 and repeated/missing page IDs disambiguated by original indices. They verify
 Unicode/multiline evidence and ordered source spans survive the page grouping;
 zero-page documents still produce an empty pages array and the no-mentions message.
+
+`tests/test_text_entity_prompt.py` covers the accepted PR #41 / issue #40 review:
+text detection requires a readable external prompt with nonblank system/user
+content at initialization. Tests cover missing/blank paths, missing/unreadable
+files, empty/malformed JSON, invalid encoding, absent/null/blank roles, invalid
+value types and Jinja2 syntax. They assert no prompter/client construction or XML
+loading occurs on failure, the CLI returns a safe actionable nonzero error while
+preserving existing output, and valid `{{ text }}` templates work. Separate tests
+verify other LLM engines retain their existing optional-prompt behavior.

@@ -1,0 +1,1 @@
+{"system": "Extract person-like beings with exact OCR mention evidence.", "user": "{{ text }}"}

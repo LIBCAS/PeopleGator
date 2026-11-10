@@ -60,6 +60,7 @@ def load_detector(config_path):
         config_path: Path to the existing INI file; relative resources use its parent.
     """
     from people_gator.core.document_parser import engine_factory
+    from people_gator.engines.text_entity_detection import TextEntityPromptError
 
     config_path = Path(config_path).resolve()
     config = configparser.ConfigParser()
@@ -71,7 +72,10 @@ def load_detector(config_path):
     if len(sections) != 1:
         raise InputError('Configuration must contain exactly one [ENGINE_*] section '
                          f'with METHOD = TEXT_ENTITY_DETECTION; found {len(sections)}.')
-    detector = engine_factory(config[sections[0]], config_path=str(config_path.parent), device='cpu')
+    try:
+        detector = engine_factory(config[sections[0]], config_path=str(config_path.parent), device='cpu')
+    except TextEntityPromptError as exc:
+        raise InputError(str(exc)) from None
     if detector is None:
         raise InputError('TEXT_ENTITY_DETECTION is unavailable in the loaded PeopleGator package; '
                          'use a checkout or installation containing that engine.')

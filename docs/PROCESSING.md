@@ -357,8 +357,15 @@ and/or `user` Jinja2 templates. Relative paths resolve from the INI directory.
 }
 ```
 
-Templates are loaded exactly as for face/entity engines. Without a configured
-path, no system/user template is supplied; configure one for actual extraction.
+Prompt loading uses the shared LLM path conventions, but the text detector
+requires a readable `PROMPT_TEMPLATE_PATH` at initialization. Its JSON must
+provide nonblank string content in `system` and/or `user`, with valid Jinja2
+syntax. Missing/blank paths, unreadable or invalid JSON, unusable sections and
+malformed templates raise an actionable configuration error before the prompter
+is constructed or OCR pages are loaded. Blank optional roles are omitted when
+the other role is usable. Errors do not expose prompt contents or credentials.
+This requirement is local to `TEXT_ENTITY_DETECTION`; other LLM engines keep
+their existing behavior. There is no built-in fallback prompt.
 
 `TextEntityMentionResult`, `TextEntityResult` and `TextEntityDetectionResult` are
 Pydantic models in `people_gator/engines/text_entity_detection.py`. The engine

@@ -6,6 +6,7 @@ import re
 from difflib import SequenceMatcher
 from typing import Literal
 
+from jinja2 import Template, TemplateError
 from pydantic import BaseModel, ConfigDict, PrivateAttr, ValidationError, field_validator, model_validator
 
 from people_gator.engines import DocumentProcessingEngine, LLMBasedEngine
@@ -13,6 +14,10 @@ from people_gator.core.layout import PeopleGatorDocument, PeopleGatorTextEntityM
 from people_gator.text import text_chunker_factory
 
 logger = logging.getLogger(__name__)
+
+
+class TextEntityPromptError(ValueError):
+    """Safe, actionable text-detector prompt configuration failure."""
 
 
 class TextEntityMentionResult(BaseModel):
@@ -226,6 +231,43 @@ class LLMTextEntityDetectionEngine(DocumentProcessingEngine, LLMBasedEngine):
         if isinstance(raw, bool) or not math.isfinite(self.match_cutoff) or not 0 <= self.match_cutoff <= 100:
             raise ValueError('MENTION_MATCH_SCORE_CUTOFF must be numeric in 0–100')
         super().__init__(config, device, config_path)
+
+    def load_prompt_template(self):
+        """Require usable external prompt content before constructing the prompter.
+
+        Raises:
+            TextEntityPromptError: If the configured JSON cannot be read or does
+                not provide nonblank string system/user templates with valid
+                Jinja2 syntax. Messages deliberately omit file/prompt contents.
+        """
+        if not isinstance(self.prompt_template_path, str) or not self.prompt_template_path.strip():
+            raise TextEntityPromptError(
+                'TEXT_ENTITY_DETECTION requires PROMPT_TEMPLATE_PATH pointing to a readable '
+                'prompt JSON file with nonblank system and/or user strings.')
+        try:
+            super().load_prompt_template()
+        except (OSError, ValueError, TypeError):
+            raise TextEntityPromptError(
+                'TEXT_ENTITY_DETECTION could not read valid prompt JSON; check '
+                'PROMPT_TEMPLATE_PATH, file permissions and the system/user JSON object.') from None
+        for field in ('prompt_template_system', 'prompt_template_user'):
+            value = getattr(self, field)
+            if value is not None and not isinstance(value, str):
+                raise TextEntityPromptError(
+                    'TEXT_ENTITY_DETECTION prompt JSON system/user values must be strings or null.')
+            if isinstance(value, str) and not value.strip():
+                setattr(self, field, None)
+            elif value:
+                try:
+                    Template(value)
+                except TemplateError:
+                    raise TextEntityPromptError(
+                        'TEXT_ENTITY_DETECTION prompt JSON must contain valid Jinja2 system/user '
+                        'templates; use {{ text }} for the OCR chunk.') from None
+        if not (self.prompt_template_system or self.prompt_template_user):
+            raise TextEntityPromptError(
+                'TEXT_ENTITY_DETECTION prompt JSON must contain a nonblank system and/or user '
+                'string; check PROMPT_TEMPLATE_PATH and use {{ text }} for the OCR chunk.')
 
     def process_document(self, document: PeopleGatorDocument) -> PeopleGatorDocument:
         """Process all chunks before appending any new mentions.

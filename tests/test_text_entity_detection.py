@@ -18,7 +18,9 @@ def processing_only(runtime_mode):
 def engine(**options):
     from people_gator.core.document_parser import engine_factory
     config = ConfigParser()
-    config.read_dict({'ENGINE_1': {'METHOD': 'TEXT_ENTITY_DETECTION', **options}})
+    config.read_dict({'ENGINE_1': {'METHOD': 'TEXT_ENTITY_DETECTION',
+        'PROMPT_TEMPLATE_PATH': str(Path(__file__).parent / 'resources' / 'text_entity_detection' / 'prompt.json'),
+        **options}})
     return engine_factory(config['ENGINE_1'], '.', 'cpu')
 
 
@@ -170,7 +172,9 @@ def test_document_parser_xml(format, tmp_path, monkeypatch):
     doc.page_layouts[0].regions.append(face)
     before = deepcopy([[(l.id, l.transcription) for r in p.regions for l in r.lines] for p in doc.page_layouts])
     config = ConfigParser()
-    config.read_dict({'ENGINE_2': {'METHOD': 'TEXT_ENTITY_DETECTION'}, 'ENGINE_1': {'METHOD': 'TEXT_ENTITY_DETECTION'}})
+    settings = {'METHOD': 'TEXT_ENTITY_DETECTION', 'PROMPT_TEMPLATE_PATH':
+                str(Path(__file__).parent / 'resources' / 'text_entity_detection' / 'prompt.json')}
+    config.read_dict({'ENGINE_2': settings, 'ENGINE_1': settings})
     monkeypatch.setattr(LLMPrompter, '__call__', Mock(return_value={'entities': [entity('Čapek', 'Čapek 😀')]}))
     parser = DocumentParser(config, 'cpu', str(tmp_path))
     assert [e.config.name for e in parser.engines] == ['ENGINE_2', 'ENGINE_1']
@@ -225,9 +229,9 @@ def test_configured_template_and_model_schema(tmp_path):
 
 def test_no_built_in_prompt_or_schema():
     detector = engine()
-    assert detector.prompt_template_system is detector.prompt_template_user is None
+    assert detector.prompt_template_user == '{{ text }}'
     assert detector.json_schema is None
-    assert detector.llm_prompter.prompt_template_system is detector.llm_prompter.prompt_template_user is None
+    assert detector.llm_prompter.prompt_template_user.render(text='OCR') == 'OCR'
     assert detector.llm_prompter.json_schema is None
 
 

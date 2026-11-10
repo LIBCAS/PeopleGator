@@ -27,11 +27,13 @@ METHOD = FACE_DETECTION_YOLO
 MODEL_PATH = missing-model
 [ENGINE_TEXT]
 METHOD = TEXT_ENTITY_DETECTION
+PROMPT_TEMPLATE_PATH = prompt.json
 [ENGINE_LINK]
 METHOD = ENTITY_MATCHING
 [DB_API]
 api_url = invalid
 ''')
+    (tmp_path / 'prompt.json').write_text(json.dumps({'user': '{{ text }}'}))
     # Any image or database access must fail the test, even without credentials.
     monkeypatch.setattr(PeopleGatorDocument, 'load_page_image', Mock(side_effect=AssertionError('images')))
     monkeypatch.setattr(DatabaseApiService, '__init__', Mock(side_effect=AssertionError('database')))
@@ -360,6 +362,8 @@ def test_direct_script_uses_checkout_instead_of_stale_package(tmp_path):
     (stale / 'core' / 'document_parser.py').write_text("raise RuntimeError('stale PeopleGator installation imported')\n")
     config = tmp_path / 'config.ini'
     config.write_text('[ENGINE_1]\nMETHOD=TEXT_ENTITY_DETECTION\n')
+    (tmp_path / 'prompt.json').write_text(json.dumps({'user': '{{ text }}'}))
+    config.write_text(config.read_text() + 'PROMPT_TEMPLATE_PATH=prompt.json\n')
     pages = xml_directory(tmp_path, 'page', pages=1)
     # Exercise the real engine without a model-service request.
     path = pages / '0.xml'
