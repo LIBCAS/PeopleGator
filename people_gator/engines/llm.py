@@ -120,6 +120,8 @@ class LLMPrompter:
         Returns:
             The latest decoded result, optionally validated, or None. A decoded
             value can survive a subsequent validation failure, as in existing callers.
+            Incomplete output is rejected; an exhausted output allowance stops
+            retries immediately without parsing or accepting a partial result.
         """
         logger.debug("Starting structured LLM request; maximum attempts=%d", max_attempts)
         result = None
@@ -128,9 +130,28 @@ class LLMPrompter:
 
         for attempt in range(max_attempts):
             validated = False
+            decode_stage = "HTTP response decoding"
             try:
                 response = client.responses.create(**request_args)
-                parsed_json = json.loads(strip_markdown(response.output_text))
+                decode_stage = "model output decoding"
+                if getattr(response, "status", None) == "incomplete":
+                    result = None
+                    reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
+                    if reason == "max_output_tokens":
+                        logger.error("LLM response reached MAX_OUTPUT_TOKENS=%s before completing JSON; "
+                                     "increase MAX_OUTPUT_TOKENS or reduce CHUNKING_MAX_CHARS. "
+                                     "The output allowance includes reasoning tokens. No identical retry will help.",
+                                     request_args.get("max_output_tokens", "unknown"))
+                        return None
+                    logger.warning("LLM attempt %d/%d returned an incomplete response; retrying",
+                                   attempt + 1, max_attempts)
+                    continue
+                output_text = response.output_text or ""
+                logger.debug("LLM response: text characters=%d, output tokens=%s, reasoning tokens=%s",
+                             len(output_text), getattr(getattr(response, "usage", None), "output_tokens", None),
+                             getattr(getattr(getattr(response, "usage", None), "output_tokens_details", None),
+                                     "reasoning_tokens", None))
+                parsed_json = json.loads(strip_markdown(output_text))
 
                 result = parsed_json
 
@@ -138,6 +159,11 @@ class LLMPrompter:
                     result = response_model.model_validate(parsed_json)
                 elif json_schema:
                     validate(instance=parsed_json, schema=json_schema)
+
+            except json.JSONDecodeError as e:
+                logger.warning("LLM attempt %d/%d failed (JSONDecodeError) during %s at character %d",
+                               attempt + 1, max_attempts, decode_stage, e.pos)
+                continue
 
             except ValidationError as e:
                 logger.warning("LLM attempt %d/%d: response schema validation failed (%s)", attempt + 1, max_attempts, type(e).__name__)

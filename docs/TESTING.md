@@ -180,3 +180,14 @@ outside the checkout, with a stale `people_gator` package on `PYTHONPATH`. It lo
 empty synthetic OCR through the real engine without model requests and checks
 successful JSON output. A separate regression requires an unavailable factory
 engine to fail during configuration before any XML loading.
+
+`tests/test_llm_responses.py` checks incomplete/token-limited Responses results,
+including empty, truncated and superficially valid JSON. None is accepted as a
+complete extraction or retried with an unchanged exhausted allowance. Tests also
+check safe token-count diagnostics, HTTP-versus-model JSON decoding errors,
+retention of the configured hard output limit and ordinary complete responses.
+Run alongside detector, CLI, logging and documentation tests:
+
+```bash
+python -m pytest -q tests/test_llm_responses.py tests/test_text_entity_detection.py tests/test_detect_text_entities_cli.py tests/test_logging.py tests/test_documentation.py
+```

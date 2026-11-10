@@ -523,3 +523,24 @@ This form explicitly uses the PeopleGator sources alongside the script, preventi
 an older installed package from masking the checkout's detector implementation.
 Runtime dependencies must still be available in the selected Python environment.
 An unavailable detector is reported during configuration, before XML loading.
+
+### Incomplete LLM output and JSON decoding failures
+
+`MAX_OUTPUT_TOKENS` limits the complete model output, including reasoning tokens.
+A reasoning model can exhaust a small allowance before finishing its JSON. The
+Responses API identifies this as `status=incomplete` with reason
+`max_output_tokens`; any returned text may be empty or truncated JSON. Repeating
+the same request with the same allowance does not resolve that condition.
+
+The shared prompter now rejects these incomplete responses before JSON decoding,
+reports the configured cap and recommends increasing `MAX_OUTPUT_TOKENS` or
+reducing `CHUNKING_MAX_CHARS`, and stops identical retries. The configured limit
+remains a hard limit; the client never silently raises it. For the configured
+reasoning model tested with roughly 3,600 synthetic source characters, 1,500
+output tokens truncated the result while 6,000 allowed complete JSON. Choose a
+budget appropriate for the model, reasoning effort and expected mention count.
+
+At `DEBUG`, response diagnostics include only text length and output/reasoning
+token counts. Genuine JSON decoding errors identify whether decoding failed in
+the SDK's HTTP response handling or in the model's output, plus the character
+position. These project diagnostics exclude response bodies, OCR, prompts and credentials.
