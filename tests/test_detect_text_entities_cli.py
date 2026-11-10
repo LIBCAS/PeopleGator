@@ -71,10 +71,16 @@ def test_json_real_xml_and_only_detector(format, option, tmp_path, monkeypatch, 
     raw = output.read_text(encoding='utf-8')
     assert 'Čapek' in raw and 'spisovatel' in raw
     result = json.loads(raw)
-    assert set(result) == {'document_id', 'mentions'}
+    assert set(result) == {'document_id', 'pages'}
     assert result['document_id'] is None
-    assert len(result['mentions']) == 4
-    for index, mention in enumerate(result['mentions']):
+    assert len(result['pages']) == 2
+    assert [page['page_index'] for page in result['pages']] == [0, 1]
+    assert [len(page['mentions']) for page in result['pages']] == [2, 2]
+    assert all(set(page) == {'page_id', 'page_index', 'mentions'} for page in result['pages'])
+    # Both fixture pages reuse the same ID: original page indices disambiguate them.
+    assert result['pages'][0]['page_id'] == result['pages'][1]['page_id']
+    for index, mention in enumerate(
+            mention for page in result['pages'] for mention in page['mentions']):
         assert set(mention) == {'name', 'proposed_name', 'description', 'context', 'source_spans'}
         assert mention['proposed_name'] == 'Karel Čapek'
         assert mention['description'] == 'spisovatel'
@@ -84,10 +90,11 @@ def test_json_real_xml_and_only_detector(format, option, tmp_path, monkeypatch, 
                                  'region_index', 'line_index', 'start', 'end'}
     loaded_page = cli.load_document(directory, alto=format == 'alto').page_layouts[0]
     region_index = next(i for i, region in enumerate(loaded_page.regions) if region.id == 'r2')
-    assert result['mentions'][0]['source_spans'][0] == {
+    assert result['pages'][0]['page_id'] == loaded_page.id
+    assert result['pages'][0]['mentions'][0]['source_spans'][0] == {
         'page_id': loaded_page.id, 'region_id': 'r2', 'line_id': 'l3', 'page_index': 0,
         'region_index': region_index, 'line_index': 0, 'start': 0, 'end': 5}
-    multiline = result['mentions'][1]
+    multiline = result['pages'][0]['mentions'][1]
     assert multiline['name'] == 'Karel \nMarie'
     assert multiline['context'] == ' Karel \nMarie'
     assert [(s['start'], s['end']) for s in multiline['source_spans']] == [(1, 7), (0, 5)]
@@ -111,7 +118,42 @@ def test_stdout_and_empty_modes(tmp_path, cli_input, capsys):
     assert capsys.readouterr().out == 'No text entity mentions detected.\n'
     target = tmp_path / 'empty.json'
     assert cli.main(args + ['--output-path', str(target)]) == 0
-    assert json.loads(target.read_text()) == {'document_id': None, 'mentions': []}
+    empty = json.loads(target.read_text())
+    assert empty['document_id'] is None
+    assert len(empty['pages']) == 1
+    assert empty['pages'][0]['page_index'] == 0
+    assert empty['pages'][0]['mentions'] == []
+
+
+def test_page_with_no_mentions_keeps_original_page_order(tmp_path, cli_input, capsys):
+    from user_scripts import detect_text_entities as cli
+    config, prompter = cli_input
+    directory = xml_directory(tmp_path, 'page')
+    detected = prompter.return_value
+    prompter.side_effect = [detected, {'entities': []}]
+    target = tmp_path / 'one-empty-page.json'
+    args = ['--config', str(config), '--input-xml-path', str(directory),
+            '--output-path', str(target)]
+    assert cli.main(args) == 0
+    result = json.loads(target.read_text(encoding='utf-8'))
+    assert [(p['page_index'], len(p['mentions'])) for p in result['pages']] == [(0, 2), (1, 0)]
+    assert result['pages'][0]['page_id'] == result['pages'][1]['page_id']
+    prompter.side_effect = [detected, {'entities': []}]
+    assert cli.main(args[:-2]) == 0
+    readable = capsys.readouterr().out
+    assert 'Detected 2 text entity mention(s) across 2 page(s)' in readable
+    assert 'Page ' in readable
+    assert '[0]: 2 mention(s)' in readable
+    assert '[1]: 0 mention(s)' in readable
+
+
+def test_empty_document_has_empty_pages_array():
+    from types import SimpleNamespace as NS
+    from user_scripts.detect_text_entities import detection_result, readable_result
+
+    result = detection_result(NS(id=None, page_layouts=[]))
+    assert result == {'document_id': None, 'pages': []}
+    assert readable_result(result) == 'No text entity mentions detected.\\n'
 
 
 @pytest.mark.parametrize('config_text,count', [('[ENGINE_FACE]\nMETHOD=FACE_DETECTION_YOLO\n', 0),
@@ -233,9 +275,11 @@ def test_nullable_detection_metadata_and_missing_ids():
     doc = PeopleGatorDocument(page_layouts=[NS(text_entities=[mention])])
     result = detection_result(doc)
     assert result['document_id'] is None
-    assert result['mentions'][0]['proposed_name'] is None
-    assert result['mentions'][0]['description'] is None
-    assert result['mentions'][0]['source_spans'] == [
+    assert result['pages'] == [{
+        'page_id': None, 'page_index': 0, 'mentions': result['pages'][0]['mentions']}]
+    assert result['pages'][0]['mentions'][0]['proposed_name'] is None
+    assert result['pages'][0]['mentions'][0]['description'] is None
+    assert result['pages'][0]['mentions'][0]['source_spans'] == [
         {'page_id': None, 'region_id': None, 'line_id': None, 'page_index': 0,
          'region_index': 1, 'line_index': 2, 'start': 3, 'end': 5}]
 
@@ -294,7 +338,11 @@ sys.exit(main(sys.argv[1:]))
     assert process.returncode == 0, process.stderr
     assert process.stdout == ''
     assert ('Text detection CLI completed' in process.stderr) == has_logs
-    assert json.loads(output.read_text()) == {'document_id': None, 'mentions': []}
+    empty = json.loads(output.read_text())
+    assert empty['document_id'] is None
+    assert len(empty['pages']) == 1
+    assert empty['pages'][0]['page_index'] == 0
+    assert empty['pages'][0]['mentions'] == []
 
 
 def test_direct_script_uses_checkout_instead_of_stale_package(tmp_path):
@@ -325,7 +373,11 @@ def test_direct_script_uses_checkout_instead_of_stale_package(tmp_path):
     assert result.stdout == ''
     assert 'Loaded 1 pages' in result.stderr
     assert 'Unknown METHOD' not in result.stderr
-    assert json.loads(output.read_text()) == {'document_id': None, 'mentions': []}
+    empty = json.loads(output.read_text())
+    assert empty['document_id'] is None
+    assert len(empty['pages']) == 1
+    assert empty['pages'][0]['page_index'] == 0
+    assert empty['pages'][0]['mentions'] == []
 
 
 def test_unavailable_factory_engine_fails_during_configuration(tmp_path, monkeypatch, caplog):
