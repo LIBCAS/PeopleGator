@@ -5,8 +5,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict
 from collections import defaultdict
 
-from anno_page.core.layout import AnnoPageRegionLayout
-from anno_page.enums.language import Language
+from people_gator.engines.face_entity_context import FaceEntityContext, assigned_caption
 
 from people_gator.core.utils import find_text_in_bounding_box
 from people_gator.core.layout import PeopleGatorFaceRegionLayout
@@ -30,7 +29,7 @@ class FaceAssignmentData:
         result: Optional assignment prediction, populated after the request.
     """
 
-    def __init__(self, face_region, face_image, face_coordinates, context_image, context_text=None, caption_text=None, result=None):
+    def __init__(self, face_region, face_image, face_coordinates, context_image, context_text=None, caption_text=None, result=None, entity_context=None):
         """Initialize FaceAssignmentData from the supplied settings and data.
 
         Args:
@@ -41,6 +40,7 @@ class FaceAssignmentData:
             context_text: Optional OCR text overlapping the context crop.
             caption_text: Optional source-region caption.
             result: Structured model result, or None before assignment.
+            entity_context: Selected source-grounded text evidence, or None for empty sections.
         """
         self.face_region = face_region
         self.face_image = face_image
@@ -49,6 +49,8 @@ class FaceAssignmentData:
         self.context_text = context_text
         self.caption_text = caption_text
         self.result = result
+        self.entity_context = entity_context or {key: [] for key in (
+            "caption_entities", "surrounding_entities", "page_entities", "document_entities")}
 
     def __repr__(self):
         """Return a diagnostic representation of the stored fields.
@@ -99,31 +101,30 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
             The processed document (the same instance for the built-in engines).
         """
         for page_image, page_layout in document.pages_iterator():
-            self.process_page(page_image, page_layout)
+            self.process_page(page_image, page_layout, document=document)
 
         return document
 
-    def process_page(self, page_image, page_layout):
+    def process_page(self, page_image, page_layout, document=None):
         """Request one prediction per face and apply names to the page.
-
-        The current caller expects the prompter to return a (result, messages)
-        pair; unpacking failures propagate unchanged.
 
         Args:
             page_image: Page image array in page-layout coordinates.
             page_layout: Page layout supplying regions, OCR, or source references.
+            document: Original document for cross-page evidence, or None for page-only use.
 
         Returns:
             The page layout after in-place processing.
         """
-        face_data = self.prepare_face_data(page_image, page_layout)
+        face_data = self.prepare_face_data(page_image, page_layout, document=document)
         logger.debug("Page %s: prepared %d LLM assignment requests", page_layout.id, len(face_data))
 
         for face_item in face_data:
-            result, messages = self.llm_prompter(data={
+            result = self.llm_prompter(data={
                                                      "face_coordinates": face_item.face_coordinates,
                                                      "context_text": face_item.context_text,
-                                                     "caption_text": face_item.caption_text
+                                                     "caption_text": face_item.caption_text,
+                                                     **face_item.entity_context
                                                  },
                                                  images=[face_item.face_image, face_item.context_image],
                                                  response_model=FaceAssignmentResult)
@@ -133,17 +134,19 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
 
         return page_layout
 
-    def prepare_face_data(self, page_image, page_layout) -> list[FaceAssignmentData]:
+    def prepare_face_data(self, page_image, page_layout, document=None) -> list[FaceAssignmentData]:
         """Build face request data from crops, relative coordinates, OCR, and captions.
 
         Args:
             page_image: Page image array in page-layout coordinates.
             page_layout: Page layout supplying regions, OCR, or source references.
+            document: Original document for cross-page evidence, or None for page-only use.
 
         Returns:
             Request objects in face or source-region order.
         """
         face_data = []
+        entity_context = FaceEntityContext(document)
         for i, region in enumerate(page_layout.regions):
             if isinstance(region, PeopleGatorFaceRegionLayout):
                 face_x_min, face_y_min, face_x_max, face_y_max = region.get_polygon_bounding_box()
@@ -151,7 +154,8 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
 
                 source_region = region.source_region
 
-                median_line_height = np.median([line.heights[0] + line.heights[1] for line in page_layout.lines_iterator()])
+                heights = [line.heights[0] + line.heights[1] for line in page_layout.lines_iterator()]
+                median_line_height = np.median(heights) if heights else 0
                 vertical_offset = int(median_line_height * self.vertical_offset)
                 horizontal_offset = int(median_line_height * self.horizontal_offset)
 
@@ -181,16 +185,16 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                 context_bbox = (context_x_min, context_y_min, context_x_max, context_y_max)
                 context_text = find_text_in_bounding_box(page_layout, context_bbox)
 
-                caption_text = None
-                if isinstance(source_region, AnnoPageRegionLayout) and source_region.graphical_metadata is not None:
-                    caption_text = source_region.graphical_metadata.title
+                caption_text = assigned_caption(source_region)
 
                 face_item = FaceAssignmentData(face_region=region,
                                                face_image=face_image,
                                                face_coordinates=face_coordinates,
                                                context_image=context_image,
                                                context_text=context_text,
-                                               caption_text=caption_text)
+                                               caption_text=caption_text,
+                                               entity_context=entity_context.select(
+                                                   page_layout, source_region, context_bbox, caption_text))
 
                 face_data.append(face_item)
 
@@ -243,7 +247,7 @@ class BatchFaceAssignmentData:
         result: Optional batch assignment prediction.
     """
 
-    def __init__(self, context_text=None, caption_text=None, context_image=None, faces=None, face_regions=None, result=None):
+    def __init__(self, context_text=None, caption_text=None, context_image=None, faces=None, face_regions=None, result=None, entity_context=None):
         """Initialize BatchFaceAssignmentData from the supplied settings and data.
 
         Args:
@@ -253,6 +257,7 @@ class BatchFaceAssignmentData:
             faces: Ordered batch face descriptors (ID, coordinates, and color).
             face_regions: Ordered face regions corresponding to the batch descriptors.
             result: Structured model result, or None before assignment.
+            entity_context: Selected source-grounded text evidence, or None for empty sections.
         """
         self.context_text = context_text
         self.caption_text = caption_text
@@ -260,6 +265,8 @@ class BatchFaceAssignmentData:
         self.faces = faces
         self.face_regions = face_regions
         self.result = result
+        self.entity_context = entity_context or {key: [] for key in (
+            "caption_entities", "surrounding_entities", "page_entities", "document_entities")}
 
     def to_dict(self):
         """Return faces, OCR text, and caption context for the prompt.
@@ -268,6 +275,7 @@ class BatchFaceAssignmentData:
             "faces": self.faces,
             "context_text": self.context_text,
             "caption_text": self.caption_text,
+            **self.entity_context,
         }
 
     def __repr__(self):
@@ -321,7 +329,7 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
             self.process_document_parallel(document)
         else:
             for page_image, page_layout in document.pages_iterator():
-                self.process_page(page_image, page_layout)
+                self.process_page(page_image, page_layout, document=document)
 
         return document
 
@@ -333,7 +341,7 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         """
         all_face_data = []
         for page_image, page_layout in document.pages_iterator():
-            face_data = self.prepare_face_data(page_image, page_layout)
+            face_data = self.prepare_face_data(page_image, page_layout, document=document)
             logger.debug("Page %s: prepared %d LLM assignment requests", page_layout.id, len(face_data))
             all_face_data.extend(face_data)
 
@@ -348,17 +356,18 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
 
         self.update_layout(all_face_data)
 
-    def process_page(self, page_image, page_layout):
+    def process_page(self, page_image, page_layout, document=None):
         """Process one page in place and return its layout.
 
         Args:
             page_image: Page image array in page-layout coordinates.
             page_layout: Page layout supplying regions, OCR, or source references.
+            document: Original document for cross-page evidence, or None for page-only use.
 
         Returns:
             The page layout after in-place processing.
         """
-        face_data = self.prepare_face_data(page_image, page_layout)
+        face_data = self.prepare_face_data(page_image, page_layout, document=document)
         logger.debug("Page %s: prepared %d LLM assignment requests", page_layout.id, len(face_data))
 
         if self.processing_mode == ProcessingMode.PAGE_PARALLEL:
@@ -382,17 +391,19 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
 
         return page_layout
 
-    def prepare_face_data(self, page_image, page_layout) -> list[BatchFaceAssignmentData]:
+    def prepare_face_data(self, page_image, page_layout, document=None) -> list[BatchFaceAssignmentData]:
         """Build face request data from crops, relative coordinates, OCR, and captions.
 
         Args:
             page_image: Page image array in page-layout coordinates.
             page_layout: Page layout supplying regions, OCR, or source references.
+            document: Original document for cross-page evidence, or None for page-only use.
 
         Returns:
             Request objects in face or source-region order.
         """
         face_data = []
+        entity_context = FaceEntityContext(document)
 
         source_regions_mapping = defaultdict(list)
         for i, region in enumerate(page_layout.regions):
@@ -457,17 +468,7 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                     }
                 )
 
-            caption_text = None
-            if isinstance(source_region, AnnoPageRegionLayout) and source_region.graphical_metadata is not None:
-                caption_text = source_region.graphical_metadata.title
-
-                if isinstance(caption_text, dict):
-                    if Language.CZECH in caption_text:
-                        caption_text = caption_text[Language.CZECH]
-                    elif Language.ENGLISH in caption_text:
-                        caption_text = caption_text[Language.ENGLISH]
-                    else:
-                        caption_text = next(iter(caption_text.values()), None)
+            caption_text = assigned_caption(source_region)
 
             face_item = BatchFaceAssignmentData(
                 context_text=context_text,
@@ -475,7 +476,9 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                 context_image=context_image,
                 faces=faces,
                 face_regions=sorted_face_regions,
-                result=None
+                result=None,
+                entity_context=entity_context.select(
+                    page_layout, source_region, context_bbox, caption_text)
             )
 
             face_data.append(face_item)
@@ -495,7 +498,7 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                 for face_result in face_item.result.faces:
                     target_face_region = None
                     for face, face_region in zip(face_item.faces, face_item.face_regions):
-                        if face["id"] == face_result.id and all([coord1 == coord2 for coord1, coord2 in zip(face["coordinates"], face_result.coordinates)]):
+                        if face["id"] == face_result.id and tuple(face["coordinates"]) == tuple(face_result.coordinates):
                             target_face_region = face_region
                             break
 
