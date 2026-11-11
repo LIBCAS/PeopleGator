@@ -249,3 +249,36 @@ RapidFuzz is declared only in processing extras (`tool` and `full`); packaging
 checks continue to exercise dependency-free base/client boundaries. Mocked
 resolution tests do not establish model accuracy or factual summary quality on
 real OCR. Python 3.10 syntax is checked independently of runtime availability.
+
+## Face assignment with text evidence
+
+`tests/test_face_assignment_text_entities.py` checks exact caption-only and
+three-section fallback data; original caption-line association and conservative
+text-only matching; Unicode, multiline/legacy spans and repeated IDs; local/page
+overlap; page-only and off-page-only candidates; cluster membership, aliases,
+whole-cluster on-page exclusion and unclustered homonyms. Real request preparation
+in both assignment engines and all batch modes checks crops, face descriptors,
+per-image correspondence, empty OCR/stages, null decisions and unchanged source
+annotations. Review regressions cover preservation of previously named identities
+and authority IDs on null, empty, spaces-only, control-whitespace and Unicode-
+whitespace normalized-name predictions in every execution mode. Mixed batch
+outcomes also verify nonblank names still update exactly as returned, including
+surrounding whitespace. Captions sharing one OCR line are separated
+by exact character spans (including legacy mentions); missing, paraphrased or
+ambiguous titles with usable references remain fallback evidence. Empty, foreign,
+stale and untranscribed references try conservative title/evidence matching while
+preserving repeated-title ambiguity. Direct page preparation and processing tests
+cover later-page source indices with/without the document in both engines and
+all batch modes, for caption and surrounding evidence, mixed legacy mappings,
+unknown indices and conflicting standalone provenance. Noncontiguous caption
+references are reconstructed in OCR reading order with original offsets, including
+legacy/multiline names, shared lines, dehyphenation and repeated-title ambiguity.
+The documented external JSON/Jinja migration
+fragment is rendered through the shared prompter with populated and empty sections and unchanged
+Pydantic provider schemas. No model, database or GPU inference is required.
+
+```bash
+python -m pytest -q tests/test_face_assignment_text_entities.py tests/test_llm_prompts.py tests/test_logging.py tests/test_documentation.py
+python -m pytest -q --runtime-mode=full
+python -m pip check
+```

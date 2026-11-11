@@ -74,7 +74,9 @@ def load_image(path):
 
 
 def find_text_in_bounding_box(page_layout, bounding_box, min_overlap_ratio=0.5):
-    """Return joined OCR lines meeting the overlap threshold, or None.
+    """Return transcribed OCR lines meeting the overlap threshold, or None.
+
+    Lines without a nonempty string transcription are skipped.
 
     Args:
         page_layout: Page layout supplying regions, OCR, or source references.
@@ -86,6 +88,8 @@ def find_text_in_bounding_box(page_layout, bounding_box, min_overlap_ratio=0.5):
 
     lines = []
     for line in page_layout.lines_iterator():
+        if not isinstance(line.transcription, str) or not line.transcription:
+            continue
         line_polygon = Polygon(line.polygon)
         intersection_area = bounding_box_polygon.intersection(line_polygon).area
         line_area = line_polygon.area

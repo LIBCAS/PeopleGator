@@ -357,19 +357,18 @@ def test_single_assignment_request_contract(processing, caplog, tmp_path):
     config.read_dict({'engine': {'PROMPT_TEMPLATE_PATH': str(prompt)}})
     engine = LLMFaceAssignmentEngine(config['engine'], 'cpu', str(tmp_path))
     engine.prepare_face_data = Mock(return_value=[data])
-    engine.llm_prompter = Mock(return_value=(None, []))
+    engine.llm_prompter = Mock(return_value=None)
     with caplog.at_level(logging.DEBUG):
         assert engine.process_page(None, page) is page
     assert identity.name == "before"
     result = FaceAssignmentResult(name_normalized="after", name_in_text=None)
-    engine.llm_prompter.return_value = (result, [])
+    engine.llm_prompter.return_value = result
     assert engine.process_page(None, page) is page
     assert identity.name == "after"
     assert engine.llm_prompter.call_args.kwargs["data"]["context_text"] == "private OCR"
-    # The existing caller's unpacking error is outside this maintenance issue.
     engine.llm_prompter.return_value = None
-    with pytest.raises(TypeError):
-        engine.process_page(None, page)
+    assert engine.process_page(None, page) is page
+    assert identity.name == "after"
     assert "private OCR" not in caplog.text
 
 

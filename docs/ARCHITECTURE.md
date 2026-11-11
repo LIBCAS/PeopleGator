@@ -144,3 +144,11 @@ clusters and page identities are protected. Unlinked clusters use `identity=None
 consolidated `name`/`description` and optional `short_description`. This stage
 requires neither image loading nor app access and adds no XML persistence. See
 [the clustering contract](PROCESSING.md#document-text-entity-clustering-text_entity_clustering).
+
+Both face-assignment engines now use `engines/face_entity_context.py` to read
+original document mentions and membership-linked provisional clusters. The shared
+selector prepares caption-only evidence or distinct surrounding/page/off-page
+fallback collections per source image; no text model, parallel entity store,
+app identity or extra request is introduced. `process_document` passes the
+original document into page request preparation in every execution mode. See
+[face prompt data and migration](PROCESSING.md#text-evidence-in-face-assignment).
