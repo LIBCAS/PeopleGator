@@ -40,6 +40,12 @@ Proposes a normalized person name for each detected face using its crop, marked 
 
 Assigns names to groups of faces in the same source region and supports sequential or parallel LLM requests.
 
+Within each source region, faces are ordered left to right by their bounding-box
+horizontal midpoint, `(x_min + x_max) / 2`. Equal midpoints retain their original
+page-region order. This order determines the prompt's face IDs, colors and
+coordinates, the marked context image and result-to-region mapping in every
+batch execution mode.
+
 | name | required | default value | description |
 | --- | --- | --- | --- |
 | `METHOD` | True | — | Selects `LLM_BATCH_FACE_ASSIGNMENT`. |

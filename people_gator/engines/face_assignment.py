@@ -436,7 +436,11 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
 
             context_image = np.copy(page_image[context_y_min:context_y_max, context_x_min:context_x_max])
 
-            sorted_face_regions = sorted(face_regions, key=lambda r: r.get_polygon_bounding_box()[0] + (r.get_polygon_bounding_box()[0] + r.get_polygon_bounding_box()[2]) / 2)
+            # Stable sorting retains page-region order for equal horizontal centers.
+            sorted_face_regions = sorted(
+                face_regions,
+                key=lambda r: (r.get_polygon_bounding_box()[0] + r.get_polygon_bounding_box()[2]) / 2,
+            )
             faces = []
             for i, face_region in enumerate(sorted_face_regions):
                 face_color_name = list(self.colors.keys())[i % len(self.colors)]
