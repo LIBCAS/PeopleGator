@@ -66,7 +66,7 @@ See [Architecture](docs/ARCHITECTURE.md) for module boundaries and data flow.
 - [Architecture](docs/ARCHITECTURE.md) — modules, data flow and service boundaries.
 - [Processing](docs/PROCESSING.md) — input assumptions, engines and configuration.
 - [Example pipeline INI](resources/config.example.ini) and [prompt resources](resources/README.md) —
-  explicit per-engine prompt paths; fill empty `{}` templates before enabling their engines.
+  explicit per-engine prompt paths, including the supplied face and clustering prompts.
 - [Output formats](docs/OUTPUT_FORMATS.md) — XML/app output and current gaps.
 - [Testing](docs/TESTING.md) — planned deterministic test strategy.
 
@@ -134,7 +134,7 @@ MODEL_PATH = /absolute/path/to/compatible-face-model.pt
 ~~~
 
 For the text/person pipeline, adapt [config.example.ini](resources/config.example.ini):
-provide service settings, fill or replace `{}` prompts, and remove unused engine
+provide service settings, review the supplied prompts, and remove unused engine
 sections (choose single or batch face assignment). Then run
 `python -m user_scripts.parse_folder --config ./resources/config.example.ini ...` with the
 input/output arguments below. Prompt paths resolve from the INI directory and

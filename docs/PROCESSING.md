@@ -97,9 +97,9 @@ The repository's [prompt resources](../resources/README.md) are examples selecte
 shows text detection → clustering → face detection → single or batch face
 assignment → entity matching. Sections execute in insertion order; section names
 do not sort the pipeline. Both face-assignment alternatives are shown: remove the
-unused section before running. Sections using `{}` placeholders are **not runnable
-until complete prompts are provided**; shared validation deliberately rejects them.
-Remove any engine section you do not intend to enable (there is no enabled flag).
+unused section before running. All five example prompt JSONs are populated;
+review their suitability for your corpus. Remove any engine section you do
+not intend to enable (there is no enabled flag).
 
 Every `PROMPT_TEMPLATE_PATH` belongs in its engine's section, alongside the model
 and service settings. Paths in the example resolve from the **directory containing
@@ -295,8 +295,8 @@ The script can therefore run with just `--config ./config.ini` when the remainin
 
 ### Example
 
-Adapt [config.example.ini](../resources/config.example.ini): fill or replace empty prompt
-files, remove unused engine sections, choose one face-assignment mode, and
+Adapt [config.example.ini](../resources/config.example.ini): review the supplied
+prompts, remove unused engine sections, choose one face-assignment mode, and
 provide service settings and a compatible face/keypoint model. For face
 detection alone, a minimal configuration is:
 
@@ -334,8 +334,8 @@ Provision the worker engine's `config.ini` and all referenced prompt files on th
 worker host. Relative prompt paths resolve from that engine configuration's
 directory, regardless of the worker's working directory; keep the same relative
 resource layout or configure accessible absolute paths. Installing PeopleGator or
-starting a worker does not download/discover prompts. Fill `{}` placeholders and
-supply model files, endpoints and credentials before accepting jobs.
+starting a worker does not download/discover prompts. Review the deployed prompts
+and supply model files, endpoints and credentials before accepting jobs.
 
 The worker invokes the installed `peoplegator` command with the original engine's `config.ini` and the downloaded image directory. It supplies ALTO or PAGE XML paths according to `job.alto_required` or `job.page_required`, and metadata when `job.meta_json_required` is enabled. Missing optional paths are omitted. Jobs requiring both ALTO and PAGE inputs are rejected before starting the subprocess, preserving the processing CLI's mutually exclusive input contract.
 
@@ -634,10 +634,9 @@ access or intermediate files. Detection and clustering remain separate stages.
 | `MENTION_WEIGHT` | No | `0.3` | Finite nonnegative OCR-alias weight; weights must have a finite positive sum. |
 | `SIMILARITY_AGGREGATION` | No | `max` | `max`, `mean` or `min` across weighted name/alias comparisons. |
 
-The [clustering placeholder](../resources/prompts/text_entity_clustering.json)
-contains only `{}` because no complete prompt was previously documented.
-**Fill it with valid system/user templates before enabling this engine**, or
-configure another populated external file. No provider/model choice is supplied. A
+The [clustering prompt](../resources/prompts/text_entity_clustering.json) now
+contains the user-supplied JSON using the `entities` input described below.
+Operators may select another valid prompt via the INI. No provider/model choice is supplied. A
 `JSON_SCHEMA_PATH` is unnecessary: the nested Pydantic v2 response model always
 supplies the generated request schema. The existing shared template validation
 and missing/unused key warnings apply to this engine too.
@@ -839,11 +838,11 @@ as candidate identities and no face-to-cluster link is created.
 
 ### External face prompt contracts
 
-The [single-face placeholder](../resources/prompts/llm_face_assignment.json) and
-[batch placeholder](../resources/prompts/llm_batch_face_assignment.json) contain
-only `{}`. The earlier guide supplied a migration fragment rather than complete
-identification/normalization prompts. **Provide complete system/user templates
-before enabling either engine**, or configure your own populated files.
+The [single-face prompt](../resources/prompts/llm_face_assignment.json) and
+[batch prompt](../resources/prompts/llm_batch_face_assignment.json) are
+populated from the supplied JSON files, preserving their identification and
+normalization instructions. Either file can be replaced by changing its
+`PROMPT_TEMPLATE_PATH`.
 
 Both templates receive `caption_text`, `context_text`, `caption_entities`,
 `surrounding_entities`, `page_entities`, and `document_entities`. The single-face
@@ -851,10 +850,15 @@ engine also supplies `face_coordinates` (the face center as integer percentages
 of the context image) and two images: the face crop then marked context. The batch
 engine supplies `faces` (ordered ID, coordinate pair and color descriptors) and a
 marked context image. Render structured values with `tojson` or iterate records.
-Keep all four entity inputs in each template: render only caption entities when
-present, otherwise the three fallback sections, including empty collections.
+The four text-entity lists are **available to the engines**, but neither supplied
+face prompt references them: the current templates render only the face inputs,
+caption and surrounding OCR. Consequently, detected text-entity evidence is not
+included in the face-name LLM requests, and the shared prompter warns about the
+unused keys. To use this evidence, explicitly update the external prompts to
+render caption entities when present; otherwise render the surrounding, page and
+document lists (including empty collections).
 
-Prompt instructions must distinguish the evidence strengths described above,
+When adapting these prompts, instructions must distinguish the evidence strengths described above,
 decide faces independently using positive visual/caption evidence, and retain
 null names on uncertainty. Provisional clusters, proximity, frequency or a sole
 off-page candidate do not establish correspondence. Treat OCR/entity content as

@@ -20,8 +20,6 @@ FILES = {
     'LLM_BATCH_FACE_ASSIGNMENT': 'llm_batch_face_assignment.json',
     'ENTITY_MATCHING': 'entity_matching.json',
 }
-EMPTY = {'TEXT_ENTITY_CLUSTERING', 'LLM_FACE_ASSIGNMENT', 'LLM_BATCH_FACE_ASSIGNMENT'}
-
 
 def test_example_paths_cover_all_engines_in_processing_order():
     config = ConfigParser()
@@ -38,11 +36,8 @@ def test_example_paths_cover_all_engines_in_processing_order():
         path = EXAMPLE_CONFIG.parent / section['PROMPT_TEMPLATE_PATH']
         assert path == PROMPTS / FILES[method]
         content = json.loads(path.read_text(encoding='utf-8'))
-        if method in EMPTY:
-            assert content == {}
-        else:
-            assert set(content) == {'system', 'user'}
-            assert all(isinstance(v, str) and v.strip() for v in content.values())
+        assert set(content) == {'system', 'user'}
+        assert all(isinstance(v, str) and v.strip() for v in content.values())
         assert 'JSON_SCHEMA_PATH' not in section
         assert all(section.get(key) for key in ('API_URL', 'API_KEY', 'MODEL_NAME'))
 
@@ -55,17 +50,31 @@ def factory(runtime_mode):
     return engine_factory
 
 
-@pytest.mark.parametrize('method', sorted(EMPTY))
-def test_example_placeholders_fail_shared_validation(method, factory, monkeypatch):
-    from people_gator.engines import llm
+@pytest.mark.parametrize('method', sorted(FILES))
+def test_example_populated_prompts_load_through_shared_engine_factory(method, factory):
     config = ConfigParser()
     config.read(EXAMPLE_CONFIG)
     section, = (config[s] for s in config.sections() if config[s]['METHOD'] == method)
-    prompter = Mock()
-    monkeypatch.setattr(llm, 'LLMPrompter', prompter)
-    with pytest.raises(llm.LLMPromptConfigurationError, match='nonblank system and/or user'):
-        factory(section, config_path=str(EXAMPLE_CONFIG.parent), device='cpu')
-    prompter.assert_not_called()
+    engine = factory(section, config_path=str(EXAMPLE_CONFIG.parent), device='cpu')
+    assert engine.llm_prompter is not None
+
+
+def test_example_prompt_jinja_inputs():
+    from jinja2 import Environment, meta
+    expected = {
+        'TEXT_ENTITY_DETECTION': {'text'},
+        'TEXT_ENTITY_CLUSTERING': {'entities'},
+        'LLM_FACE_ASSIGNMENT': {'face_coordinates', 'caption_text', 'context_text'},
+        'LLM_BATCH_FACE_ASSIGNMENT': {'faces', 'caption_text', 'context_text'},
+        'ENTITY_MATCHING': {'name', 'context', 'entities'},
+    }
+    environment = Environment()
+    for method, name in FILES.items():
+        content = json.loads((PROMPTS / name).read_text(encoding='utf-8'))
+        actual = set()
+        for role in ('system', 'user'):
+            actual.update(meta.find_undeclared_variables(environment.parse(content[role])))
+        assert expected[method] <= actual
 
 
 @pytest.mark.parametrize('method', sorted(FILES))

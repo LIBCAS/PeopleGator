@@ -318,10 +318,9 @@ reject malformed actions, invalid indices/names/types and unsupported legacy
 
 ## Configured prompt resources
 
-`tests/test_prompt_resources.py` validates the five resource JSON files and
-`resources/config.example.ini`. It rejects the three intentionally empty templates
-through the real shared loader and renders populated templates with their engine
-response models. Factory/CLI regressions select repository and alternate external prompts
+`tests/test_prompt_resources.py` validates all five populated JSON resources and
+`resources/config.example.ini`. It checks shared-engine loading and Jinja input
+placeholders and renders the detection prompt with its generated response model. Factory/CLI regressions select repository and alternate external prompts
 only through INI paths, exercise relative/absolute paths from a different working
 directory without a resources tree, reject missing/invalid configured paths,
 and retain section insertion order. The parse-folder CLI uses synthetic OCR and
@@ -332,6 +331,8 @@ python -m pytest -q tests/test_prompt_resources.py tests/test_llm_prompts.py tes
 python -m pytest -q --runtime-mode=full
 ```
 
-Deployable `{}` files remain placeholders, not runnable prompts or fallback
-sources. The incomplete historical face migration fragment remains a separate
-test fixture; it must not populate the deployment resources.
+All five prompt resources are now populated; no implicit runtime discovery or
+fallback default exists. The historical incomplete face migration fragment remains
+a separate test fixture. The uploaded face prompts do not reference the optional
+detected-entity lists, so shared warnings will flag those unused inputs until the
+external templates are updated.
