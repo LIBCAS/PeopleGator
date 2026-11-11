@@ -33,15 +33,10 @@ def engine(tmp_path):
     return instance
 
 
-def decision(action='unresolved', index=None, name='Karel Čapek', evidence=(), person=True):
+def decision(action='unresolved', index=None, name='Karel Čapek', person=True):
     from people_gator.engines.entity_matching import EntityMatchingResult
     return EntityMatchingResult(action=action, source_is_person=person, item_id=index,
-        name=name if action != 'unresolved' else None, reason='Supplied evidence supports this outcome.',
-        evidence=list(evidence))
-
-
-def comparison(index=0, source='Czech writer', candidate='Czech writer'):
-    return {'item_id': index, 'source_quote': source, 'candidate_quote': candidate}
+        name=name if action != 'unresolved' else None, reason='Supplied evidence supports this outcome.')
 
 
 def candidate(entity_id='existing', name='Karel Čapek', description='Czech writer', **options):
@@ -165,12 +160,12 @@ def test_ambiguous_candidates_never_create_or_overwrite(engine, count):
     assert engine.llm_prompter.call_count == 1
 
 
-def test_existing_candidate_requires_context_even_for_one_hit(engine):
+def test_one_hit_still_uses_llm_with_hydrated_context(engine):
     doc = document()
     c = candidate()
     engine.db_api_service.search_entities.return_value = {'items': [dict(c, score=999, item_id=99)]}
     engine.db_api_service.get_entity_info.return_value = c
-    engine.llm_prompter.return_value = decision('select', 0, evidence=[comparison()])
+    engine.llm_prompter.return_value = decision('select', 0)
     engine.process_document(doc)
     assert doc.text_entity_clusters[0].identity.peoplegator_id == 'existing'
     engine.db_api_service.create_entity.assert_not_called()
@@ -181,8 +176,8 @@ def test_existing_candidate_requires_context_even_for_one_hit(engine):
 
 @pytest.mark.parametrize('bad', [
     None, {}, {'item_id': 0, 'name': 'Karel Čapek'},
-    {'action': 'select', 'source_is_person': True, 'item_id': True, 'name': 'Karel Čapek', 'reason': 'x', 'evidence': []},
-    {'action': 'create', 'source_is_person': True, 'item_id': None, 'name': 'Karel Čapek', 'reason': '', 'evidence': []},
+    {'action': 'select', 'source_is_person': True, 'item_id': True, 'name': 'Karel Čapek', 'reason': 'x'},
+    {'action': 'create', 'source_is_person': True, 'item_id': None, 'name': 'Karel Čapek', 'reason': ''},
 ])
 def test_malformed_model_results_raise_without_creation(engine, bad):
     doc = document()
@@ -193,21 +188,26 @@ def test_malformed_model_results_raise_without_creation(engine, bad):
     assert doc.text_entity_clusters[0].identity is None
 
 
-@pytest.mark.parametrize('result', [
-    lambda: decision('select', 5, evidence=[comparison()]),
-    lambda: decision('select', 0, name='Invented', evidence=[comparison()]),
-    lambda: decision('select', 0),
-    lambda: decision('select', 0, evidence=[comparison(source='not in source')]),
-    lambda: decision('select', 0, evidence=[comparison(candidate='invented biography')]),
-    lambda: decision('select', 0, evidence=[comparison(source='Karel Čapek')]),
-    lambda: decision('create'),
-    lambda: dict(action='create', source_is_person=False, item_id=None, name='Karel Čapek', reason='x', evidence=[]),
+@pytest.mark.parametrize('invalid', [
+    {'item_id': 5}, {'item_id': -1}, {'item_id': None}, {'item_id': True},
+    {'item_id': 0.0}, {'item_id': '0'}, {'name': 'Invented'}, {'name': ''},
+    {'action': 'create', 'item_id': 0},
+    {'action': 'create', 'item_id': None, 'name': 'Invented'},
+    {'action': 'create', 'item_id': None, 'name': '   '},
+    {'action': 'create', 'item_id': None, 'source_is_person': False},
+    {'source_is_person': False}, {'source_is_person': 'true'},
+    {'action': 'unresolved', 'name': None},
+    {'action': 'unresolved', 'item_id': None},
+    {'action': 'merge'}, {'reason': ''}, {'reason': '   '}, {'reason': 1},
+    {'evidence': []},
 ])
-def test_invalid_decisions_never_select_or_fall_through_to_create(engine, result):
+def test_invalid_decisions_never_select_or_fall_through_to_create(engine, invalid):
     doc = document()
     engine.db_api_service.search_entities.return_value = {'items': [candidate()]}
     engine.db_api_service.get_entity_info.return_value = candidate()
-    engine.llm_prompter.return_value = result()
+    payload = {'action': 'select', 'source_is_person': True, 'item_id': 0,
+               'name': 'Karel Čapek', 'reason': 'Supplied source context supports this person.'}
+    engine.llm_prompter.return_value = dict(payload, **invalid)
     with pytest.raises(RuntimeError):
         engine.process_document(doc)
     engine.db_api_service.create_entity.assert_not_called()
@@ -218,7 +218,7 @@ def test_positive_different_being_evidence_can_create(engine):
     doc = document()
     engine.db_api_service.search_entities.return_value = {'items': [candidate(description='French painter')]}
     engine.db_api_service.get_entity_info.return_value = candidate(description='French painter')
-    engine.llm_prompter.return_value = decision('create', evidence=[comparison(candidate='French painter')])
+    engine.llm_prompter.return_value = decision('create')
     engine.process_document(doc)
     assert doc.text_entity_clusters[0].identity.peoplegator_id == 'created'
 
@@ -248,7 +248,7 @@ def test_non_person_candidate_cannot_be_selected(engine):
     doc = document()
     engine.db_api_service.search_entities.return_value = {'items': [candidate(entity_type='organization')]}
     engine.db_api_service.get_entity_info.return_value = candidate(entity_type='organization')
-    engine.llm_prompter.return_value = decision('select', 0, evidence=[comparison()])
+    engine.llm_prompter.return_value = decision('select', 0)
     with pytest.raises(RuntimeError):
         engine.process_document(doc)
     engine.db_api_service.create_entity.assert_not_called()
@@ -329,7 +329,7 @@ def test_distinct_homonymous_clusters_not_collapsed(engine):
     doc = document()
     other = add_cluster(doc)
     engine.db_api_service.create_entity.side_effect = [{'entity_id': 'writer'}, {'entity_id': 'painter'}]
-    engine.llm_prompter.side_effect = [decision('create'), decision('create', evidence=[comparison(source='French painter', candidate='Czech writer')])]
+    engine.llm_prompter.side_effect = [decision('create'), decision('create')]
     original_clusters = list(doc.text_entity_clusters)
     engine.process_document(doc)
     assert doc.text_entity_clusters == original_clusters
@@ -341,7 +341,7 @@ def test_distinct_homonymous_clusters_not_collapsed(engine):
 def test_search_lag_reuses_created_entity_only_with_context(engine):
     doc = document()
     other = add_cluster(doc, description='Czech writer')
-    engine.llm_prompter.side_effect = [decision('create'), decision('select', 0, evidence=[comparison()])]
+    engine.llm_prompter.side_effect = [decision('create'), decision('select', 0)]
     engine.process_document(doc)
     assert other.identity.peoplegator_id == doc.text_entity_clusters[0].identity.peoplegator_id == 'created'
     assert len(doc.text_entity_clusters) == 2
@@ -499,28 +499,13 @@ def test_db_helpers_preserve_string_query_and_support_multi_term_metadata():
     assert payload['aliases'] == [] and payload['description'] == payload['short_description'] == ''
 
 
-def test_name_only_candidate_is_unresolved_without_descriptive_proof(engine):
+def test_llm_unresolved_name_only_candidate_does_not_create(engine):
     doc = face_only(identity())
     engine.db_api_service.search_entities.return_value = {'items': [candidate(description='')]}
     engine.db_api_service.get_entity_info.return_value = candidate(description='')
     engine.llm_prompter.return_value = decision()
     engine.process_document(doc)
     assert doc.faces[0].face_metadata.page_identity.identity.peoplegator_id is None
-    engine.db_api_service.create_entity.assert_not_called()
-
-
-def test_create_against_candidates_requires_differences_for_every_hit(engine):
-    doc = document()
-    engine.db_api_service.search_entities.return_value = {'items': [candidate('one'), candidate('two')]}
-    engine.db_api_service.get_entity_info.side_effect = lambda i: candidate(i, description='French painter')
-    engine.llm_prompter.return_value = decision('create', evidence=[comparison(candidate='French painter')])
-    with pytest.raises(RuntimeError):
-        engine.process_document(doc)
-    engine.db_api_service.create_entity.assert_not_called()
-    engine.db_api_service.get_entity_info.side_effect = lambda i: candidate(i)
-    engine.llm_prompter.return_value = decision('create', evidence=[comparison(0), comparison(1)])
-    with pytest.raises(RuntimeError):
-        engine.process_document(doc)
     engine.db_api_service.create_entity.assert_not_called()
 
 
@@ -647,17 +632,23 @@ def test_strict_schema_and_decision_validation_reject_forged_model_instances(eng
     from people_gator.engines.entity_matching import EntityMatchingResult
     doc = document()
     engine.llm_prompter.return_value = EntityMatchingResult.model_construct(
-        action='create', source_is_person=True, item_id=None, name='Karel Čapek', reason='valid', evidence='bad')
+        action='select', source_is_person=True, item_id=True, name='Karel Čapek', reason='valid')
     with pytest.raises(RuntimeError):
         engine.process_document(doc)
     engine.db_api_service.create_entity.assert_not_called()
     schema = EntityMatchingResult.model_json_schema()
     assert schema['additionalProperties'] is False
     assert schema['properties']['action']['enum'] == ['select', 'create', 'unresolved']
-    assert all(k in schema['required'] for k in ['evidence', 'reason', 'source_is_person'])
+    assert set(schema['required']) == {'action', 'source_is_person', 'item_id', 'name', 'reason'}
+    assert set(schema['properties']) == set(schema['required'])
 
 
-def test_documented_external_prompt_renders_new_context_and_typed_provider_schema(engine, monkeypatch, tmp_path):
+@pytest.mark.parametrize('action, with_candidates, expected', [
+    ('select', True, 'existing'), ('create', True, 'created'),
+    ('unresolved', True, None), ('create', False, 'created'),
+])
+def test_documented_external_prompt_renders_new_context_and_typed_provider_schema(
+        engine, monkeypatch, tmp_path, action, with_candidates, expected):
     from people_gator.engines import llm
     from people_gator.engines.entity_matching import EntityMatchingResult
     guide = (Path(__file__).parents[1] / 'docs' / 'PROCESSING.md').read_text()
@@ -670,7 +661,10 @@ def test_documented_external_prompt_renders_new_context_and_typed_provider_schem
                                   'API_URL': 'https://example.invalid', 'API_KEY': 'private', 'MODEL_NAME': 'mock'}})
     from people_gator.core.document_parser import engine_factory
     e = engine_factory(config['ENGINE_1'], str(tmp_path), 'cpu', engine.db_api_service)
-    payload = decision('create').model_dump()
+    if with_candidates:
+        engine.db_api_service.search_entities.return_value = {'items': [candidate()]}
+        engine.db_api_service.get_entity_info.return_value = candidate()
+    payload = decision(action, 0 if action == 'select' else None).model_dump()
     create = Mock(return_value=NS(status='completed', output_text=json.dumps(payload)))
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=create))))
     doc = document()
@@ -679,23 +673,20 @@ def test_documented_external_prompt_renders_new_context_and_typed_provider_schem
     assert request['text']['format']['schema'] == EntityMatchingResult.model_json_schema()
     rendered = request['input'][1]['content'][0]['text']
     assert 'SOURCE EVIDENCE:' in rendered and 'source_spans' in rendered
-    assert 'CANDIDATES: []' in rendered
-    assert 'unresolved' in request['input'][0]['content'][0]['text']
-    assert doc.text_entity_clusters[0].identity.peoplegator_id == 'created'
-
-
-@pytest.mark.parametrize('quote', ['Karel', 'Karel Čapek,', 'Čapek', ','])
-@pytest.mark.parametrize('side', ['source', 'candidate'])
-def test_partial_names_and_punctuation_do_not_count_as_contextual_proof(engine, quote, side):
-    doc = document()
-    engine.db_api_service.search_entities.return_value = {'items': [candidate()]}
-    engine.db_api_service.get_entity_info.return_value = candidate(description='Karel Čapek, Czech writer')
-    evidence = comparison(source=quote) if side == 'source' else comparison(candidate=quote)
-    engine.llm_prompter.return_value = decision('select', 0, evidence=[evidence])
-    with pytest.raises(RuntimeError):
-        engine.process_document(doc)
-    assert doc.text_entity_clusters[0].identity is None
-    engine.db_api_service.create_entity.assert_not_called()
+    if with_candidates:
+        candidate_data = json.loads(rendered.split('CANDIDATES: ', 1)[1])
+        assert candidate_data[0]['entity_id'] == 'existing'
+        assert candidate_data[0]['description'] == 'Czech writer'
+        assert candidate_data[0]['aliases'] == ['K. Čapek']
+    else:
+        assert 'CANDIDATES: []' in rendered
+    system = request['input'][0]['content'][0]['text']
+    assert 'return unresolved' in system and 'genuinely different person' in system
+    assert 'equal descriptions do not prove identity' in system
+    assert 'different descriptions do not prove distinct people' in system
+    assert 'equivalent duplicate records' in system
+    result = doc.text_entity_clusters[0].identity
+    assert (result.peoplegator_id if result else None) == expected
 
 
 @pytest.mark.parametrize('fmt', ['alto', 'page'])
@@ -741,3 +732,63 @@ def test_mixed_linking_preserves_ocr_and_face_xml_contract(engine, fmt, tmp_path
     expected['page_identity']['identity']['peoplegator_id'] = 'created'
     assert f.face_metadata.to_dict() == expected
     assert len(doc.text_entity_clusters) == 1
+
+
+@pytest.mark.parametrize('description', [
+    'Czech writer', 'Unrelated short database description',
+    'Czech writer.\nWorks include R.U.R.; česky: spisovatel.', '', None,
+])
+@pytest.mark.parametrize('action', ['select', 'create', 'unresolved'])
+def test_llm_decision_controls_linking_without_description_comparisons(engine, description, action):
+    doc = document()
+    c = candidate(description=description)
+    engine.db_api_service.search_entities.return_value = {'items': [c]}
+    engine.db_api_service.get_entity_info.return_value = c
+    # No quoted evidence is part of the revised response contract. The LLM owns
+    # the semantic assessment even when descriptions match, differ or are absent.
+    engine.llm_prompter.return_value = {
+        'action': action, 'source_is_person': True,
+        'item_id': 0 if action == 'select' else None,
+        'name': 'Karel Čapek' if action != 'unresolved' else None,
+        'reason': 'Model assessment of the supplied names, aliases and context.',
+    }
+    assert engine.process_document(doc) is doc
+    result = doc.text_entity_clusters[0].identity
+    expected = {'select': 'existing', 'create': 'created', 'unresolved': None}[action]
+    assert (result.peoplegator_id if result else None) == expected
+    data = engine.llm_prompter.call_args.kwargs['data']
+    assert data['entities'][0]['description'] == description
+    assert data['entities'][0]['aliases'] == ['K. Čapek']
+    assert data['context']['description'] == 'Czech writer'
+    assert data['context']['sources'][0]['context'] == doc.text_entities[0].text
+    if action == 'create':
+        engine.db_api_service.create_entity.assert_called_once()
+    else:
+        engine.db_api_service.create_entity.assert_not_called()
+
+
+def test_equivalent_duplicate_app_records_can_be_selected_without_merging(engine):
+    doc = document()
+    candidates = [candidate('duplicate-a'), candidate('duplicate-b')]
+    engine.db_api_service.search_entities.return_value = {'items': candidates}
+    engine.db_api_service.get_entity_info.side_effect = lambda i: next(c for c in candidates if c['entity_id'] == i)
+    engine.llm_prompter.return_value = {
+        'action': 'select', 'source_is_person': True, 'item_id': 1,
+        'name': 'Karel Čapek', 'reason': 'This existing person matches the source; duplicate cleanup is separate.',
+    }
+    engine.process_document(doc)
+    cluster = doc.text_entity_clusters[0]
+    assert cluster.identity.peoplegator_id == 'duplicate-b'
+    assert all(m.page_identity.identity.peoplegator_id == 'duplicate-b' for m in cluster.text_entities)
+    assert len(engine.llm_prompter.call_args.kwargs['data']['entities']) == 2
+    assert all(name in {'search_entities', 'get_entity_info'} for name, _, _ in engine.db_api_service.mock_calls)
+
+
+
+def test_selection_without_search_hits_fails_without_creation(engine):
+    doc = document()
+    engine.llm_prompter.return_value = decision('select', 0)
+    with pytest.raises(RuntimeError):
+        engine.process_document(doc)
+    assert doc.text_entity_clusters[0].identity is None
+    engine.db_api_service.create_entity.assert_not_called()

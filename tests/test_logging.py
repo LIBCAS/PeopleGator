@@ -200,8 +200,7 @@ def test_matching_candidates_preserve_identity(processing, count, caplog):
     action = "create" if count == 0 else "select" if count == 1 else "unresolved"
     engine.llm_prompter = Mock(return_value=EntityMatchingResult(
         action=action, source_is_person=True, item_id=0 if count == 1 else None,
-        name="private-name" if count != 3 else None, reason="Supplied source evidence",
-        evidence=[{"item_id": 0, "source_quote": "Czech writer", "candidate_quote": "Czech writer"}] if count == 1 else []))
+        name="private-name" if count != 3 else None, reason="Supplied source evidence"))
     with caplog.at_level(logging.DEBUG):
         assert engine.process_page(page) is page
     assert identity.peoplegator_id == ("new" if count == 0 else "0" if count == 1 else None)

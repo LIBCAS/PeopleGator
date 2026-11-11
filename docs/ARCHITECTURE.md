@@ -156,9 +156,12 @@ original document into page request preparation in every execution mode. See
 
 `ENTITY_MATCHING` resolves original document text clusters and named faces using
 shared `PeopleGatorIdentity` references or unique source-mapped caption evidence.
-It retrieves/hydrates app candidates, validates explicit typed select/create/
-unresolved decisions, and propagates successful IDs without rebuilding clusters
-or replacing protected links/local identity metadata. The existing factory,
+It supplies names, aliases, descriptions and source context to the LLM for
+semantic select/create/unresolved decisions. The engine validates only response
+structure and candidate references; it does not compare description contents or
+quoted fragments. Equivalent duplicate app records may be selected; app record
+merging/cleanup stays with human/application workflows. Successful IDs propagate
+without rebuilding clusters or replacing protected links/local identity metadata. The existing factory,
 shared `[DB_API]` client and external prompt conventions remain in use. Creation
 receipts on the document protect same-document retries after uncertain writes;
 there is no durable journal or server idempotency guarantee. See

@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass, field
 import logging
-import re
 import unicodedata
 from typing import Literal
 
@@ -53,28 +52,6 @@ def _name_keys(names):
     return {' '.join(unicodedata.normalize('NFKC', n).casefold().split()) for n in _strings(names)}
 
 
-def _name_only(quote, names):
-    """Reject punctuation-only evidence and fragments composed only of name tokens.
-
-    Args:
-        quote: Claimed contextual evidence, already checked against original text.
-        names: Supplied canonical name and aliases for that side of the comparison.
-    """
-    tokens = set(re.findall(r'\w+', unicodedata.normalize('NFKC', quote).casefold()))
-    name_tokens = {token for name in _strings(names)
-                   for token in re.findall(r'\w+', unicodedata.normalize('NFKC', name).casefold())}
-    return not tokens or tokens <= name_tokens
-
-
-class EntityMatchingEvidence(BaseModel):
-    """Verbatim contextual evidence comparing the source with one candidate."""
-
-    item_id: int
-    source_quote: str
-    candidate_quote: str
-    model_config = ConfigDict(extra='forbid', strict=True, revalidate_instances='always')
-
-
 class EntityMatchingResult(BaseModel):
     """An explicit selection, justified creation or unresolved person decision."""
 
@@ -83,7 +60,6 @@ class EntityMatchingResult(BaseModel):
     item_id: int | None
     name: str | None
     reason: str
-    evidence: list[EntityMatchingEvidence]
     model_config = ConfigDict(extra='forbid', strict=True, revalidate_instances='always')
 
     @field_validator('reason')
@@ -102,8 +78,8 @@ class EntityMatchingResult(BaseModel):
     def validate_action(self):
         """Reject contradictory action fields, even without provider enforcement."""
         if self.action == 'unresolved':
-            if self.item_id is not None or self.name is not None or self.evidence:
-                raise ValueError('Unresolved decisions must not specify a candidate or evidence')
+            if self.item_id is not None or self.name is not None:
+                raise ValueError('Unresolved decisions must not specify a candidate')
         elif not self.source_is_person or not _text(self.name):
             raise ValueError('Linking requires a named person source')
         elif self.action == 'select' and (self.item_id is None or self.item_id < 0):
@@ -393,7 +369,7 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
         return result
 
     def match_entity(self, name, caption, db_entities):
-        """Validate typed decisions and require grounded contextual comparisons.
+        """Supply evidence to the LLM and validate decision structure and references.
 
         Args:
             name: Canonical source proposal.
@@ -415,32 +391,13 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
             return result
         if not result.source_is_person:
             raise ValueError('Non-person decision cannot link or create')
-        facts = _strings([*source.get('descriptions', []), *source.get('captions', []),
-                          *(s['context'] for s in source.get('sources', []))])
-        supported = set()
-        for evidence in result.evidence:
-            index = evidence.item_id
-            if not 0 <= index < len(entities):
-                raise ValueError('Evidence candidate is outside request')
-            candidate = entities[index]
-            candidate_facts = _strings([candidate.get('description'), candidate.get('short_description')])
-            if (not _text(evidence.source_quote) or not _text(evidence.candidate_quote)
-                    or not any(evidence.source_quote in text for text in facts)
-                    or not any(evidence.candidate_quote in text for text in candidate_facts)
-                    or _name_only(evidence.source_quote, [name, *source.get('aliases', [])])
-                    or _name_only(evidence.candidate_quote, [candidate['name'], *(candidate.get('aliases') or [])])):
-                raise ValueError('Decision lacks grounded contextual evidence')
-            if (result.action == 'create'
-                    and _name_keys([evidence.source_quote]) == _name_keys([evidence.candidate_quote])):
-                raise ValueError('Identical evidence does not justify a different being')
-            supported.add(index)
         if result.action == 'select':
             index = result.item_id
-            if (index is None or not 0 <= index < len(entities) or supported != {index}
+            if (index is None or not 0 <= index < len(entities)
                     or result.name != entities[index]['name'] or entities[index]['entity_type'] != 'person'):
                 raise ValueError('Invalid candidate selection')
-        elif (result.item_id is not None or result.name != name or supported != set(range(len(entities)))):
-            raise ValueError('Create requires affirmative differences from every candidate')
+        elif result.item_id is not None or result.name != name:
+            raise ValueError('Invalid creation proposal')
         return result
 
     @staticmethod

@@ -306,4 +306,10 @@ python -m compileall -q people_gator processing_api user_scripts
 ```
 
 No live app/model, private OCR or GPU is needed. Mocked decisions prove structural,
-quote and propagation checks, not semantic identity accuracy for a real corpus.
+reference and propagation checks, not semantic identity accuracy for a real corpus.
+Regression cases keep description content as LLM input: explicit select/create/
+unresolved outcomes are honored with equal, different, multiline or absent app
+descriptions, without deterministic quotation rules. Equivalent duplicate app
+records can be selected without database merging. Schema/reference checks still
+reject malformed actions, invalid indices/names/types and unsupported legacy
+`evidence` response fields before any unintended creation.
