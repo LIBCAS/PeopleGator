@@ -747,9 +747,11 @@ face ordering, relative coordinates, result models and identity persistence
 remain the same. Batch result mapping requires the complete supplied coordinate
 pair, rejecting partial coordinates rather than matching their prefix. Single-face requests consume the shared prompter's structured
 `FaceAssignmentResult` or `None` directly. In both engines, a missing response
-or a null `name_normalized` leaves the existing name, identity object and app/
-authority IDs unchanged. A positive normalized-name prediction retains the
-existing name-update behavior; no manual/verified-state fields are introduced.
+or a null, empty or whitespace-only `name_normalized` leaves the existing name,
+identity object and app/authority IDs unchanged. Only strings with non-whitespace
+content are applied; their original spelling and whitespace are retained.
+The external response models and generated JSON schemas remain unchanged, and
+no manual/verified-state fields are introduced.
 A page without OCR uses zero context margins.
 
 Both engines use the same image-relative selection policy, also in sequential,

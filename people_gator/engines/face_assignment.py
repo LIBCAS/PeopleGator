@@ -201,7 +201,7 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         return face_data
 
     def update_layout(self, page_layout, face_data: list[FaceAssignmentData]):
-        """Apply non-null names and preserve existing identities on null predictions.
+        """Apply nonblank names and preserve existing identities on unresolved predictions.
 
         Args:
             page_layout: Page layout supplying regions, OCR, or source references.
@@ -219,8 +219,9 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                     logger.warning('Face region %s has no face metadata, skipping update.', face_region.id)
                     continue
 
-                if face_item.result.name_normalized is not None:
-                    face_region.face_metadata.page_identity.identity.name = face_item.result.name_normalized
+                name = face_item.result.name_normalized
+                if isinstance(name, str) and name.strip():
+                    face_region.face_metadata.page_identity.identity.name = name
 
         return page_layout
 
@@ -487,7 +488,7 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         return face_data
 
     def update_layout(self, face_data: list[BatchFaceAssignmentData]):
-        """Apply non-null names and preserve existing identities on null predictions.
+        """Apply nonblank names and preserve existing identities on unresolved predictions.
 
         Args:
             face_data: Prepared face request objects with optional assignment results.
@@ -511,5 +512,6 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                         logger.warning('Face region %s has no face metadata, skipping update.', target_face_region.id)
                         continue
 
-                    if face_result.name_normalized is not None:
-                        target_face_region.face_metadata.page_identity.identity.name = face_result.name_normalized
+                    name = face_result.name_normalized
+                    if isinstance(name, str) and name.strip():
+                        target_face_region.face_metadata.page_identity.identity.name = name

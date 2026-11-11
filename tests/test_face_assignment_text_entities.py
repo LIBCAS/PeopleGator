@@ -490,7 +490,8 @@ def test_text_only_metadata_evidence_fallback_and_page_only_caller():
 
 
 @pytest.mark.parametrize('mode', ['single', 'sequential', 'page_parallel', 'document_parallel'])
-def test_null_predictions_preserve_existing_face_identities(tmp_path, mode):
+@pytest.mark.parametrize('unresolved_name', [None, '', '   ', '\t\r\n', '\u00a0\u2003'])
+def test_unresolved_predictions_preserve_existing_face_identities(tmp_path, mode, unresolved_name):
     from people_gator.engines.face_assignment import FaceAssignmentResult, BatchFaceAssignmentResult
     doc, _ = engine_document()
     faces = doc.page_layouts[0].regions[1:]
@@ -499,23 +500,24 @@ def test_null_predictions_preserve_existing_face_identities(tmp_path, mode):
         identity.name = f'Existing {i}' if i % 2 == 0 else None
         identity.peoplegator_id = f'app-{i}'
         identity.other_ids = {'authority': str(i)}
-    before = [identity.__dict__.copy() for identity in identities]
+    before = [deepcopy(identity.__dict__) for identity in identities]
     engine = make_engine(tmp_path, mode)
 
     def predict(data, images, response_model):
         if mode == 'single':
-            name = data['caption_text'] if data['face_coordinates'][0] == 40 else None
-            return FaceAssignmentResult(name_in_text=name, name_normalized=name)
+            positive = data['face_coordinates'][0] == 40
+            name = f" {data['caption_text']} " if positive else unresolved_name
+            return FaceAssignmentResult(name_in_text=data['caption_text'] if positive else None, name_normalized=name)
         return BatchFaceAssignmentResult(faces=[dict(id=f['id'], coordinates=f['coordinates'],
             name_in_text=data['caption_text'] if f['id'] else None,
-            name_normalized=data['caption_text'] if f['id'] else None) for f in reversed(data['faces'])])
+            name_normalized=f" {data['caption_text']} " if f['id'] else unresolved_name) for f in reversed(data['faces'])])
 
     engine.llm_prompter = Mock(side_effect=predict)
     engine.llm_prompter.process.side_effect = predict
     engine.llm_prompter.process_parallel.side_effect = lambda data_list, images_list, response_model: [
         predict(d, i, response_model) for d, i in zip(data_list, images_list)]
     assert engine.process_document(doc) is doc
-    assert [identity.name for identity in identities] == ['Existing 0', 'Caption A', 'Existing 2', 'Caption B']
+    assert [identity.name for identity in identities] == ['Existing 0', ' Caption A ', 'Existing 2', ' Caption B ']
     for i, (face, identity) in enumerate(zip(faces, identities)):
         assert face.face_metadata.page_identity.identity is identity
         if i % 2 == 0:
