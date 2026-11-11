@@ -336,8 +336,9 @@ def test_caption_language_dictionaries_shared_between_engines(key):
 
 
 def migration_prompt():
-    text = (Path(__file__).resolve().parents[1] / 'docs' / 'PROCESSING.md').read_text()
-    return json.loads(text.split('### Migrating external face prompts')[1].split('```json\n')[1].split('\n```')[0])
+    # Historical incomplete fragment: a test fixture, never a deployable prompt.
+    path = Path(__file__).parent / 'resources' / 'face_assignment' / 'migration_fragment.json'
+    return json.loads(path.read_text(encoding='utf-8'))
 
 
 @pytest.mark.parametrize('branch', ['caption', 'fallback', 'empty'])
