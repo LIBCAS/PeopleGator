@@ -1008,6 +1008,10 @@ class PeopleGatorDocument:
 
         self.text_entity_clusters: list[PeopleGatorTextEntityCluster] = text_entity_clusters if text_entity_clusters is not None else []
 
+        # In-memory mutation receipts, retained across retries of this document.
+        # Targets are original objects, not names or database-ID cluster groups.
+        self.entity_linking_journal: list[dict] = []
+
         self.page_images = page_images if page_images is not None else {}
         self.page_images_dir: str|None = page_images_dir
 
@@ -1244,14 +1248,58 @@ class PeopleGatorDocument:
 
         self.text_entity_clusters = clusters
 
-    def distribute_text_entity_identities(self):
-        """Copy each cluster identity back to its member text mentions."""
-        for cluster in self.text_entity_clusters:
-            for text_entity in cluster.text_entities:
-                if text_entity.page_identity is None:
-                    text_entity.page_identity = PeopleGatorPageIdentity(tag_id=None, mods_id=None, identity=cluster.identity)
-                else:
-                    text_entity.page_identity.identity = cluster.identity
+    def distribute_text_entity_identities(self, clusters=None):
+        """Propagate resolved IDs without replacing protected links or local metadata.
+
+        Args:
+            clusters: Optional subset of original clusters; None uses all clusters.
+
+        Unresolved/conflicting clusters remain unchanged. New page wrappers get
+        unique nonblank XML identifiers. Existing identity objects, names, external
+        IDs and page-local provenance are retained; only missing app IDs are filled.
+        """
+        pages = {id(m): page for page in self.page_layouts for m in page.text_entities}
+        for cluster in self.text_entity_clusters if clusters is None else clusters:
+            identity = cluster.identity
+            if identity is None or identity.peoplegator_id is None:
+                continue
+            protected = {m.page_identity.identity.peoplegator_id for m in cluster.text_entities
+                         if m.page_identity and m.page_identity.identity
+                         and m.page_identity.identity.peoplegator_id is not None}
+            if protected - {identity.peoplegator_id}:
+                logger.warning('Text cluster has conflicting protected IDs; distribution skipped')
+                continue
+            for mention in cluster.text_entities:
+                if mention.page_identity is None:
+                    page = pages.get(id(mention))
+                    if page is None:
+                        continue
+                    tag_id, mods_id = new_text_identity_ids(page)
+                    mention.page_identity = PeopleGatorPageIdentity(tag_id, mods_id, identity)
+                elif mention.page_identity.identity is None:
+                    mention.page_identity.identity = identity
+                elif mention.page_identity.identity.peoplegator_id is None:
+                    mention.page_identity.identity.peoplegator_id = identity.peoplegator_id
+
+
+def new_text_identity_ids(page):
+    """Allocate unused page-local tag and MODS IDs for a text identity wrapper.
+
+    Args:
+        page: Original page containing OCR, faces and existing local identity tags.
+    """
+    used = {region.id for region in page.regions}
+    metadata = [getattr(region, 'graphical_metadata', None) for region in page.regions]
+    metadata.extend(getattr(region, 'face_metadata', None) for region in page.regions)
+    metadata.extend(getattr(item, 'page_identity', None) for item in list(metadata) if item is not None)
+    metadata.extend(m.page_identity for m in page.text_entities)
+    for item in metadata:
+        if item is not None:
+            used.update((getattr(item, 'tag_id', None), getattr(item, 'mods_id', None)))
+    index = 1
+    while f'person_text_{index:03}' in used or f'MODS_PERSON_TEXT_{index:04}' in used:
+        index += 1
+    return f'person_text_{index:03}', f'MODS_PERSON_TEXT_{index:04}'
 
 
 def remove_peoplegator_elements(alto_root):

@@ -184,16 +184,24 @@ def test_llm_success_after_retry(processing, monkeypatch, caplog):
 def test_matching_candidates_preserve_identity(processing, count, caplog):
     from people_gator.engines.entity_matching import EntityMatchingEngine
 
-    face = processing.PeopleGatorFaceRegionLayout("face1", None, None, None)
+    from people_gator.engines.entity_matching import EntityMatchingResult
+    face = processing.PeopleGatorFaceRegionLayout("face1", None, None,
+        SimpleNamespace(graphical_metadata=SimpleNamespace(title="Czech writer")))
     identity = processing.PeopleGatorIdentity("private-name", None)
     face.face_metadata = SimpleNamespace(identity_name="private-name", page_identity=SimpleNamespace(identity=identity))
-    page = SimpleNamespace(id="P1", regions=[face])
+    page = SimpleNamespace(id="P1", regions=[face], text_entities=[])
     engine = object.__new__(EntityMatchingEngine)
-    candidates = [{"entity_id": str(i)} for i in range(count)]
+    candidates = [{"entity_id": str(i), "entity_type": "person", "name": "private-name",
+                   "description": "Czech writer", "aliases": []} for i in range(count)]
     engine.db_api_service = Mock()
     engine.db_api_service.search_entities.return_value = {"items": candidates}
+    engine.db_api_service.get_entity_info.side_effect = lambda i: candidates[int(i)]
     engine.db_api_service.create_entity.return_value = {"entity_id": "new"}
-    engine.match_entity = Mock(return_value=candidates)
+    action = "create" if count == 0 else "select" if count == 1 else "unresolved"
+    engine.llm_prompter = Mock(return_value=EntityMatchingResult(
+        action=action, source_is_person=True, item_id=0 if count == 1 else None,
+        name="private-name" if count != 3 else None, reason="Supplied source evidence",
+        evidence=[{"item_id": 0, "source_quote": "Czech writer", "candidate_quote": "Czech writer"}] if count == 1 else []))
     with caplog.at_level(logging.DEBUG):
         assert engine.process_page(page) is page
     assert identity.peoplegator_id == ("new" if count == 0 else "0" if count == 1 else None)

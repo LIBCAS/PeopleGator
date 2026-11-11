@@ -223,7 +223,8 @@ def test_all_engine_response_models_keep_existing_shared_request_contract(method
         'LLM_BATCH_FACE_ASSIGNMENT': (BatchFaceAssignmentResult,
             {'faces': [], 'context_text': 'private-payload-value', 'caption_text': ''}, {'faces': []}),
         'ENTITY_MATCHING': (EntityMatchingResult,
-            {'name': 'private-payload-value', 'context': '', 'entities': []}, {'item_id': None, 'name': None}),
+            {'name': 'private-payload-value', 'context': '', 'entities': []}, {'action': 'unresolved', 'source_is_person': True, 'item_id': None, 'name': None,
+                                                                        'reason': 'Insufficient evidence', 'evidence': []}),
         'TEXT_ENTITY_DETECTION': (TextEntityDetectionResult, {'text': 'private-payload-value'}, {'entities': []}),
     }
     model, data, payload = cases[method]
