@@ -487,3 +487,110 @@ def test_text_only_metadata_evidence_fallback_and_page_only_caller():
     src = source('Portrait of Karel Čapek.')
     record = FaceEntityContext().select(p, src, (0, 0, 50, 50), src.graphical_metadata.title)['caption_entities'][0]
     assert record['name'] == 'Karel\nČapek' and record['page_index'] == 0
+
+
+@pytest.mark.parametrize('mode', ['single', 'sequential', 'page_parallel', 'document_parallel'])
+def test_null_predictions_preserve_existing_face_identities(tmp_path, mode):
+    from people_gator.engines.face_assignment import FaceAssignmentResult, BatchFaceAssignmentResult
+    doc, _ = engine_document()
+    faces = doc.page_layouts[0].regions[1:]
+    identities = [f.face_metadata.page_identity.identity for f in faces]
+    for i, identity in enumerate(identities):
+        identity.name = f'Existing {i}' if i % 2 == 0 else None
+        identity.peoplegator_id = f'app-{i}'
+        identity.other_ids = {'authority': str(i)}
+    before = [identity.__dict__.copy() for identity in identities]
+    engine = make_engine(tmp_path, mode)
+
+    def predict(data, images, response_model):
+        if mode == 'single':
+            name = data['caption_text'] if data['face_coordinates'][0] == 40 else None
+            return FaceAssignmentResult(name_in_text=name, name_normalized=name)
+        return BatchFaceAssignmentResult(faces=[dict(id=f['id'], coordinates=f['coordinates'],
+            name_in_text=data['caption_text'] if f['id'] else None,
+            name_normalized=data['caption_text'] if f['id'] else None) for f in reversed(data['faces'])])
+
+    engine.llm_prompter = Mock(side_effect=predict)
+    engine.llm_prompter.process.side_effect = predict
+    engine.llm_prompter.process_parallel.side_effect = lambda data_list, images_list, response_model: [
+        predict(d, i, response_model) for d, i in zip(data_list, images_list)]
+    assert engine.process_document(doc) is doc
+    assert [identity.name for identity in identities] == ['Existing 0', 'Caption A', 'Existing 2', 'Caption B']
+    for i, (face, identity) in enumerate(zip(faces, identities)):
+        assert face.face_metadata.page_identity.identity is identity
+        if i % 2 == 0:
+            assert identity.__dict__ == before[i]
+        else:
+            assert identity.peoplegator_id == before[i]['peoplegator_id']
+            assert identity.other_ids == before[i]['other_ids']
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_assigned_captions_sharing_one_ocr_line_select_only_their_characters(legacy):
+    text = 'Image A: Alice Smith. Image B: Bob Jones.'
+    p = page(line(text))
+    mention(p, 0, name='Alice Smith', legacy=legacy)
+    mention(p, 0, name='Bob Jones', legacy=legacy)
+    for title, name in [('Image A: Alice Smith.', 'Alice Smith'), ('Image B: Bob Jones.', 'Bob Jones')]:
+        result = select([p], source(title, [p.regions[0].lines[0]]))
+        assert names(result['caption_entities']) == [name]
+        assert result['caption_entities'][0]['source_spans'][0]['start'] == text.index(name)
+        assert all(result[key] == [] for key in ['surrounding_entities', 'page_entities', 'document_entities'])
+
+
+@pytest.mark.parametrize('title', [None, 'A paraphrased caption', 'Portrait: Alice.'])
+def test_caption_lines_without_unique_character_association_use_fallback(title):
+    from people_gator.text import SourceSpan
+    p = page(line('Portrait: Alice. Portrait: Alice.'))
+    first = mention(p, 0, name='Alice')
+    second = mention(p, 0, name='Alice')
+    start = p.regions[0].lines[0].transcription.rindex('Alice')
+    second.source_spans = (SourceSpan(first.source_spans[0].source, start, start + len('Alice')),)
+    result = select([p], source(title, [p.regions[0].lines[0]]))
+    assert result['caption_entities'] == []
+    assert names(result['surrounding_entities']) == ['Alice', 'Alice']
+    assert names(result['page_entities']) == ['Alice', 'Alice']
+
+
+@pytest.mark.parametrize('kind', ['empty', 'foreign', 'stale', 'untranscribed', 'none'])
+@pytest.mark.parametrize('repeated', [False, True])
+def test_unusable_caption_lines_try_title_mapping_without_weakening_ambiguity(kind, repeated):
+    p = page(line('Image A: Alice Smith.'), line('Image B: Bob Jones.', y=90))
+    mention(p, 0, name='Alice Smith')
+    mention(p, 0, 1, name='Bob Jones')
+    if repeated:
+        p.regions[0].lines.append(line('Image A: Alice Smith.', y=100))
+        mention(p, 0, 2, name='Alice Smith')
+    refs = []
+    if kind == 'foreign':
+        refs = [line('Image A: Alice Smith.')]
+    elif kind == 'stale':
+        old = p.regions[0].lines[0]
+        p.regions[0].lines[0] = line(old.transcription)
+        refs = [old]
+    elif kind == 'untranscribed':
+        empty = line(None)
+        p.regions[0].lines.append(empty)
+        refs = [empty]
+    src = source('Image A: Alice Smith.', refs)
+    if kind == 'none':
+        src.graphical_metadata.caption_lines_metadata.lines = None
+    result = select([p], src)
+    assert names(result['caption_entities']) == ([] if repeated else ['Alice Smith'])
+    if repeated:
+        assert names(result['page_entities']) == ['Alice Smith', 'Bob Jones', 'Alice Smith']
+
+
+def test_unusable_caption_lines_allow_safe_text_evidence_fallback():
+    p = page(line('Alice Smith'))
+    mention(p, 0)
+    assert names(select([p], source('Portrait of Alice Smith.', []))['caption_entities']) == ['Alice Smith']
+
+
+def test_usable_caption_references_do_not_borrow_another_lines_title():
+    p = page(line('Image A: Alice Smith.'), line('Image B: Bob Jones.', y=90))
+    mention(p, 0, name='Alice Smith')
+    mention(p, 0, 1, name='Bob Jones')
+    result = select([p], source('Image B: Bob Jones.', [p.regions[0].lines[0]]))
+    assert result['caption_entities'] == []
+    assert names(result['page_entities']) == ['Alice Smith', 'Bob Jones']

@@ -201,7 +201,7 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         return face_data
 
     def update_layout(self, page_layout, face_data: list[FaceAssignmentData]):
-        """Apply available name predictions to matching face identities in place.
+        """Apply non-null names and preserve existing identities on null predictions.
 
         Args:
             page_layout: Page layout supplying regions, OCR, or source references.
@@ -219,7 +219,8 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                     logger.warning('Face region %s has no face metadata, skipping update.', face_region.id)
                     continue
 
-                face_region.face_metadata.page_identity.identity.name = face_item.result.name_normalized
+                if face_item.result.name_normalized is not None:
+                    face_region.face_metadata.page_identity.identity.name = face_item.result.name_normalized
 
         return page_layout
 
@@ -486,7 +487,7 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         return face_data
 
     def update_layout(self, face_data: list[BatchFaceAssignmentData]):
-        """Apply available name predictions to matching face identities in place.
+        """Apply non-null names and preserve existing identities on null predictions.
 
         Args:
             face_data: Prepared face request objects with optional assignment results.
@@ -510,4 +511,5 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                         logger.warning('Face region %s has no face metadata, skipping update.', target_face_region.id)
                         continue
 
-                    target_face_region.face_metadata.page_identity.identity.name = face_result.name_normalized
+                    if face_result.name_normalized is not None:
+                        target_face_region.face_metadata.page_identity.identity.name = face_result.name_normalized

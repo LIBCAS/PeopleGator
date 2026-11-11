@@ -109,16 +109,17 @@ class FaceEntityContext:
             resolved.append((span, line))
         return resolved
 
-    def _caption_sources(self, page, caption):
+    def _caption_sources(self, page, caption, caption_lines=None):
         """Locate a unique assigned title in OCR, retaining exact character provenance.
 
         Args:
             page: Original page, with supported OCR reading order.
             caption: Assigned caption string or None.
+            caption_lines: Optional usable original line objects limiting title matches.
 
         Returns:
-            A pair of whether the title occurs in OCR and its unique source spans;
-            repeated occurrences return True with no spans, preventing guessing.
+            Whether the title occurs within the allowed OCR lines and its unique
+            source spans; repeats return True with no spans, preventing guessing.
         """
         if not caption or not _comparison(caption):
             return False, ()
@@ -132,11 +133,17 @@ class FaceEntityContext:
             return False, ()
         chunk = chunks[0]
         text, offsets = _normalized(chunk.text)
-        matches = list(re.finditer(r'(?<!\w)' + re.escape(_comparison(caption)) + r'(?!\w)', text))
-        if len(matches) != 1:
-            return bool(matches), ()
-        match = matches[0]
-        return True, chunk.source_spans(offsets[match.start()][0], offsets[match.end() - 1][1])
+        line_ids = None if caption_lines is None else {id(line) for line in caption_lines}
+        matches = []
+        for match in re.finditer(r'(?<!\w)' + re.escape(_comparison(caption)) + r'(?!\w)', text):
+            spans = chunk.source_spans(offsets[match.start()][0], offsets[match.end() - 1][1])
+            if line_ids is not None and not all(
+                id(page.regions[span.source.region_index].lines[span.source.line_index]) in line_ids
+                for span in spans
+            ):
+                continue
+            matches.append(spans)
+        return bool(matches), matches[0] if len(matches) == 1 else ()
 
     def _record(self, page, page_index, mention, locality):
         """Serialize a source occurrence and optional provisional cluster metadata.
@@ -163,12 +170,12 @@ class FaceEntityContext:
     def select(self, page, source_region, context_bbox, caption_text):
         """Select caption-only evidence or distinct surrounding/page/off-page sections.
 
-        Caption line objects are authoritative when present. With text-only
-        metadata, first locate the unique title in original OCR. Otherwise require
-        complete verbatim mention context within the title (whitespace and line
-        hyphenation normalized only), rejecting repeated identical evidence.
-        Normalized names never establish caption association. Surrounding locality uses positive area
-        intersection of an original mention line with the context crop.
+        Usable original caption lines restrict title matching, but never replace
+        character-level correspondence. Missing or unusable references fall back
+        to a unique page title match, then complete verbatim context matching if
+        the title is absent from OCR. Ambiguous titles remain unresolved.
+        Normalized names never establish caption association. Surrounding locality
+        uses positive area intersection of a mention line with the context crop.
 
         Args:
             page: Original page containing the image.
@@ -186,15 +193,15 @@ class FaceEntityContext:
         mentions = list({id(m): m for m in getattr(page, 'text_entities', ())}.values())
         metadata = getattr(source_region, 'graphical_metadata', None)
         caption_metadata = getattr(metadata, 'caption_lines_metadata', None)
-        caption_lines = getattr(caption_metadata, 'lines', ())
-        located, caption_spans = self._caption_sources(page, caption_text) if caption_metadata is None else (False, ())
+        referenced_ids = {id(line) for line in (getattr(caption_metadata, 'lines', ()) or ())}
+        caption_lines = [line for region in page.regions for line in region.lines
+                         if id(line) in referenced_ids and isinstance(line.transcription, str)
+                         and line.transcription.strip()]
+        located, caption_spans = self._caption_sources(page, caption_text, caption_lines or None)
         captions = []
         for mention in mentions:
             sources = self._sources(page, page_index, mention)
-            if caption_metadata is not None:
-                associated = bool(sources) and all(any(line is caption_line for caption_line in caption_lines)
-                                                  for _, line in sources)
-            elif located:
+            if caption_lines or located:
                 associated = bool(sources) and all(any(
                     span.source.region_index == cap.source.region_index
                     and span.source.line_index == cap.source.line_index

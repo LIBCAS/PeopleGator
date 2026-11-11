@@ -746,8 +746,11 @@ Earlier text stages are optional. The existing face images, marker colors,
 face ordering, relative coordinates, result models and identity persistence
 remain the same. Batch result mapping requires the complete supplied coordinate
 pair, rejecting partial coordinates rather than matching their prefix. Single-face requests consume the shared prompter's structured
-`FaceAssignmentResult` or `None` directly; an exhausted request leaves the name
-unchanged. A page without OCR uses zero context margins.
+`FaceAssignmentResult` or `None` directly. In both engines, a missing response
+or a null `name_normalized` leaves the existing name, identity object and app/
+authority IDs unchanged. A positive normalized-name prediction retains the
+existing name-update behavior; no manual/verified-state fields are introduced.
+A page without OCR uses zero context margins.
 
 Both engines use the same image-relative selection policy, also in sequential,
 page-parallel and document-parallel batch execution:
@@ -772,16 +775,24 @@ call without the optional `document` argument can use page evidence only;
 
 Caption text retains the existing `graphical_metadata.title` convention, with
 Czech, then English, then the first language value preferred for dictionaries.
-When AnnoPage supplies `caption_lines_metadata`, its original OCR **line objects**
-are authoritative: every source span of a caption mention must belong to those
-lines. A foreign line with a reused XML ID never establishes association.
-Without that association, the selector first locates the assigned title uniquely
-in the page OCR using the existing chunker's reading order and character mappings.
-Every mention span must lie inside that exact title occurrence, including when
-the same name occurs elsewhere on the same line. A repeated title is ambiguous
-and cannot establish caption association. If the title cannot be located in OCR,
-the **entire original mention context** (`mention.text`) must occur within the
-assigned title, with Unicode word boundaries. Comparison
+When AnnoPage supplies `caption_lines_metadata`, only references to original OCR
+**line objects** with nonblank transcription are usable. Locate the assigned title
+uniquely **within those lines**, using the chunker's original character mappings.
+Every mention span must lie completely inside that title occurrence. Two captions
+sharing one OCR line therefore receive only their own names; line membership
+alone does not establish caption association. Valid references can disambiguate
+a title repeated elsewhere on the page. If the assigned title is absent,
+paraphrased or repeated within those usable lines, use the surrounding/page/
+document fallback rather than attributing the whole line to the caption.
+
+Missing, empty, foreign, stale or untranscribed caption-line references are
+unavailable. A reused XML ID never makes a foreign line usable. In these cases,
+first locate the assigned title uniquely in the entire page OCR. Every mention
+span must lie inside that exact title occurrence, including when the same name
+occurs elsewhere on the same line. A repeated title remains ambiguous and cannot
+establish caption association. Only if the title cannot be located in OCR, the
+**entire original mention context** (`mention.text`) may establish a match within
+the assigned title, with Unicode word boundaries. Comparison
 copies collapse whitespace and remove line-break hyphenation (`-` or soft hyphen
 followed by a newline); case, spelling, punctuation and stored evidence remain
 unchanged. Canonical/proposed names, fuzzy matches and substring names never

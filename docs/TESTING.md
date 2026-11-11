@@ -259,8 +259,14 @@ overlap; page-only and off-page-only candidates; cluster membership, aliases,
 whole-cluster on-page exclusion and unclustered homonyms. Real request preparation
 in both assignment engines and all batch modes checks crops, face descriptors,
 per-image correspondence, empty OCR/stages, null decisions and unchanged source
-annotations. The documented external JSON/Jinja migration fragment is rendered
-through the shared prompter with populated and empty sections and unchanged
+annotations. Review regressions cover preservation of previously named identities
+and authority IDs on null normalized-name predictions in every execution mode,
+with mixed named/null batch outcomes. Captions sharing one OCR line are separated
+by exact character spans (including legacy mentions); missing, paraphrased or
+ambiguous titles with usable references remain fallback evidence. Empty, foreign,
+stale and untranscribed references try conservative title/evidence matching while
+preserving repeated-title ambiguity. The documented external JSON/Jinja migration
+fragment is rendered through the shared prompter with populated and empty sections and unchanged
 Pydantic provider schemas. No model, database or GPU inference is required.
 
 ```bash
