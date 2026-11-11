@@ -771,14 +771,30 @@ empty**. Available `caption_text` and `context_text` remain supplied in either
 branch. With no detected mentions all lists are empty and the existing image/
 OCR/caption behavior remains usable. A direct `process_page`/`prepare_face_data`
 call without the optional `document` argument can use page evidence only;
-`process_document(document)` supplies cross-page context in every mode.
+`process_document(document)` supplies cross-page context in every mode. With a
+document, original page positions are authoritative. Without one, a page's
+original index is inferred only when its valid mapped mentions agree on one
+nonnegative source index. Later pages retain that index in both record and span
+provenance; they are not renumbered to zero. Legacy mentions on the same page
+inherit a known index from those mappings. A legacy-only standalone page has an
+unknown index, serialized as `null`, while original line/character references
+remain usable. Conflicting standalone mapped indices remain page evidence with
+unknown index and no claimed source spans; pass the original document to resolve
+that ambiguity. This concerns face-request records only; stored `SourceSpan`
+objects and the chunker/detection diagnostic contracts are unchanged.
 
 Caption text retains the existing `graphical_metadata.title` convention, with
 Czech, then English, then the first language value preferred for dictionaries.
 When AnnoPage supplies `caption_lines_metadata`, only references to original OCR
-**line objects** with nonblank transcription are usable. Locate the assigned title
-uniquely **within those lines**, using the chunker's original character mappings.
-Every mention span must lie completely inside that title occurrence. Two captions
+**line objects** with nonblank transcription are usable. Reconstruct a mapped
+caption view from **only those lines**, in the existing OCR reading order, joined
+by synthetic newlines. Unrelated intervening article lines are excluded, and
+reference-list order or duplicate references cannot reorder or duplicate source
+text. Region/line indices and original character offsets remain unchanged.
+Locate the assigned title uniquely in that reconstructed view using the same
+whitespace/dehyphenation comparison and character mappings. Every mention span
+must lie completely inside that title occurrence, including legacy and multiline
+mentions across nonadjacent original lines. Two captions
 sharing one OCR line therefore receive only their own names; line membership
 alone does not establish caption association. Valid references can disambiguate
 a title repeated elsewhere on the page. If the assigned title is absent,
@@ -813,7 +829,8 @@ locality or override a located caption; the mention remains page evidence. Repea
 selection.
 
 Each mention record contains `provenance` (`caption`, `surrounding`, `page`,
-`document`), container `page_index`/`page_id`, verbatim `name` and `context`,
+`document`), container `page_index`/`page_id` (`page_index` is nullable for
+standalone pages whose original index cannot be determined), verbatim `name` and `context`,
 nullable `proposed_name` and `description`, and ordered `source_spans` with the
 original IDs, indices and half-open offsets. Optional `cluster` contains `name`,
 `short_description`, `description`, and `provisional: true`. Cluster lookup uses

@@ -594,3 +594,162 @@ def test_usable_caption_references_do_not_borrow_another_lines_title():
     result = select([p], source('Image B: Bob Jones.', [p.regions[0].lines[0]]))
     assert result['caption_entities'] == []
     assert names(result['page_entities']) == ['Alice Smith', 'Bob Jones']
+
+
+@pytest.mark.parametrize('mode', ['single', 'sequential', 'page_parallel', 'document_parallel'])
+@pytest.mark.parametrize('with_document', [False, True])
+@pytest.mark.parametrize('caption', [False, True])
+def test_later_page_direct_preparation_and_processing_preserve_original_indices(tmp_path, mode, with_document, caption):
+    from dataclasses import replace
+    from people_gator.engines.face_assignment import FaceAssignmentResult, BatchFaceAssignmentResult
+    doc, sources = engine_document()
+    p, other = doc.page_layouts
+    doc.page_layouts = [other, p]
+    for pi, pg in enumerate(doc.page_layouts):
+        for m in pg.text_entities:
+            m.source_spans = tuple(replace(span, source=replace(span.source, page_index=pi)) for span in m.source_spans)
+    if not caption:
+        for src in sources:
+            src.graphical_metadata.title = 'Unnamed'
+    document = doc if with_document else None
+    image = next(doc.pages_iterator())[0]
+    engine = make_engine(tmp_path, mode)
+    before = [m.__dict__.copy() for m in p.text_entities]
+    prepared = engine.prepare_face_data(image, p, document=document)
+    requests = []
+
+    def predict(data, images, response_model):
+        requests.append(data)
+        return FaceAssignmentResult(name_in_text=None, name_normalized=None) if mode == 'single' else BatchFaceAssignmentResult(faces=[])
+
+    engine.llm_prompter = Mock(side_effect=predict)
+    engine.llm_prompter.process.side_effect = predict
+    engine.llm_prompter.process_parallel.side_effect = lambda data_list, images_list, response_model: [
+        predict(d, i, response_model) for d, i in zip(data_list, images_list)]
+    assert engine.process_page(image, p, document=document) is p
+    assert len(requests) == len(prepared) == (4 if mode == 'single' else 2)
+    for i, (item, data) in enumerate(zip(prepared, requests)):
+        key = 'caption_entities' if caption else 'surrounding_entities'
+        assert names(data[key]) == [f'Caption {"AB"[i // 2 if mode == "single" else i]}']
+        assert data[key] == item.entity_context[key]
+        assert all(record['page_index'] == 1 and record['source_spans'][0]['page_index'] == 1 for record in data[key])
+        if not caption:
+            assert all(record['page_index'] == 1 for record in data['page_entities'])
+            assert names(data['document_entities']) == (['Background'] if with_document else [])
+    assert [m.__dict__ for m in p.text_entities] == before
+
+
+@pytest.mark.parametrize('mode', ['single', 'sequential', 'page_parallel', 'document_parallel'])
+@pytest.mark.parametrize('legacy', [False, True])
+def test_noncontiguous_caption_lines_in_all_engine_modes(tmp_path, mode, legacy):
+    from dataclasses import replace
+    from people_gator.core.layout import PeopleGatorTextEntityMention
+    from people_gator.engines.face_assignment import FaceAssignmentResult, BatchFaceAssignmentResult
+    doc, sources = engine_document()
+    p = doc.page_layouts[0]
+    first, last, article = p.regions[0].lines
+    p.regions[0].lines = [first, article, last]
+    p.lines_iterator = lambda: iter(p.regions[0].lines)
+    for m in p.text_entities:
+        m.source_spans = tuple(replace(span, source=replace(span.source, line_index={0: 0, 1: 2, 2: 1}[span.source.line_index])) for span in m.source_spans)
+    multiline = PeopleGatorTextEntityMention('Caption A\nCaption B', 'Caption A\nCaption B',
+                                             source_spans=p.text_entities[0].source_spans + p.text_entities[1].source_spans)
+    p.text_entities.append(multiline)
+    if legacy:
+        p.text_entities[1].source_spans = ()
+        p.text_entities[1].line = last
+        p.text_entities[1].span = (0, len(last.transcription))
+    for src in sources:
+        src.graphical_metadata.title = 'Caption A Caption B'
+        # Reference-list order/duplicates and foreign references cannot override OCR order.
+        src.graphical_metadata.caption_lines_metadata = NS(lines=[last, first, first, line('Article')])
+    before = [m.__dict__.copy() for m in p.text_entities]
+    requests = []
+    engine = make_engine(tmp_path, mode)
+
+    def predict(data, images, response_model):
+        requests.append(data)
+        return FaceAssignmentResult(name_in_text=None, name_normalized=None) if mode == 'single' else BatchFaceAssignmentResult(faces=[])
+
+    engine.llm_prompter = Mock(side_effect=predict)
+    engine.llm_prompter.process.side_effect = predict
+    engine.llm_prompter.process_parallel.side_effect = lambda data_list, images_list, response_model: [
+        predict(d, i, response_model) for d, i in zip(data_list, images_list)]
+    assert engine.process_document(doc) is doc
+    assert len(requests) == (4 if mode == 'single' else 2)
+    for data in requests:
+        assert names(data['caption_entities']) == ['Caption A', 'Caption B', 'Caption A\nCaption B']
+        assert [span['line_index'] for span in data['caption_entities'][-1]['source_spans']] == [0, 2]
+        assert data['surrounding_entities'] == data['page_entities'] == data['document_entities'] == []
+    assert [m.__dict__ for m in p.text_entities] == before
+    assert [ln.transcription for ln in p.regions[0].lines] == ['Caption A', 'Article', 'Caption B']
+
+
+def test_noncontiguous_caption_reconstruction_keeps_repeated_title_ambiguous():
+    p = page(line('Alice'), line('Article'), line('Bob'), line('Alice'), line('Bob'))
+    for i in [0, 2, 3, 4]:
+        mention(p, 0, i)
+    refs = [p.regions[0].lines[i] for i in [0, 2, 3, 4]]
+    result = select([p], source('Alice Bob', refs))
+    assert result['caption_entities'] == []
+    assert names(result['page_entities']) == ['Alice', 'Bob', 'Alice', 'Bob']
+
+
+def test_standalone_page_infers_index_for_legacy_mentions_from_mapped_mentions():
+    from people_gator.engines.face_entity_context import FaceEntityContext
+    p = page(line('Alice Smith'), line('Bob Jones'))
+    mapped = mention(p, 7)
+    legacy = mention(p, 7, 1, legacy=True)
+    result = FaceEntityContext().select(p, source(), (0, 0, 50, 50), None)
+    assert names(result['surrounding_entities']) == [mapped.name, legacy.name]
+    assert [record['page_index'] for record in result['surrounding_entities']] == [7, 7]
+    assert result['surrounding_entities'][1]['source_spans'][0]['page_index'] == 7
+
+
+def test_standalone_legacy_only_page_reports_unknown_index_without_fabricating_zero():
+    from people_gator.engines.face_entity_context import FaceEntityContext
+    p = page(line('Alice Smith'))
+    mention(p, 9, legacy=True)
+    record = FaceEntityContext().select(p, source(), (0, 0, 50, 50), None)['surrounding_entities'][0]
+    assert record['page_index'] is None
+    assert record['source_spans'][0]['page_index'] is None
+    assert record['source_spans'][0]['line_index'] == 0
+
+
+def test_standalone_conflicting_page_indices_remain_page_evidence():
+    from people_gator.engines.face_entity_context import FaceEntityContext
+    p = page(line('Alice Smith'), line('Bob Jones'))
+    mention(p, 1)
+    mention(p, 2, 1)
+    result = FaceEntityContext().select(p, source(), (0, 0, 50, 50), None)
+    assert result['surrounding_entities'] == []
+    assert names(result['page_entities']) == ['Alice Smith', 'Bob Jones']
+    assert all(record['page_index'] is None and record['source_spans'] == [] for record in result['page_entities'])
+
+
+def test_caption_view_retains_region_reading_order_offsets_and_dehyphenation():
+    from people_gator.core.layout import PeopleGatorTextEntityMention
+    from people_gator.text import SourceLine, SourceSpan
+    first = line('Left: Karel Ča-')
+    last = line('pek. Image B: Bob Jones.')
+    article = line('Ada Lovelace')
+    p = page()
+    # Original region indices differ from their OCR reading order.
+    p.regions = [NS(id='end', category='text', lines=[last]),
+                 NS(id='article', category='text', lines=[article]),
+                 NS(id='start', category='text', lines=[first])]
+    p.reading_order = {'start': 0, 'article': 1, 'end': 2}
+    spans = (SourceSpan(SourceLine(0, p.id, 2, 'start', 0, first.id), 6, len(first.transcription)),
+             SourceSpan(SourceLine(0, p.id, 0, 'end', 0, last.id), 0, 3))
+    m = PeopleGatorTextEntityMention('Karel Ča-\npek', 'Karel Ča-\npek', source_spans=spans)
+    bob_start = last.transcription.index('Bob Jones')
+    bob = PeopleGatorTextEntityMention('Bob Jones', last.transcription, source_spans=(
+        SourceSpan(spans[1].source, bob_start, bob_start + len('Bob Jones')),))
+    p.text_entities = [m, bob]
+    result = select([p], source('Karel Čapek.', [last, first, line(article.transcription)]))
+    assert names(result['caption_entities']) == [m.name]
+    records = result['caption_entities'][0]['source_spans']
+    assert [record['region_index'] for record in records] == [2, 0]
+    assert [(record['start'], record['end']) for record in records] == [(6, len(first.transcription)), (0, 3)]
+    assert m.source_spans is spans
+    assert [r.lines[0].transcription for r in p.regions] == [last.transcription, article.transcription, first.transcription]

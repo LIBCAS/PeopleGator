@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from anno_page.enums.language import Language
 from shapely.geometry import Polygon, box
 
-from people_gator.text import LineAwareTextChunker, SourceLine, SourceSpan
+from people_gator.text import ChunkMapping, LineAwareTextChunker, TextChunk
 
 
 def assigned_caption(source_region):
@@ -80,25 +80,57 @@ class FaceEntityContext:
             for mention in cluster.text_entities:
                 self.clusters.setdefault(id(mention), cluster)
 
+    def _page_index(self, page):
+        """Resolve a page's document position without treating a standalone view as zero.
+
+        Args:
+            page: Original page layout, possibly processed without its document.
+
+        Returns:
+            The authoritative document index or a consistent mapped source index;
+            None when standalone provenance is unavailable or conflicting.
+        """
+        if self.document is not None:
+            return next(i for i, item in enumerate(self.document.page_layouts) if item is page)
+        indices = set()
+        for mention in getattr(page, 'text_entities', ()):
+            if mention.source_spans:
+                index = mention.source_spans[0].source.page_index
+                if type(index) is int and index >= 0 and self._sources(page, index, mention):
+                    indices.add(index)
+        return next(iter(indices)) if len(indices) == 1 else None
+
     def _sources(self, page, page_index, mention):
-        """Resolve valid original indices or a legacy line object to source spans.
+        """Resolve original mappings to serializable source records and OCR line objects.
 
         Args:
             page: Original page layout.
-            page_index: Original page position in the document.
+            page_index: Known original position, or None for unknown standalone provenance.
             mention: Existing detected or legacy mention.
+
+        Returns:
+            Source-record/line pairs. Legacy line objects retain spatial evidence
+            even without a known page index, serialized explicitly as None.
         """
-        spans = mention.source_spans
-        if not spans and mention.line is not None and mention.span is not None:
-            for ri, region in enumerate(page.regions):
-                for li, line in enumerate(region.lines):
-                    if line is mention.line:
-                        spans = (SourceSpan(SourceLine(page_index, page.id, ri, region.id, li, line.id), *mention.span),)
-                        break
+        if not mention.source_spans:
+            if mention.line is not None and mention.span is not None:
+                for ri, region in enumerate(page.regions):
+                    for li, line in enumerate(region.lines):
+                        if line is mention.line:
+                            start, end = mention.span
+                            if isinstance(line.transcription, str) and 0 <= start < end <= len(line.transcription):
+                                return [({'page_index': page_index, 'page_id': page.id,
+                                          'region_index': ri, 'region_id': region.id,
+                                          'line_index': li, 'line_id': line.id,
+                                          'start': start, 'end': end}, line)]
+            return []
+        if page_index is None:
+            return []
         resolved = []
-        for span in spans:
+        for span in mention.source_spans:
             source = span.source
-            if source.page_index != page_index or not (0 <= source.region_index < len(page.regions)):
+            if (source.page_index != page_index or source.page_id != page.id
+                    or not 0 <= source.region_index < len(page.regions)):
                 return []
             region = page.regions[source.region_index]
             if not 0 <= source.line_index < len(region.lines):
@@ -106,8 +138,36 @@ class FaceEntityContext:
             line = region.lines[source.line_index]
             if not isinstance(line.transcription, str) or not 0 <= span.start < span.end <= len(line.transcription):
                 return []
-            resolved.append((span, line))
+            resolved.append((dict(asdict(source), start=span.start, end=span.end), line))
         return resolved
+
+    def _caption_view(self, page, chunk, caption_lines):
+        """Filter mapped OCR to assigned caption lines, retaining source offsets and order.
+
+        Args:
+            page: Original page layout.
+            chunk: One page-sized mapped OCR view in supported reading order.
+            caption_lines: Usable original caption line references, in any order.
+
+        Returns:
+            A mapped view joining only referenced lines with synthetic newlines;
+            original region/line indices and transcription offsets are unchanged.
+        """
+        line_ids = {id(line) for line in caption_lines}
+        parts, mappings, offset = [], [], 0
+        for mapping in chunk.mappings:
+            source = mapping.source
+            if source is None or id(page.regions[source.region_index].lines[source.line_index]) not in line_ids:
+                continue
+            if parts:
+                parts.append('\n')
+                mappings.append(ChunkMapping(offset, offset + 1))
+                offset += 1
+            text = chunk.text[mapping.start:mapping.end]
+            parts.append(text)
+            mappings.append(ChunkMapping(offset, offset + len(text), source, mapping.line_start, mapping.line_end))
+            offset += len(text)
+        return TextChunk(chunk.index, ''.join(parts), chunk.page_index, 0, offset, tuple(mappings))
 
     def _caption_sources(self, page, caption, caption_lines=None):
         """Locate a unique assigned title in OCR, retaining exact character provenance.
@@ -115,7 +175,7 @@ class FaceEntityContext:
         Args:
             page: Original page, with supported OCR reading order.
             caption: Assigned caption string or None.
-            caption_lines: Optional usable original line objects limiting title matches.
+            caption_lines: Optional original lines to reconstruct in OCR reading order.
 
         Returns:
             Whether the title occurs within the allowed OCR lines and its unique
@@ -132,16 +192,12 @@ class FaceEntityContext:
         if not chunks:
             return False, ()
         chunk = chunks[0]
+        if caption_lines is not None:
+            chunk = self._caption_view(page, chunk, caption_lines)
         text, offsets = _normalized(chunk.text)
-        line_ids = None if caption_lines is None else {id(line) for line in caption_lines}
         matches = []
         for match in re.finditer(r'(?<!\w)' + re.escape(_comparison(caption)) + r'(?!\w)', text):
             spans = chunk.source_spans(offsets[match.start()][0], offsets[match.end() - 1][1])
-            if line_ids is not None and not all(
-                id(page.regions[span.source.region_index].lines[span.source.line_index]) in line_ids
-                for span in spans
-            ):
-                continue
             matches.append(spans)
         return bool(matches), matches[0] if len(matches) == 1 else ()
 
@@ -150,7 +206,7 @@ class FaceEntityContext:
 
         Args:
             page: Original page layout.
-            page_index: Original page position.
+            page_index: Original page position, or None for unknown standalone provenance.
             mention: Existing mention object.
             locality: Caption, surrounding, page or document evidence label.
         """
@@ -158,8 +214,7 @@ class FaceEntityContext:
             'provenance': locality, 'page_index': page_index, 'page_id': page.id,
             'name': mention.name, 'context': mention.text,
             'proposed_name': mention.proposed_name, 'description': mention.description,
-            'source_spans': [dict(asdict(span.source), start=span.start, end=span.end)
-                             for span, _ in self._sources(page, page_index, mention)],
+            'source_spans': [record for record, _ in self._sources(page, page_index, mention)],
         }
         cluster = self.clusters.get(id(mention))
         if cluster is not None:
@@ -170,8 +225,8 @@ class FaceEntityContext:
     def select(self, page, source_region, context_bbox, caption_text):
         """Select caption-only evidence or distinct surrounding/page/off-page sections.
 
-        Usable original caption lines restrict title matching, but never replace
-        character-level correspondence. Missing or unusable references fall back
+        Usable original caption lines form a mapped caption-only view in OCR
+        reading order, retaining character-level correspondence. Missing or unusable references fall back
         to a unique page title match, then complete verbatim context matching if
         the title is absent from OCR. Ambiguous titles remain unresolved.
         Normalized names never establish caption association. Surrounding locality
@@ -188,7 +243,7 @@ class FaceEntityContext:
             the caption branch, including document_entities.
         """
         pages = self.document.page_layouts if self.document is not None else [page]
-        page_index = next(i for i, item in enumerate(pages) if item is page)
+        page_index = self._page_index(page)
         # Keep source-list order and remove only repeated references, not homonyms.
         mentions = list({id(m): m for m in getattr(page, 'text_entities', ())}.values())
         metadata = getattr(source_region, 'graphical_metadata', None)
@@ -203,10 +258,10 @@ class FaceEntityContext:
             sources = self._sources(page, page_index, mention)
             if caption_lines or located:
                 associated = bool(sources) and all(any(
-                    span.source.region_index == cap.source.region_index
-                    and span.source.line_index == cap.source.line_index
-                    and cap.start <= span.start < span.end <= cap.end
-                    for cap in caption_spans) for span, _ in sources)
+                    record['region_index'] == cap.source.region_index
+                    and record['line_index'] == cap.source.line_index
+                    and cap.start <= record['start'] < record['end'] <= cap.end
+                    for cap in caption_spans) for record, _ in sources)
             else:
                 mapped = bool(mention.source_spans) or mention.line is not None
                 associated = bool((not mapped or sources) and caption_text

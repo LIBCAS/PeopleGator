@@ -265,7 +265,13 @@ with mixed named/null batch outcomes. Captions sharing one OCR line are separate
 by exact character spans (including legacy mentions); missing, paraphrased or
 ambiguous titles with usable references remain fallback evidence. Empty, foreign,
 stale and untranscribed references try conservative title/evidence matching while
-preserving repeated-title ambiguity. The documented external JSON/Jinja migration
+preserving repeated-title ambiguity. Direct page preparation and processing tests
+cover later-page source indices with/without the document in both engines and
+all batch modes, for caption and surrounding evidence, mixed legacy mappings,
+unknown indices and conflicting standalone provenance. Noncontiguous caption
+references are reconstructed in OCR reading order with original offsets, including
+legacy/multiline names, shared lines, dehyphenation and repeated-title ambiguity.
+The documented external JSON/Jinja migration
 fragment is rendered through the shared prompter with populated and empty sections and unchanged
 Pydantic provider schemas. No model, database or GPU inference is required.
 
