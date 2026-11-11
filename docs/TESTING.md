@@ -273,8 +273,9 @@ all batch modes, for caption and surrounding evidence, mixed legacy mappings,
 unknown indices and conflicting standalone provenance. Noncontiguous caption
 references are reconstructed in OCR reading order with original offsets, including
 legacy/multiline names, shared lines, dehyphenation and repeated-title ambiguity.
-The documented external JSON/Jinja migration
-fragment is rendered through the shared prompter with populated and empty sections and unchanged
+The historical external JSON/Jinja migration fragment, retained only as a
+test fixture under `tests/resources/face_assignment/`, is rendered through the
+shared prompter with populated and empty sections and unchanged
 Pydantic provider schemas. No model, database or GPU inference is required.
 
 ```bash
@@ -295,8 +296,9 @@ preservation and nonblank unique local tags; repeat processing, search-index lag
 partial failures, uncertain-create receipts and replay after propagation failure.
 `DocumentParser` tests retain the existing engine key and optional `[DB_API]` with
 no step-5 stage. XML checks verify existing output remains writable while full
-text persistence remains step 7. The documented external prompt is rendered and
-validated against the shared generated response schema.
+text persistence remains step 7. The configured
+`resources/prompts/entity_matching.json` example is rendered and validated against
+the shared generated response schema.
 
 ```bash
 python -m pytest -q tests/test_entity_matching.py tests/test_text_entity_clustering.py tests/test_text_entity_detection.py tests/test_face_assignment_text_entities.py tests/test_llm_prompts.py tests/test_logging.py tests/test_documentation.py
@@ -313,3 +315,23 @@ descriptions, without deterministic quotation rules. Equivalent duplicate app
 records can be selected without database merging. Schema/reference checks still
 reject malformed actions, invalid indices/names/types and unsupported legacy
 `evidence` response fields before any unintended creation.
+
+## Configured prompt resources
+
+`tests/test_prompt_resources.py` validates the five resource JSON files and the
+root example INI, rejects the three intentionally empty templates through the
+real shared loader, and renders populated templates with their engine response
+models. Factory/CLI regressions select repository and alternate external prompts
+only through INI paths, exercise relative/absolute paths from a different working
+directory without a resources tree, reject missing/invalid configured paths,
+and retain section insertion order. The parse-folder CLI uses synthetic OCR and
+mocked Responses; no model, app service or GPU is needed.
+
+```bash
+python -m pytest -q tests/test_prompt_resources.py tests/test_llm_prompts.py tests/test_text_entity_detection.py tests/test_text_entity_clustering.py tests/test_face_assignment_text_entities.py tests/test_entity_matching.py tests/test_detect_text_entities_cli.py tests/test_documentation.py
+python -m pytest -q --runtime-mode=full
+```
+
+Deployable `{}` files remain placeholders, not runnable prompts or fallback
+sources. The incomplete historical face migration fragment remains a separate
+test fixture; it must not populate the deployment resources.

@@ -65,6 +65,8 @@ See [Architecture](docs/ARCHITECTURE.md) for module boundaries and data flow.
 - [Creating issues](docs/ISSUE_WORKFLOW.md) — turning a plain-language request into a reviewable GitHub issue.
 - [Architecture](docs/ARCHITECTURE.md) — modules, data flow and service boundaries.
 - [Processing](docs/PROCESSING.md) — input assumptions, engines and configuration.
+- [Example pipeline INI](config.example.ini) and [prompt resources](resources/README.md) —
+  explicit per-engine prompt paths; fill empty `{}` templates before enabling their engines.
 - [Output formats](docs/OUTPUT_FORMATS.md) — XML/app output and current gaps.
 - [Testing](docs/TESTING.md) — planned deterministic test strategy.
 
@@ -130,6 +132,15 @@ Provide a model returning face boxes and five landmarks and a local INI file:
 METHOD = FACE_DETECTION_YOLO
 MODEL_PATH = /absolute/path/to/compatible-face-model.pt
 ~~~
+
+For the text/person pipeline, adapt [config.example.ini](config.example.ini):
+provide service settings, fill or replace `{}` prompts, and remove unused engine
+sections (choose single or batch face assignment). Then run
+`python -m user_scripts.parse_folder --config ./config.example.ini ...` with the
+input/output arguments below. Prompt paths resolve from the INI directory and
+may point to any valid external JSON file without code changes. Deploy that INI
+and its referenced resources together, including on worker hosts; installed
+wheels do not provision these repository examples automatically.
 
 Provide page JPEGs named `<page-id>.jpg` and corresponding source layout XML:
 

@@ -651,11 +651,7 @@ def test_documented_external_prompt_renders_new_context_and_typed_provider_schem
         engine, monkeypatch, tmp_path, action, with_candidates, expected):
     from people_gator.engines import llm
     from people_gator.engines.entity_matching import EntityMatchingResult
-    guide = (Path(__file__).parents[1] / 'docs' / 'PROCESSING.md').read_text()
-    section = guide.split('### External prompt migration', 1)[1]
-    template = json.loads(section.split('```json\n', 1)[1].split('\n```', 1)[0])
-    prompt = tmp_path / 'migration.json'
-    prompt.write_text(json.dumps(template))
+    prompt = Path(__file__).parents[1] / 'resources' / 'prompts' / 'entity_matching.json'
     config = ConfigParser()
     config.read_dict({'ENGINE_1': {'METHOD': 'ENTITY_MATCHING', 'PROMPT_TEMPLATE_PATH': str(prompt),
                                   'API_URL': 'https://example.invalid', 'API_KEY': 'private', 'MODEL_NAME': 'mock'}})
