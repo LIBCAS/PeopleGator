@@ -2,7 +2,7 @@
 
 Select these files explicitly through each engine's `PROMPT_TEMPLATE_PATH` in
 the INI passed to `python -m user_scripts.parse_folder --config ...`.
-[config.example.ini](../config.example.ini) shows all engine sections in processing
+[config.example.ini](config.example.ini) shows all engine sections in processing
 order, with paths relative to the INI directory. Operators can use other populated
 files, including absolute paths outside the repository, without changing code.
 

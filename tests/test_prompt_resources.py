@@ -11,7 +11,8 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PROMPTS = ROOT / 'resources' / 'prompts'
+EXAMPLE_CONFIG = ROOT / 'resources' / 'config.example.ini'
+PROMPTS = EXAMPLE_CONFIG.parent / 'prompts'
 FILES = {
     'TEXT_ENTITY_DETECTION': 'text_entity_detection.json',
     'TEXT_ENTITY_CLUSTERING': 'text_entity_clustering.json',
@@ -24,7 +25,7 @@ EMPTY = {'TEXT_ENTITY_CLUSTERING', 'LLM_FACE_ASSIGNMENT', 'LLM_BATCH_FACE_ASSIGN
 
 def test_example_paths_cover_all_engines_in_processing_order():
     config = ConfigParser()
-    config.read(ROOT / 'config.example.ini')
+    config.read(EXAMPLE_CONFIG)
     sections = [config[s] for s in config.sections() if s.startswith('ENGINE_')]
     assert [s['METHOD'] for s in sections] == [
         'TEXT_ENTITY_DETECTION', 'TEXT_ENTITY_CLUSTERING', 'FACE_DETECTION_YOLO',
@@ -34,7 +35,7 @@ def test_example_paths_cover_all_engines_in_processing_order():
         method = section['METHOD']
         if method not in FILES:
             continue
-        path = ROOT / section['PROMPT_TEMPLATE_PATH']
+        path = EXAMPLE_CONFIG.parent / section['PROMPT_TEMPLATE_PATH']
         assert path == PROMPTS / FILES[method]
         content = json.loads(path.read_text(encoding='utf-8'))
         if method in EMPTY:
@@ -58,12 +59,12 @@ def factory(runtime_mode):
 def test_example_placeholders_fail_shared_validation(method, factory, monkeypatch):
     from people_gator.engines import llm
     config = ConfigParser()
-    config.read(ROOT / 'config.example.ini')
+    config.read(EXAMPLE_CONFIG)
     section, = (config[s] for s in config.sections() if config[s]['METHOD'] == method)
     prompter = Mock()
     monkeypatch.setattr(llm, 'LLMPrompter', prompter)
     with pytest.raises(llm.LLMPromptConfigurationError, match='nonblank system and/or user'):
-        factory(section, config_path=str(ROOT), device='cpu')
+        factory(section, config_path=str(EXAMPLE_CONFIG.parent), device='cpu')
     prompter.assert_not_called()
 
 
@@ -108,8 +109,8 @@ def test_ini_selects_alternate_external_files_without_resources(
 def test_detection_resource_renders_real_input_and_generated_model_schema(factory, caplog):
     from people_gator.engines.text_entity_detection import TextEntityDetectionResult
     config = ConfigParser()
-    config.read(ROOT / 'config.example.ini')
-    engine = factory(config['ENGINE_TEXT_DETECTION'], str(ROOT), 'cpu')
+    config.read(EXAMPLE_CONFIG)
+    engine = factory(config['ENGINE_TEXT_DETECTION'], str(EXAMPLE_CONFIG.parent), 'cpu')
     request = engine.llm_prompter._prepare_request_args(
         {'text': 'Karel Čapek 😀'}, response_model=TextEntityDetectionResult)
     assert request['input'][1]['content'][0]['text'] == 'Karel Čapek 😀'

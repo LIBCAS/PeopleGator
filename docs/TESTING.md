@@ -318,10 +318,10 @@ reject malformed actions, invalid indices/names/types and unsupported legacy
 
 ## Configured prompt resources
 
-`tests/test_prompt_resources.py` validates the five resource JSON files and the
-root example INI, rejects the three intentionally empty templates through the
-real shared loader, and renders populated templates with their engine response
-models. Factory/CLI regressions select repository and alternate external prompts
+`tests/test_prompt_resources.py` validates the five resource JSON files and
+`resources/config.example.ini`. It rejects the three intentionally empty templates
+through the real shared loader and renders populated templates with their engine
+response models. Factory/CLI regressions select repository and alternate external prompts
 only through INI paths, exercise relative/absolute paths from a different working
 directory without a resources tree, reject missing/invalid configured paths,
 and retain section insertion order. The parse-folder CLI uses synthetic OCR and

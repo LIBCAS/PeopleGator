@@ -93,7 +93,7 @@ requirement, not an optional detector-specific setting.
 ### Configured resources and deployment
 
 The repository's [prompt resources](../resources/README.md) are examples selected
-**only through INI configuration**. The root [config.example.ini](../config.example.ini)
+**only through INI configuration**. The example [config.example.ini](../resources/config.example.ini)
 shows text detection → clustering → face detection → single or batch face
 assignment → entity matching. Sections execute in insertion order; section names
 do not sort the pipeline. Both face-assignment alternatives are shown: remove the
@@ -103,7 +103,7 @@ Remove any engine section you do not intend to enable (there is no enabled flag)
 
 Every `PROMPT_TEMPLATE_PATH` belongs in its engine's section, alongside the model
 and service settings. Paths in the example resolve from the **directory containing
-the INI**, so the root example refers to `resources/prompts/`. You may replace any
+the INI**, so `resources/config.example.ini` refers to `prompts/`. You may replace any
 path with another valid populated JSON file, including an absolute path outside
 the repository, without code changes. No resource is discovered automatically and
 there is no default prompt when the option is absent. All five engines use generated
@@ -295,7 +295,7 @@ The script can therefore run with just `--config ./config.ini` when the remainin
 
 ### Example
 
-Adapt [config.example.ini](../config.example.ini): fill or replace empty prompt
+Adapt [config.example.ini](../resources/config.example.ini): fill or replace empty prompt
 files, remove unused engine sections, choose one face-assignment mode, and
 provide service settings and a compatible face/keypoint model. For face
 detection alone, a minimal configuration is:
@@ -310,7 +310,7 @@ Process page images and ALTO XML:
 
 ```bash
 python -m user_scripts.parse_folder \
-  --config ./config.example.ini \
+  --config ./resources/config.example.ini \
   --input-image-path ./input/images \
   --input-alto-path ./input/alto \
   --output-alto-path ./output/alto \
@@ -391,7 +391,7 @@ individual merge details remain at `DEBUG`.
 independent chunker once, and attaches unresolved mentions to page layouts. It
 needs processing extras and the configured OpenAI-compatible Responses service;
 it never loads images or requires GPU inference or PeopleGatorApp credentials.
-Configure it in ordinary engine order, for example:
+Configure it in ordinary engine order, for example in an INI under `resources/`:
 
 ```ini
 [ENGINE_1]
@@ -399,7 +399,7 @@ METHOD = TEXT_ENTITY_DETECTION
 API_URL = https://example.invalid/v1
 API_KEY = your-service-key
 MODEL_NAME = your-model
-PROMPT_TEMPLATE_PATH = ./resources/prompts/text_entity_detection.json
+PROMPT_TEMPLATE_PATH = ./prompts/text_entity_detection.json
 REASONING_EFFORT = low
 MAX_OUTPUT_TOKENS = 2000
 CHUNKING_METHOD = LINES
