@@ -313,6 +313,96 @@ def test_result_correspondence_images_and_partial_predictions(tmp_path, mode):
         assert tuple(data[0].context_image[20, 15]) == (0, 255, 0)
 
 
+def batch_ordering_document(boxes):
+    import numpy as np
+    from people_gator.core.layout import PeopleGatorFaceRegionLayout
+
+    p = page()
+    src = Mock(graphical_metadata=NS(title=None))
+    src.get_polygon_bounding_box.return_value = (10, 10, 110, 110)
+    faces = []
+    for index, (left, top, right, bottom) in enumerate(boxes):
+        faces.append(PeopleGatorFaceRegionLayout(
+            id=f'f{index}', category='face', source_region=src,
+            polygon=np.array(polygon(left + 10, top + 10, right - left, bottom - top)),
+            face_metadata=NS(page_identity=NS(identity=NS(name=None)))))
+    p.regions.extend(faces)
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    doc = NS(id='document', page_layouts=[p], text_entity_clusters=[],
+             pages_iterator=lambda: iter([(image, p)]))
+    return doc, image, faces
+
+
+@pytest.mark.parametrize(('boxes', 'order', 'coordinates'), [
+    # The wide box's center (40) is right of the narrow box's center (35).
+    ([(0, 20, 80, 30), (30, 20, 40, 30), (70, 50, 90, 60)],
+     [1, 0, 2], [(35, 25), (40, 25), (80, 55)]),
+    # Equal horizontal centers retain page-region order, irrespective of width/y.
+    ([(35, 20, 45, 30), (0, 40, 80, 50), (70, 60, 90, 70)],
+     [0, 1, 2], [(40, 25), (40, 45), (80, 65)]),
+    ([(70, 50, 90, 60), (0, 20, 10, 30)], [1, 0], [(5, 25), (80, 55)]),
+    ([(30, 20, 40, 30)], [0], [(35, 25)]),
+    ([], [], []),
+], ids=['unequal-widths', 'equal-centers', 'reversed', 'one-face', 'zero-faces'])
+@pytest.mark.parametrize('mode', ['sequential', 'page_parallel', 'document_parallel'])
+def test_batch_horizontal_center_order_and_result_mapping(tmp_path, mode, boxes, order, coordinates):
+    import numpy as np
+    from people_gator.engines.face_assignment import BatchFaceAssignmentResult
+
+    doc, image, faces = batch_ordering_document(boxes)
+    p = doc.page_layouts[0]
+    original_regions = list(p.regions)
+    engine = make_engine(tmp_path, mode)
+    # Render the real request data through the shared prompter without a model.
+    prompt = tmp_path / 'ordered-faces.json'
+    prompt.write_text(json.dumps({'user': '{{ faces | tojson }}'}))
+    renderer = make_engine_from_prompt(prompt, mode).llm_prompter
+    prepared = engine.prepare_face_data(image, p, doc)
+    assert len(prepared) == bool(boxes)
+    descriptors = [dict(id=i, coordinates=xy, color=color, color_name=name)
+                   for i, (xy, color, name) in enumerate(zip(
+                       coordinates, [(255, 0, 0), (0, 255, 0), (0, 0, 255)],
+                       ['red', 'green', 'blue']))]
+    if boxes:
+        item, = prepared
+        assert all(actual is faces[index] for actual, index in zip(item.face_regions, order))
+        assert len(item.face_regions) == len(faces)
+        assert item.faces == descriptors
+        assert item.context_image.shape == (100, 100, 3)
+        for index, descriptor in zip(order, descriptors):
+            left, top, right, bottom = boxes[index]
+            # Midpoint of each left edge avoids overlapping horizontal borders.
+            assert tuple(item.context_image[(top + bottom) // 2, left]) == descriptor['color'][::-1]
+
+    requests = []
+
+    def respond(data, images, response_model):
+        requests.append(data)
+        assert data['faces'] == descriptors
+        request = renderer._prepare_request_args(data, response_model=response_model)
+        rendered = json.loads(request['input'][0]['content'][0]['text'])
+        assert rendered == json.loads(json.dumps(descriptors))
+        assert response_model is BatchFaceAssignmentResult
+        assert np.array_equal(images[0], prepared[0].context_image)
+        # Shuffled responses must still update the original region for each ID.
+        return BatchFaceAssignmentResult(faces=[
+            dict(id=f['id'], coordinates=f['coordinates'],
+                 name_in_text=f"Person {f['id']}", name_normalized=f"Person {f['id']}")
+            for f in reversed(data['faces'])])
+
+    engine.llm_prompter = Mock()
+    engine.llm_prompter.process.side_effect = respond
+    engine.llm_prompter.process_parallel.side_effect = lambda data_list, images_list, response_model: [
+        respond(data, images, response_model) for data, images in zip(data_list, images_list)]
+    assert engine.process_document(doc) is doc
+    assert len(requests) == bool(boxes)
+    for index, face in enumerate(faces):
+        assert face.face_metadata.page_identity.identity.name == f'Person {order.index(index)}'
+    assert all(actual is original for actual, original in zip(p.regions, original_regions))
+    assert len(p.regions) == len(original_regions)
+    assert np.count_nonzero(image) == 0
+
+
 @pytest.mark.parametrize('mode', ['single', 'sequential'])
 def test_missing_transcription_is_not_joined_or_rewritten(tmp_path, mode):
     import numpy as np

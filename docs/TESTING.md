@@ -252,6 +252,13 @@ real OCR. Python 3.10 syntax is checked independently of runtime availability.
 
 ## Face assignment with text evidence
 
+Batch ordering regressions in `tests/test_face_assignment_text_entities.py`
+use unequal-width boxes that reverse under the old sort key, equal horizontal
+centers, reversed input order and zero/one-face inputs in all three batch modes.
+They check original region references, rendered face descriptors, IDs, relative
+coordinates, marker colors and shuffled result-to-region mapping. Synthetic
+images also verify context cropping and preservation of the original page.
+
 `tests/test_face_assignment_text_entities.py` checks exact caption-only and
 three-section fallback data; original caption-line association and conservative
 text-only matching; Unicode, multiline/legacy spans and repeated IDs; local/page
