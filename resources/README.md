@@ -10,8 +10,8 @@ files, including absolute paths outside the repository, without changing code.
 | --- | --- | --- |
 | `TEXT_ENTITY_DETECTION` | [text_entity_detection.json](prompts/text_entity_detection.json) | Complete prompt moved unchanged from the guide; `text` is the OCR chunk. |
 | `TEXT_ENTITY_CLUSTERING` | [text_entity_clustering.json](prompts/text_entity_clustering.json) | Uploaded clustering prompt; `entities` is a JSON string of request-local mention records. |
-| `LLM_FACE_ASSIGNMENT` | [llm_face_assignment.json](prompts/llm_face_assignment.json) | Uploaded single-face prompt; uses `face_coordinates`, caption/OCR text and face/context images. The four optional entity lists are not referenced. |
-| `LLM_BATCH_FACE_ASSIGNMENT` | [llm_batch_face_assignment.json](prompts/llm_batch_face_assignment.json) | Uploaded batch-face prompt; uses `faces`, caption/OCR text and marked context image. The four optional entity lists are not referenced. |
+| `LLM_FACE_ASSIGNMENT` | [face_assignment.json](prompts/face_assignment.json) | Uploaded single-face prompt; uses `face_coordinates`, caption/OCR text and face/context images. The four optional entity lists are not referenced. |
+| `LLM_BATCH_FACE_ASSIGNMENT` | [batch_face_assignment.json](prompts/batch_face_assignment.json) | Uploaded batch-face prompt; uses `faces`, caption/OCR text and marked context image. The four optional entity lists are not referenced. |
 | `ENTITY_MATCHING` | [entity_matching.json](prompts/entity_matching.json) | Complete prompt moved unchanged from the guide; `name`, structured `context`, and hydrated `entities`. |
 
 Text detection and entity matching preserve the complete prompts previously in

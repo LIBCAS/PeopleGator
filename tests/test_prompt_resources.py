@@ -16,8 +16,8 @@ PROMPTS = EXAMPLE_CONFIG.parent / 'prompts'
 FILES = {
     'TEXT_ENTITY_DETECTION': 'text_entity_detection.json',
     'TEXT_ENTITY_CLUSTERING': 'text_entity_clustering.json',
-    'LLM_FACE_ASSIGNMENT': 'llm_face_assignment.json',
-    'LLM_BATCH_FACE_ASSIGNMENT': 'llm_batch_face_assignment.json',
+    'LLM_FACE_ASSIGNMENT': 'face_assignment.json',
+    'LLM_BATCH_FACE_ASSIGNMENT': 'batch_face_assignment.json',
     'ENTITY_MATCHING': 'entity_matching.json',
 }
 

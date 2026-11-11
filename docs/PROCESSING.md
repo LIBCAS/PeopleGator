@@ -838,8 +838,8 @@ as candidate identities and no face-to-cluster link is created.
 
 ### External face prompt contracts
 
-The [single-face prompt](../resources/prompts/llm_face_assignment.json) and
-[batch prompt](../resources/prompts/llm_batch_face_assignment.json) are
+The [single-face prompt](../resources/prompts/face_assignment.json) and
+[batch prompt](../resources/prompts/batch_face_assignment.json) are
 populated from the supplied JSON files, preserving their identification and
 normalization instructions. Either file can be replaced by changing its
 `PROMPT_TEMPLATE_PATH`.
