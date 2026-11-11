@@ -282,3 +282,34 @@ python -m pytest -q tests/test_face_assignment_text_entities.py tests/test_llm_p
 python -m pytest -q --runtime-mode=full
 python -m pip check
 ```
+
+
+## Document-wide entity matching
+
+`tests/test_entity_matching.py` uses real synthetic two-page ALTO/PAGE layouts,
+source spans, prebuilt clusters and face metadata, with mocked app/LLM operations.
+It covers text-only, face-only, mixed and empty inputs; caption reconciliation and
+homonyms; aliases and hydrated details; explicit strict decisions; zero, single,
+multiple, malformed and non-person candidates; protected/conflicting IDs; metadata
+preservation and nonblank unique local tags; repeat processing, search-index lag,
+partial failures, uncertain-create receipts and replay after propagation failure.
+`DocumentParser` tests retain the existing engine key and optional `[DB_API]` with
+no step-5 stage. XML checks verify existing output remains writable while full
+text persistence remains step 7. The documented external prompt is rendered and
+validated against the shared generated response schema.
+
+```bash
+python -m pytest -q tests/test_entity_matching.py tests/test_text_entity_clustering.py tests/test_text_entity_detection.py tests/test_face_assignment_text_entities.py tests/test_llm_prompts.py tests/test_logging.py tests/test_documentation.py
+python -m pytest -q --runtime-mode=full
+python -m pip check
+python -m compileall -q people_gator processing_api user_scripts
+```
+
+No live app/model, private OCR or GPU is needed. Mocked decisions prove structural,
+reference and propagation checks, not semantic identity accuracy for a real corpus.
+Regression cases keep description content as LLM input: explicit select/create/
+unresolved outcomes are honored with equal, different, multiline or absent app
+descriptions, without deterministic quotation rules. Equivalent duplicate app
+records can be selected without database merging. Schema/reference checks still
+reject malformed actions, invalid indices/names/types and unsupported legacy
+`evidence` response fields before any unintended creation.

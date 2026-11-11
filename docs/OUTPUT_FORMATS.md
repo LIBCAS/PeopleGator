@@ -191,3 +191,31 @@ app ID or page identity is fabricated or propagated. This is an in-memory
 contract only: no new ALTO/PAGE text-cluster serialization or PeopleGatorApp
 persistence is implemented. Existing XML and face output remain unchanged. See
 [clustering configuration and safety](PROCESSING.md#document-text-entity-clustering-text_entity_clustering).
+
+
+## In-memory linked text and face identities
+
+After `ENTITY_MATCHING`, a resolved cluster's `identity.peoplegator_id` and every
+original member's `page_identity.identity.peoplegator_id` contain the same app ID.
+Explicitly shared or uniquely caption-supported named faces receive that ID too.
+Existing identity objects, authority IDs and page-local XML/provenance fields are
+retained. New text wrappers have unique nonblank tag/MODS IDs; unresolved clusters
+receive no fabricated wrapper or app ID. Distribution skips conflicting protected
+IDs and never rebuilds document clusters by database ID.
+
+This is the handoff for step 7 of #33. The engine does not serialize text mentions,
+source spans or clusters into ALTO/PAGE or upload text mentions to the app. Existing
+face output can use resolved IDs through its current fields. The in-memory
+`entity_linking_journal` retains creation receipts for retries of the same document
+but is not part of either XML format or the app persistence contract. Reconstructing
+a document loses these receipts; remote reconciliation is required after an
+uncertain write. See [linking/retry rules](PROCESSING.md#propagation-protected-links-and-retry-limits).
+
+
+The existing face ALTO writer assumes a default ALTO namespace on its enclosing
+source tree. Normal enrichment of original ALTO retains that namespace. Fresh
+source-less ALTO generation containing a populated face can currently fail with
+`KeyError: None` in `to_altoxml_identity`; this predates document linking and remains
+part of the [step-7 output work in #33](https://github.com/LIBCAS/PeopleGator/issues/33).
+The linking regressions exercise original-ALTO enrichment and PAGE generation
+with named faces, plus text-only generation in both formats.

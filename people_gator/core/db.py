@@ -54,7 +54,7 @@ class DatabaseApiService:
         """Search entities through the PeopleGatorApp API.
 
         Args:
-            query: Person-name search text.
+            query: Person-name search text or a sequence of unique nonblank search terms.
             route: API route template; defaults to the operation's app endpoint.
             response_model: Optional Pydantic response class; None returns decoded JSON.
 
@@ -65,6 +65,12 @@ class DatabaseApiService:
             ValueError: If an otherwise successful response contains invalid JSON.
         """
         url = self.compose_url(route)
+        if not isinstance(query, str):
+            if not isinstance(query, (list, tuple)) or any(not isinstance(q, str) for q in query):
+                raise ValueError("Search requires text or a sequence of text terms")
+            query = list(dict.fromkeys(q.strip() for q in query if q.strip()))
+            if not query:
+                raise ValueError("Search requires at least one nonblank term")
         params = {"query.text": query}
         response = self.connector.get(url, params=params)
 
@@ -86,13 +92,17 @@ class DatabaseApiService:
 
         return result
 
-    def create_entity(self, name, route="/api/v1/entities", response_model=None):
+    def create_entity(self, name, route="/api/v1/entities", response_model=None, *,
+                      aliases=None, description="", short_description=""):
         """Create entity through the PeopleGatorApp API.
 
         Args:
             name: Proposed person name, or None when unknown.
             route: API route template; defaults to the operation's app endpoint.
             response_model: Optional Pydantic response class; None returns decoded JSON.
+            aliases: Optional source-grounded alternative names; duplicates are removed.
+            description: Source-grounded long description; defaults to an empty string.
+            short_description: Source-grounded brief description; defaults to an empty string.
 
         Returns:
             Decoded JSON or the requested response model; None on an unsuccessful status or model-validation failure.
@@ -104,9 +114,9 @@ class DatabaseApiService:
         payload = {
             'entity_type': 'person',
             'name': name,
-            'description': '',
-            'short_description': '',
-            'aliases': [],
+            'description': description,
+            'short_description': short_description,
+            'aliases': list(dict.fromkeys(aliases or [])),
             'wikidata_id': '',
             'nlcr_authority_id': ''
         }

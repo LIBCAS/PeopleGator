@@ -105,7 +105,7 @@ prefix before calling the factory with `METHOD`, `MAX_CHARS`, and
 `OVERLAP_CHARS`. There is no global or nested chunking section and no change to
 `DocumentParser` engine loading. Text detection,
 mention construction and overlap de-duplication are owned by the detector;
-document clustering is described below; linking remains future work under #33.
+document clustering is described below; shared app linking follows through `ENTITY_MATCHING`.
 See [text chunking](PROCESSING.md#reusable-text-chunking) for the public contract.
 
 ## Related software and services
@@ -152,3 +152,19 @@ fallback collections per source image; no text model, parallel entity store,
 app identity or extra request is introduced. `process_document` passes the
 original document into page request preparation in every execution mode. See
 [face prompt data and migration](PROCESSING.md#text-evidence-in-face-assignment).
+
+
+`ENTITY_MATCHING` resolves original document text clusters and named faces using
+shared `PeopleGatorIdentity` references or unique source-mapped caption evidence.
+It supplies names, aliases, descriptions and source context to the LLM for
+semantic select/create/unresolved decisions. The engine validates only response
+structure and candidate references; it does not compare description contents or
+quoted fragments. Equivalent duplicate app records may be selected; app record
+merging/cleanup stays with human/application workflows. Successful IDs propagate
+without rebuilding clusters or replacing protected links/local identity metadata. The existing factory,
+shared `[DB_API]` client and external prompt conventions remain in use. Creation
+receipts on the document protect same-document retries after uncertain writes;
+there is no durable journal or server idempotency guarantee. See
+[linking rules](PROCESSING.md#document-wide-entity-linking-entity_matching).
+The optional DB-based assignment of unnamed faces (step 5) remains deferred;
+text XML/API persistence and complete round-trip remain step 7 of #33.
