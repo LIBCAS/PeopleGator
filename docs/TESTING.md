@@ -348,6 +348,32 @@ records can be selected without database merging. Schema/reference checks still
 reject malformed actions, invalid indices/names/types and unsupported legacy
 `evidence` response fields before any unintended creation.
 
+## Linked text-mention app export
+
+`tests/test_text_mention_export.py` uses synthetic multi-page documents and a
+mocked shared connector. It checks one request per occurrence (including repeated
+names and identities across pages), exact Unicode/whitespace/context mapping,
+registered page source UUIDs, missing identities/invalid IDs/blank names, unchanged
+source spans and no entity creation. Text-only, mixed, face-only and empty pages
+retain face/image/layout operations and document/page lookup/creation sequencing.
+
+Service cases check HTTP 201, supported payload fields, automatic links, optional
+response models, non-success status, invalid JSON/shape/IDs and connector errors.
+Export isolates failed mentions so later occurrences and artifacts continue.
+Parser entry-point and repeated-export regressions retain every occurrence and
+the existing face-only annotation deletion behavior. No live database, LLM or
+GPU is needed; tests skip explicitly in client mode. Run:
+
+```bash
+python -m pytest -q tests/test_text_mention_export.py tests/test_logging.py tests/test_entity_matching.py tests/test_documentation.py
+python -m pytest -q --runtime-mode=full
+python -m pip check
+```
+
+These checks do not establish live app compatibility or duplicate-free reruns.
+Current API provenance, import and deletion limits are documented in
+[Output formats](OUTPUT_FORMATS.md#peoplegatorapp-text-mention-export).
+
 ## Configured prompt resources
 
 `tests/test_prompt_resources.py` validates all five populated JSON resources and
