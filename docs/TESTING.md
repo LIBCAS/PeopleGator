@@ -338,8 +338,26 @@ python -m pytest -q tests/test_prompt_resources.py tests/test_llm_prompts.py tes
 python -m pytest -q --runtime-mode=full
 ```
 
-All five prompt resources are now populated; no implicit runtime discovery or
-fallback default exists. The historical incomplete face migration fragment remains
-a separate test fixture. The uploaded face prompts do not reference the optional
-detected-entity lists, so shared warnings will flag those unused inputs until the
-external templates are updated.
+All five prompt resources are populated and audited against the current engine
+contracts; no implicit runtime discovery or fallback default exists. The
+historical incomplete face migration fragment remains a separate test fixture.
+The shipped face templates render caption entities or the three fallback lists
+and consume all supplied keys without missing/unused warnings.
+
+Resource regressions require exact Jinja variable sets, render Unicode and nested
+OCR provenance, and check both face branches with absent captions, empty
+collections, overlapping local/page records and off-page provisional clusters or
+unclustered mentions. Real single/batch request preparation checks the appended
+image count/order and generated schemas in every execution mode. The horizontal
+center ordering cases now render the shipped batch resource, preserving IDs,
+coordinates and colors. Shared missing/unused diagnostics remain covered for
+replacement prompts.
+
+Detection tests run the shipped template through mocked Responses and source
+mapping, retaining `info` as a mention description and accepting empty results.
+Clustering tests preserve the pre-serialized JSON string, request-local partition
+indices and original member references. Matching tests render structured source
+evidence and hydrated candidates through typed select/create/unresolved outcomes,
+including equivalent duplicate records and empty optional fields. These tests
+verify instructions, request/response shapes and consumers; mocked outputs do
+not establish model extraction, summary or identification accuracy.

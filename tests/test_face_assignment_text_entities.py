@@ -206,20 +206,33 @@ def engine_document():
 
 @pytest.mark.parametrize('mode', ['single', 'sequential', 'page_parallel', 'document_parallel'])
 @pytest.mark.parametrize('caption', [True, False])
-def test_all_engine_modes_exact_requests_and_null_preservation(tmp_path, mode, caption):
+def test_all_engine_modes_exact_requests_and_null_preservation(tmp_path, mode, caption, caplog):
     from people_gator.engines.face_assignment import FaceAssignmentResult, BatchFaceAssignmentResult
     doc, sources = engine_document()
     p = doc.page_layouts[0]
     if not caption:
         for src in sources:
             src.graphical_metadata.title = 'Unnamed'
-    engine = make_engine(tmp_path, mode)
+    prompt = Path(__file__).resolve().parents[1] / 'resources' / 'prompts' / (
+        'face_assignment.json' if mode == 'single' else 'batch_face_assignment.json')
+    engine = make_engine_from_prompt(prompt, mode)
+    renderer = engine.llm_prompter
     requests = []
     before = deepcopy([m.__dict__ for page_ in doc.page_layouts for m in page_.text_entities])
     original_lines = [(ln, ln.transcription) for pg in doc.page_layouts for ln in pg.lines_iterator()]
 
     def respond(data, images, response_model):
         requests.append((deepcopy(data), images, response_model))
+        request = renderer._prepare_request_args(data, images, response_model)
+        text = request['input'][1]['content'][0]['text']
+        keys = ['caption_entities'] if caption else ['surrounding_entities', 'page_entities', 'document_entities']
+        for key in keys:
+            actual, _ = json.JSONDecoder().raw_decode(text.split(key.upper() + ':\n', 1)[1].lstrip())
+            assert actual == data[key]
+        content = request['input'][1]['content']
+        from people_gator.engines.llm import encode_image_to_base64
+        assert [item['image_url'] for item in content[1:]] == [encode_image_to_base64(image) for image in images]
+        assert request['text']['format']['schema'] == response_model.model_json_schema()
         if mode == 'single':
             assert response_model is FaceAssignmentResult
             return FaceAssignmentResult(name_in_text=None, name_normalized=None)
@@ -255,6 +268,7 @@ def test_all_engine_modes_exact_requests_and_null_preservation(tmp_path, mode, c
     assert [m.__dict__ for page_ in doc.page_layouts for m in page_.text_entities] == before
     assert all(ln.transcription == text for ln, text in original_lines)
     assert all(face.face_metadata.page_identity.identity.name is None for face in p.regions[1:])
+    assert not caplog.records
 
 
 @pytest.mark.parametrize('mode', ['single', 'sequential', 'page_parallel', 'document_parallel'])
@@ -345,7 +359,7 @@ def batch_ordering_document(boxes):
     ([], [], []),
 ], ids=['unequal-widths', 'equal-centers', 'reversed', 'one-face', 'zero-faces'])
 @pytest.mark.parametrize('mode', ['sequential', 'page_parallel', 'document_parallel'])
-def test_batch_horizontal_center_order_and_result_mapping(tmp_path, mode, boxes, order, coordinates):
+def test_batch_horizontal_center_order_and_result_mapping(tmp_path, mode, boxes, order, coordinates, caplog):
     import numpy as np
     from people_gator.engines.face_assignment import BatchFaceAssignmentResult
 
@@ -354,8 +368,7 @@ def test_batch_horizontal_center_order_and_result_mapping(tmp_path, mode, boxes,
     original_regions = list(p.regions)
     engine = make_engine(tmp_path, mode)
     # Render the real request data through the shared prompter without a model.
-    prompt = tmp_path / 'ordered-faces.json'
-    prompt.write_text(json.dumps({'user': '{{ faces | tojson }}'}))
+    prompt = Path(__file__).resolve().parents[1] / 'resources/prompts/batch_face_assignment.json'
     renderer = make_engine_from_prompt(prompt, mode).llm_prompter
     prepared = engine.prepare_face_data(image, p, doc)
     assert len(prepared) == bool(boxes)
@@ -380,7 +393,8 @@ def test_batch_horizontal_center_order_and_result_mapping(tmp_path, mode, boxes,
         requests.append(data)
         assert data['faces'] == descriptors
         request = renderer._prepare_request_args(data, response_model=response_model)
-        rendered = json.loads(request['input'][0]['content'][0]['text'])
+        text = request['input'][1]['content'][0]['text']
+        rendered, _ = json.JSONDecoder().raw_decode(text.split('FACES:\n', 1)[1].lstrip())
         assert rendered == json.loads(json.dumps(descriptors))
         assert response_model is BatchFaceAssignmentResult
         assert np.array_equal(images[0], prepared[0].context_image)
@@ -401,6 +415,7 @@ def test_batch_horizontal_center_order_and_result_mapping(tmp_path, mode, boxes,
     assert all(actual is original for actual, original in zip(p.regions, original_regions))
     assert len(p.regions) == len(original_regions)
     assert np.count_nonzero(image) == 0
+    assert not caplog.records
 
 
 @pytest.mark.parametrize('mode', ['single', 'sequential'])
@@ -481,7 +496,8 @@ def test_external_prompt_migration_rendering_schema_and_warnings(tmp_path, caplo
 def make_engine_from_prompt(path, mode):
     from people_gator.engines.face_assignment import LLMFaceAssignmentEngine, LLMBatchFaceAssignmentEngine
     config = ConfigParser()
-    config.read_dict({'engine': {'PROMPT_TEMPLATE_PATH': str(path)}})
+    config.read_dict({'engine': {'PROMPT_TEMPLATE_PATH': str(path),
+                                'PROCESSING_MODE': mode if mode != 'single' else 'sequential'}})
     cls = LLMFaceAssignmentEngine if mode == 'single' else LLMBatchFaceAssignmentEngine
     return cls(config['engine'], 'cpu', str(path.parent))
 
