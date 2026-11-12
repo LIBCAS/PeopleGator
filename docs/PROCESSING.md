@@ -278,6 +278,8 @@ These parameters are needed for the authenticated connection; the code does not 
 | `--input-metadata-path` | Optional JSON document metadata |
 | `--output-alto-path` / `--output-xml-path` | Output ALTO / PAGE XML directories |
 | `--output-render-path` | Optional annotated JPEG directory |
+| `--processing-checkpoints` | Optional directory for a complete JSON snapshot after each successful engine; empty disables |
+| `--resume-from-checkpoint` | Resume a finalized snapshot, skipping completed engines and initial app import |
 | `--import-from-app` / `--export-to-app` | Import stored annotations before processing / export results after processing |
 | `--device`, `--gpu-id` | CPU or GPU choice and optional GPU index; CPU is the default |
 | `--logging-level` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
@@ -298,6 +300,17 @@ EXPORT_TO_APP = no
 Supported keys are `INPUT_IMAGE_PATH`, `INPUT_ALTO_PATH`, `INPUT_XML_PATH`, `INPUT_METADATA_PATH`, `OUTPUT_ALTO_PATH`, `OUTPUT_XML_PATH`, `OUTPUT_RENDER_PATH`, `IMPORT_FROM_APP`, and `EXPORT_TO_APP`. Choose one input XML format. CLI path options override the corresponding configured values; passing an import/export flag enables it. `--config`, `--device`, `--gpu-id`, and `--logging-level` are CLI-only options in the current script.
 
 The script can therefore run with just `--config ./config.ini` when the remaining processing paths and options are defined in that file.
+
+`PROCESSING_CHECKPOINTS = ./processing-checkpoints` is an optional additional
+`[PARSE_FOLDER]` key. The CLI value takes precedence, including an empty string;
+when both are absent/empty no checkpoints are created. Like other document paths,
+the directory resolves from the process working directory. No checkpoint section
+or engine is added. See [checkpoint configuration and recovery](CHECKPOINTS.md)
+for the versioned full-document JSON contract, inherited-model audit, required
+current credentials, compatible path relocation and conservative app replay guards.
+Engine checkpoints precede app/XML/render exports. Keep the original run ledger
+and inputs accessible; uncertain app creates and repeated app exports require
+manual reconciliation. Local output can be retried from the last engine snapshot.
 
 ### Example
 
@@ -1046,8 +1059,11 @@ reconciles the app state. A successful response records `created` and its ID bef
 propagation, so interrupted propagation can replay the receipt. Face-only direct
 `process_page` calls retain equivalent receipts on their page object.
 
-There is no server idempotency key or durable run journal in this contract.
-Receipts do not survive reconstruction/restart or step-7 serialization; concurrent
-processes can race. After an uncertain write, reconcile the remote app before
-rebuilding/retrying the document or intentionally clearing its receipt. Never
+The linker itself has no server idempotency key. Without optional
+[processing checkpoints](CHECKPOINTS.md), receipts do not survive restart/XML
+reconstruction, and concurrent independent processes can race. Checkpoints
+preserve the receipts, lock each history and durably fence app stage/export replay;
+they conservatively block uncertain recovery instead of blindly repeating creates.
+After an uncertain write, reconcile the remote app before rebuilding/retrying
+the document or intentionally clearing its receipt. Never
 assume search-index absence proves that a timed-out create did not succeed.

@@ -4,6 +4,20 @@ Tests focus on PeopleGator's document-processing pipeline: loading pages, runnin
 
 ## What should be tested
 
+Optional processing checkpoints are tested in `tests/test_checkpoints.py` using
+real ALTO/PAGE fixtures, rich inherited OCR/AnnoPage state and mocked engines/app
+clients. Cases compare every field/type/order/reference after JSON round-trip,
+resume every boundary, verify CLI precedence and disabled behavior, recover
+modified cached/lazy images, validate relocated/missing/changed inputs/resources,
+interrupt atomic publication in a subprocess, and prevent uncertain app-stage or
+repeated export replay. No live LLM, database or GPU is required. The supported
+types, explicit model audit and conservative recovery limits are documented in
+[CHECKPOINTS.md](CHECKPOINTS.md).
+
+```bash
+python -m pytest -q tests/test_checkpoints.py tests/test_entity_matching.py tests/test_documentation.py
+```
+
 | Area | Important cases |
 | --- | --- |
 | Document loading | Page images, ALTO/PAGE layouts, metadata, and engine configuration/order |

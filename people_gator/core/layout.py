@@ -963,6 +963,7 @@ class PeopleGatorDocument:
         page_layouts: Ordered page layouts.
         page_images: Page-ID-to-image cache.
         text_entity_clusters: Shared identities for text mentions.
+        source_metadata: Complete original metadata JSON, including uninterpreted keys.
     """
 
     def __init__(self,
@@ -1005,6 +1006,7 @@ class PeopleGatorDocument:
         self.page_xmls_dir: str|None = page_xmls_dir
         self.alto_xmls_dir: str|None = alto_xmls_dir
         self.metadata_path: str|None = metadata_path
+        self.source_metadata = None
 
         self.text_entity_clusters: list[PeopleGatorTextEntityCluster] = text_entity_clusters if text_entity_clusters is not None else []
 
@@ -1100,6 +1102,7 @@ class PeopleGatorDocument:
         if self.metadata_path:
             with open(self.metadata_path, 'r', encoding='utf-8') as f:
                 metadata = json.load(f)
+            self.source_metadata = metadata
 
             self.id = metadata["document"]["id"] if "document" in metadata and "id" in metadata["document"] else None
             self.name = metadata["document"]["name"] if "document" in metadata and "name" in metadata["document"] else None

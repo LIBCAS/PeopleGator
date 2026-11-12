@@ -29,6 +29,8 @@ def parse_arguments():
     parser.add_argument("--output-xml-path", help="Path to directory where PAGE XML files will be saved.")
     parser.add_argument("--output-alto-path", help="Path to directory where ALTO files will be saved.")
     parser.add_argument("--output-render-path", help="Path to directory where rendered images will be saved.")
+    parser.add_argument("--processing-checkpoints", help="Directory for private per-engine JSON checkpoints (empty disables).")
+    parser.add_argument("--resume-from-checkpoint", help="Continue from a finalized processing checkpoint using the supplied configuration.")
 
     parser.add_argument("--import-from-app", action="store_true", help="Import the document from the People Gator app instead of processing it locally.")
     parser.add_argument("--export-to-app", action="store_true", help="Export the processed document to the People Gator app.")
@@ -194,6 +196,9 @@ def main():
     if args.output_render_path is not None:
         config['PARSE_FOLDER']['OUTPUT_RENDER_PATH'] = args.output_render_path
 
+    if args.processing_checkpoints is not None:
+        config['PARSE_FOLDER']['PROCESSING_CHECKPOINTS'] = args.processing_checkpoints
+
     if args.import_from_app:
         config['PARSE_FOLDER']['IMPORT_FROM_APP'] = 'yes'
 
@@ -230,12 +235,16 @@ def main():
     if drop_existing_annotations is None:
         drop_existing_annotations = False
 
-    document = load_document(input_images_path=input_image_path,
+    document = None if args.resume_from_checkpoint else load_document(input_images_path=input_image_path,
                              input_xml_path=input_xml_path,
                              input_alto_path=input_alto_path,
                              input_metadata_path=input_metadata_path)
 
-    document = document_parser.process_document(document, import_from_app=import_from_app, export_to_app=export_to_app, drop_existing_annotations=drop_existing_annotations)
+    processing_options = dict(import_from_app=import_from_app, export_to_app=export_to_app,
+                              drop_existing_annotations=drop_existing_annotations)
+    if args.resume_from_checkpoint:
+        processing_options['resume_from_checkpoint'] = args.resume_from_checkpoint
+    document = document_parser.process_document(document, **processing_options)
 
 
     if output_xml_path and not os.path.exists(output_xml_path):
