@@ -128,9 +128,21 @@ unfinished stages too. Prompt/schema/model resource paths may relocate identical
 bytes; input paths may relocate identical images/XML/metadata (same XML set).
 Output/checkpoint destinations and final export/drop choices can change.
 Credentials (`API_KEY`, password/passwd, token, secret, credential, authorization,
-private-key options) become required/presence markers without secret hashes.
-Credentials may rotate, but required ones must be supplied again. Credential-bearing
-URLs, embedded copies and credentials in document state/Pickle bytes are rejected.
+private-key options) become boolean presence markers without copying their values
+or hashing them. This redaction uses option names only and applies to both initial
+and current JSON configuration snapshots. Credentials may rotate, but required
+ones must be supplied again under the existing resume compatibility checks.
+
+Checkpointing does not scan configuration values, URLs, document fields, JSON or
+Pickle bytes for credential content. Non-credential options are recorded normally,
+including values reused from credential options and URLs with user information or
+credential-looking query parameters. Resource paths still use content fingerprints.
+`document.pkl` preserves the complete document content, including OCR, metadata
+and binary fields that happen to match configured credential values. No content is
+filtered, changed or rejected based on those matches. Key-based configuration
+redaction does not promise to detect or remove arbitrary secrets elsewhere in
+configuration or document data. Live clients, unpickleable/lossy state, input
+integrity and trusted-loading checks still apply.
 
 ## Read-only JSON inspection
 

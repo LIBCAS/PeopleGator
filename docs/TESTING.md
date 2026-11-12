@@ -15,7 +15,13 @@ app-stage or repeated export replay. Software-version mismatch cases require a
 WARNING with both saved/current PeopleGator versions and successful continuation;
 Python/dependency/source metadata cannot gate recovery. Actual corrupt Pickle and
 missing-class failures still produce actionable restoration errors. No live LLM,
-database or GPU is required. The supported
+database or GPU is required. Credential regressions exercise short/reused option
+values and credential-looking URLs through complete pipelines and per-engine
+publication. Only recognized credential option fields become boolean markers in
+the initial/current JSON configurations. ALTO/PAGE round-trips retain matching OCR,
+nested metadata, Unicode/binary arrays and engine-produced text; generated JSON
+and Pickle substrings cannot block saving. Live-client and fidelity rejection
+checks remain covered. The supported
 types, explicit model audit and conservative recovery limits are documented in
 [CHECKPOINTS.md](CHECKPOINTS.md).
 

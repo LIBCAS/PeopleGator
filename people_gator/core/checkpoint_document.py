@@ -36,12 +36,11 @@ def _attributes(value):
     return state
 
 
-def _check_state(value, secrets, seen=None):
-    """Reject credentials and live clients while visiting the actual object state.
+def _check_state(value, seen=None):
+    """Reject live clients and unsupported runtime state in the document graph.
 
     Args:
         value: Document field, including extra or inherited metadata.
-        secrets: Current configured credential strings.
         seen: Already visited object identities for cyclic graphs.
     """
     seen = set() if seen is None else seen
@@ -49,8 +48,6 @@ def _check_state(value, secrets, seen=None):
         return
     seen.add(id(value))
     if isinstance(value, (str, bytes, bytearray)):
-        if any((secret if isinstance(value, str) else secret.encode()) in value for secret in secrets):
-            raise CheckpointError('Credential found in checkpoint document metadata; remove it before checkpointing')
         return
     bases = type(value).__mro__
     if any(cls.__module__.split('.')[0] in {'requests', 'httpx', 'httpcore', 'openai', 'socket', '_socket'}
@@ -74,7 +71,7 @@ def _check_state(value, secrets, seen=None):
     else:
         children = _attributes(value).values()
     for child in children:
-        _check_state(child, secrets, seen)
+        _check_state(child, seen)
 
 
 def _equivalent(left, right, aliases, reverse, arrays):
@@ -231,16 +228,15 @@ def restore_document(payload, image_directory=None):
                               'and ensure its classes and required dependencies are available') from None
 
 
-def serialize_document(document, secrets=()):
+def serialize_document(document):
     """Serialize all state and verify it before publishing any checkpoint marker.
 
     Args:
         document: Complete post-engine PeopleGatorDocument.
-        secrets: Configured credentials which must never enter the payload.
     """
     from people_gator.core.utils import load_image
     try:
-        _check_state(document, secrets)
+        _check_state(document)
         references = {}
         if document.page_images_dir:
             allowed = {str(page.id) if str(page.id).endswith('.jpg') else str(page.id) + '.jpg'
@@ -256,8 +252,6 @@ def serialize_document(document, secrets=()):
         stream = BytesIO()
         DocumentPickler(stream, references).dump(document)
         payload = stream.getvalue()
-        if any(secret.encode() in payload for secret in secrets):
-            raise CheckpointError('Credential found in checkpoint payload')
         restored = restore_document(payload, document.page_images_dir)
         _equivalent(document, restored, {}, {}, [])
         return payload
