@@ -11,7 +11,7 @@ PeopleGator is a **Python document-processing tool** for detecting faces on scan
 - **Document annotation:** enrich ALTO XML or PAGE XML with face regions, identity references and processing metadata, and optionally generate annotated page previews.
 - **Database integration:** import face records from PeopleGatorApp and export processed document/page/face data using its HTTP API.
 - **Job processing:** provide a DocAPI-based processing API, worker and CLI client for submitting document jobs and retrieving results.
-- **Optional processing checkpoints:** save complete per-engine JSON snapshots and resume the unfinished pipeline; see [configuration and recovery](docs/CHECKPOINTS.md).
+- **Optional processing checkpoints:** save per-engine JSON metadata and a complete Pickle document and resume the unfinished pipeline; see [configuration and recovery](docs/CHECKPOINTS.md).
 
 ## Repository structure
 

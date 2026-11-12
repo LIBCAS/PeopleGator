@@ -29,8 +29,8 @@ def parse_arguments():
     parser.add_argument("--output-xml-path", help="Path to directory where PAGE XML files will be saved.")
     parser.add_argument("--output-alto-path", help="Path to directory where ALTO files will be saved.")
     parser.add_argument("--output-render-path", help="Path to directory where rendered images will be saved.")
-    parser.add_argument("--processing-checkpoints", help="Directory for private per-engine JSON checkpoints (empty disables).")
-    parser.add_argument("--resume-from-checkpoint", help="Continue from a finalized processing checkpoint using the supplied configuration.")
+    parser.add_argument("--processing-checkpoints", help="Directory for private per-engine JSON metadata + Pickle checkpoints (empty disables).")
+    parser.add_argument("--resume-from-checkpoint", help="Continue from a trusted local checkpoint directory or checkpoint.json using the supplied configuration.")
 
     parser.add_argument("--import-from-app", action="store_true", help="Import the document from the People Gator app instead of processing it locally.")
     parser.add_argument("--export-to-app", action="store_true", help="Export the processed document to the People Gator app.")

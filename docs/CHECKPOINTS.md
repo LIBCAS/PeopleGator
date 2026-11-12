@@ -1,18 +1,11 @@
 # Processing checkpoints and recovery
 
-Checkpointing is optional. Set a directory in the existing processing section:
-
-```ini
-[PARSE_FOLDER]
-PROCESSING_CHECKPOINTS = ./processing-checkpoints
-```
-
-Or pass `--processing-checkpoints DIR` (also `--processing-checkpoints=DIR`).
-The CLI value overrides the INI, including an explicit empty string to disable
-snapshots. If both are absent or empty, processing creates no checkpoint files
-or recovery ledger. This is neither an engine nor a separate INI section.
-Checkpoint and other `[PARSE_FOLDER]` document paths resolve from the process
-working directory. Engine resource paths still resolve from the INI directory.
+Enable checkpoints in the existing `[PARSE_FOLDER]` section with
+`PROCESSING_CHECKPOINTS = ./processing-checkpoints`, or pass
+`--processing-checkpoints DIR`. The CLI overrides the INI, including an empty
+string to disable snapshots. If both are absent/empty, no checkpoints or ledger
+are created. Document/checkpoint paths resolve from the process working directory;
+engine resource paths resolve from the INI directory. No new section/engine exists.
 
 ```bash
 peoplegator --config config.ini --input-alto-path input/alto \
@@ -20,200 +13,159 @@ peoplegator --config config.ini --input-alto-path input/alto \
   --output-alto-path output/alto
 
 peoplegator --config config.ini \
-  --resume-from-checkpoint processing-checkpoints/DOCUMENT/RUN/ATTEMPT/0002-ENGINE_TEXT_CLUSTERING.checkpoint.json \
-  --processing-checkpoints processing-checkpoints --output-alto-path recovered/alto
+  --resume-from-checkpoint processing-checkpoints/DOCUMENT/RUN/ATTEMPT/0002-ENGINE_TEXT_CLUSTERING \
+  --output-alto-path recovered/alto
 ```
 
-Replace the illustrative IDs with an actual finalized snapshot. Supply a complete
-current configuration and credentials again. Resume never loads the document
-from XML or imports app annotations again: it reconstructs the saved intermediate
-object graph, skips the completed prefix and executes the first unfinished engine.
-It then runs requested app and XML/render outputs. A final-engine snapshot can
-be used for local output retries without running any engine. The original import
-setting must remain the same for compatibility; the import itself is skipped.
+Use the actual stage directory, or its `checkpoint.json`. Resume requires the
+complete current config and credentials again, skips completed engines and the
+initial app import, and performs the requested final exports. The original import
+flag must match even though import is skipped. The final-engine checkpoint allows
+local output retries without executing engines. Keep original inputs and the
+original run ledger accessible, even if resumed checkpoint output is disabled
+with `--processing-checkpoints ''` or redirected elsewhere.
 
-## Files and JSON contract
+## Hybrid format and publication
 
-Each new run gets random document/run identifiers, even for missing/repeated
-source document IDs. Snapshots are placed under
-`DIRECTORY/DOCUMENT_UUID/RUN_UUID/ATTEMPT_UUID/ORDINAL-SECTION.checkpoint.json`.
-Each resume has a fresh attempt identifier; it appends snapshots to the same
-history without modifying earlier ones. `parent_checkpoint` links the selected
-snapshot and subsequent stages. `latest.json` in the original run directory is
-an advisory pointer, never a resume file. A failed write may leave this pointer
-behind the newest snapshot; inspect finalized files when recovering.
+Each stage is a separate directory:
+`DIRECTORY/DOCUMENT_UUID/RUN_UUID/ATTEMPT_UUID/ORDINAL-SECTION/`.
+It contains **`document.pkl`** (authoritative complete Python document) and
+**`checkpoint.json`** (small, readable metadata and commit marker). New runs use
+new UUIDs; each resume uses a new attempt directory and appends snapshots without
+overwriting originals. `parent_checkpoint` connects the selected history;
+`latest.json` in the original run directory is an advisory pointer, not a resume file.
 
-Schema version **1** has these top-level fields:
+The JSON schema is **version 2**. Earlier JSON-only snapshots are unsupported;
+there is no migration or long-term archival/portable interchange guarantee.
 
-| Field | Meaning |
+| Metadata | Contents |
 | --- | --- |
-| `schema_version`, `created_at` | Version and UTC creation timestamp. No migration of other versions is attempted. |
-| `document_id`, `run_id`, `attempt_id` | Opaque storage/history identifiers. |
-| `document_identity` | Original logical document ID and library, also verified against the graph. |
-| `run_directory`, `parent_checkpoint` | Location of the required original durable ledger and processing-history parent. |
-| `initial_configuration`, `initial_options` | Sanitized effective initial INI sections in insertion order, after CLI path/flag overrides; effective app flags include direct parser options. |
-| `execution_configuration` | Sanitized settings for the current execution, retaining the initial baseline separately. |
-| `pipeline` | Ordered zero-based ordinal, exact engine section, `METHOD`, and sanitized per-section configuration hash. Repeated methods remain separate stages. |
-| `completed_steps` | Exact successful prefix, with stage identity, completed status, finish timestamp and engine duration. |
-| `last_completed`, `next_step` | Last completed ordinal and first unfinished ordinal (pipeline length means finished). |
-| `model_identity` | SHA-256 of the audited model implementations, including inherited classes and event handlers. |
-| `input_assets` | Original XML set, metadata and page-image references with sizes and SHA-256 integrity checks. |
-| `document` | JSON object table with `root`, `objects` and `{ "ref": index }` references. |
-| `integrity_sha256` | Canonical JSON checksum of the other fields, detecting corruption, not proving authenticity. |
+| Identity/history | Schema version, UTC timestamp, document/run/attempt UUIDs, logical document ID/library, original ledger directory and parent checkpoint. |
+| Configuration | Sanitized initial INI sections in original insertion order after CLI overrides, initial app/device options, and separately sanitized current execution settings. |
+| Pipeline/completion | Exact section name, ordinal, METHOD and per-section identity; successful ordered prefix with finish/duration/status, last completed and next stage. |
+| Compatibility | Python implementation and exact major/minor/micro version, Pickle protocol **5**, PeopleGator/pero-ocr/AnnoPage/NumPy/SciPy/OpenCV/lxml versions, and hashes of layout, metadata, source-mapping and callback implementations. |
+| Integrity | Payload filename `document.pkl`, byte size and SHA-256; original XML/image/metadata paths and content hashes; metadata checksum. |
+| Summary | Counts of pages, text regions/lines, non-text regions, faces, mentions, clusters and distinct resolved app identities. This is diagnostic, not document state. |
 
-Each successful engine result is saved before the next engine. No snapshot is
-created for a throwing engine, including its partially modified in-memory state.
-All attributes of supported model objects are traversed, including extra metadata;
-unknown populated types, missing audited fields, unsupported handlers and array
-types fail closed instead of producing an incomplete checkpoint. Mutable cycles
-and original object aliases are preserved. Types and dict/list/tuple ordering are
-retained. Small numeric arrays expose readable values, dtype and shape; larger
-arrays, crops and in-memory images use compressed base64 data inside JSON. No
-pickle, arbitrary imports, constructors from checkpoint data, partial `to_dict()`
-methods or lossy XML writers are used to reconstruct the document.
+The native Pickle memo preserves object identity, cycles and shared references.
+No object table, bespoke JSON type codecs, class registry or partial `to_dict()`
+reconstruction is used. Every populated attribute is checked against the local
+unpickled result before publication, including extra/inherited metadata, reference
+aliases and array data. A non-pickleable callback/runtime object, lossy custom
+`__getstate__`, changed type/field or lost array-view relationship fails creation
+instead of silently dropping state. Live authenticated clients/sessions are rejected;
+only recoverable document state belongs in a checkpoint.
 
-External page images stay lazy when they were lazy. Cached images, including
-modified pixels that differ from their JPEG, are saved in the object table and
-restored unchanged. Original XML is checked as an external dependency because
-existing ALTO enrichment uses it as the output base; it is **never** substituted
-for the saved layout. Original metadata JSON is retained as `source_metadata`,
-including keys not interpreted by the existing loader.
+Unchanged decoded page-image cache entries reference their integrity-checked JPEG
+instead of duplicating pixels. Modified cached images remain in the Pickle.
+Lazy images stay lazy. Cached aliases are retained. Missing/altered inputs fail
+recovery. Original XML is checked because the existing ALTO output path uses it as
+an output base; it is never re-imported to replace saved intermediate annotations.
+`source_metadata` retains the complete original metadata JSON, including unused keys.
 
-## Audited inherited state
+Publication creates a private stage, writes/flushes/fsyncs and atomically finalizes
+`document.pkl`, registers the locally produced manifest checksum in the durable
+run ledger, then writes/flushes/fsyncs and atomically publishes **`checkpoint.json`
+last**. POSIX directory entries are synced. A directory without the marker, a
+missing/mismatched payload, or temporary files cannot resume. Earlier valid stages
+survive payload/manifest failures. Failed engines never publish completion. The
+latest pointer can lag after a failed advisory update; finalized pairs remain valid.
 
-The audit uses the packaging pins: pero-ocr `204a989b51b97256704fcf098878b99d1e958a3c`
-and AnnoPage `1fa885d55d516f782ed5ac2fcabe8801e5fb8838`. The serializer checks the
-inherited constructor fields explicitly and serializes **all** additional fields.
-The tests populate these structures on real ALTO and PAGE fixtures and compare
-every attribute, type, order and original reference, rather than only counts.
+## Inherited-model audit
 
-| Model | Audited state |
+Tests load real ALTO and PAGE fixtures using packaging pins pero-ocr
+`204a989b51b97256704fcf098878b99d1e958a3c` and AnnoPage
+`1fa885d55d516f782ed5ac2fcabe8801e5fb8838`, populate inherited state and compare every
+field/type/value/order/reference after Pickle round-trip. Native Pickle handles
+the current callbacks, so no state-dropping `__getstate__` hooks are needed.
+
+| Model | Verified state |
 | --- | --- |
-| pero `PageLayout` | ID, size, regions, reading order (including object keys), confidence, embeddings, metadata, all 14 XML event objects and their ordered handlers. |
-| pero `RegionLayout` | ID, polygon, type/category, lines, transcription, detection confidence, embeddings, metadata. |
-| pero `TextLine` | ID/index, baseline/polygon/heights, transcription, dense or CSC/CSR/COO sparse logits and their full attributes, crop, characters, logit coordinates, character/transcription confidence, category, embeddings, metadata. |
-| AnnoPage page/region | Inherited pero fields and all graphical metadata; inherited and PeopleGator XML handlers retain their exact order and functions. |
-| AnnoPage `BaseMetadata` | Tag/MODS IDs, UUID, record identifier, model provenance, creation date/time, confidence. |
-| AnnoPage `GraphicalObjectMetadata` | Tag description, multilingual caption/topics/color/description/title, continuing line, prompts, caption and reference metadata. |
-| AnnoPage `RelatedLinesMetadata` | Inherited provenance, original line references, relation enum, description and multilingual title. |
-| AnnoPage color/enums | Color mode, dominant color names/coverage, typed Language/Category/LineRelation values, including enum dictionary keys. |
-| PeopleGator | Complete document/page state, all metadata, face/source-region references and landmarks, page/person identities and authority IDs, original mentions/legacy line links and offsets, SourceLine/SourceSpan records, document clusters, shared identities and journal receipt targets. |
+| pero PageLayout | ID/size, ordered regions/reading order including object keys, confidence, embeddings, metadata and all 14 XML events with ordered inherited/native handlers. |
+| pero RegionLayout/TextLine | Complete geometry, baselines/heights, IDs/index/order, transcription, type/category, detection and character/transcription confidences, dense/CSC/CSR/COO logits and their full attributes, crops, characters/logit coordinates, embeddings and metadata. |
+| AnnoPage | Non-text regions/detections, complete BaseMetadata provenance, multilingual captions/titles/topics/descriptions/colors, color coverage, continuing line, caption/reference metadata and links to original OCR lines, enums and prompt annotations. |
+| PeopleGator | All document/page metadata, faces/landmarks/source-region links, person/page identities and authority IDs, original mentions/legacy line links/offsets/SourceSpans, cross-page clusters/shared identities and linking-receipt targets. |
 
-Standard metadata values also support dates/times with fixed-offset timezones,
-UUIDs, native-platform paths, bytes, bytearrays,
-sets/frozensets, NumPy scalars and nonfinite numbers using tagged representations.
-Arrays with object/structured dtypes or extra dtype metadata, overlapping distinct
-array views, custom timezones/subclasses, arbitrary callables and unsupported foreign
-objects require an explicit adapter; checkpoint creation fails with a safe error.
-This prevents silent loss of data or view relationships. Ordinary independently
-owned crops and shared references to the same array are supported. Checkpoints
-are application data, not an arbitrary Python object persistence interface.
+Standard Python/NumPy metadata now uses native Pickle support, including
+structured arrays, dtype metadata and importable timezone/callback objects.
+Distinct overlapping NumPy views that native Pickle cannot preserve faithfully
+are rejected; detach those views before checkpointing. Unpickleable local/lambda
+callbacks and unknown lossy state require targeted restoration support, not omission.
 
-## Compatibility and relocation
+## Trusted loading and compatibility
 
-Resume validates the schema/checksum, complete graph, logical document identity,
-model implementations, ordered pipeline and completed prefix, initial non-secret
-settings, resource content and external inputs before running any engine.
-Malformed files, temporary files, pointer files, changed resources, absent inputs
-and inconsistent histories produce an error; processing never falls back to
-starting over or silently accepting changed completed work.
+**Pickle can execute code. Never resume or inspect an untrusted/downloaded/shared
+checkpoint, even if its SHA-256 matches. Checksums detect corruption; they do not
+authenticate a malicious manifest, ledger or payload.** Only locally generated
+checkpoints in protected storage are accepted. The loader requires the original
+private run ledger, its registered marker path/checksum, private owned stage/run
+files and directories on POSIX, and no symlinked files. Arbitrarily copied or
+externally supplied pairs are rejected. These provenance/permission checks do
+not protect against a malicious actor already able to modify your private history
+or Python environment; treat both as trusted code. Windows uses filesystem ACLs.
 
-The current INI must supply the entire original pipeline in its original order,
-with identical settings. This strict rule applies to unfinished stages too.
-Engine prompt/schema/model `*_PATH` resources are identified by their entire
-file content hash and size; a path may move if the file bytes remain identical.
-Missing resources fail validation. Endpoint/model names, generation limits
-(including `MAX_OUTPUT_TOKENS`) and other inference settings must match. Model
-code fingerprints must match, so changing the inherited model implementation
-requires using the original software to recover this schema version.
+Before unpickling, both resume and inspection validate JSON schema/completion
+history, UUIDs and ledger registration, Python/Pickle/package/code compatibility,
+required external inputs, payload size/hash and actual protocol header. Resume
+also validates the complete ordered current pipeline, resources and initial
+settings before unpickling. No failure silently restarts/skips stages. The
+payload is read once, and the verified bytes are the bytes passed to the unpickler.
 
+The current config must retain all engine sections/order/settings, endpoints,
+usernames, device selection and initial import flag. This strict rule covers
+unfinished stages too. Prompt/schema/model resource paths may relocate identical
+bytes; input paths may relocate identical images/XML/metadata (same XML set).
+Output/checkpoint destinations and final export/drop choices can change.
 Credentials (`API_KEY`, password/passwd, token, secret, credential, authorization,
-and private-key options) are replaced with presence/required markers; no secret
-or secret hash is persisted. Current credentials may rotate, but required
-credentials cannot be removed. Usernames and service endpoints are non-secret
-compatibility settings. Credential-bearing URLs and credentials embedded in
-other settings/document metadata are rejected. Place authentication in dedicated
-credential options. ConfigParser interpolation is resolved before sanitizing.
+private-key options) become required/presence markers without secret hashes.
+Credentials may rotate, but required ones must be supplied again. Credential-bearing
+URLs, embedded copies and credentials in document state/Pickle bytes are rejected.
 
-The processing device selection is recorded in `initial_options` and must match
-on resume. Current `[PARSE_FOLDER]` input paths may relocate the same files; file contents,
-XML filenames/set and page-image content must match. Missing replacement paths
-use original saved paths. Output directories and checkpoint destinations can
-change. App export/drop flags may change independently of engine work; this
-allows local-only output recovery. The original app import flag must match.
-Do not change a source file in place or use an output directory as an input
-directory: integrity checks will prevent further recovery from that history.
-
-The **original run directory and its ledger must remain accessible**, even if
-resumed snapshots go elsewhere or are disabled with `--processing-checkpoints ''`.
-Moving input resources is supported; relocating or losing the durable history
-ledger is not an automatic recovery operation. Preserve the complete history
-until processing and any app reconciliation are finished.
-
-## Crash recovery and external side effects
-
-Snapshot publication uses a private temporary sibling, full JSON serialization,
-file flush/fsync, atomic rename and a directory fsync on POSIX. Earlier snapshots
-survive a failed write. Temporary files (including complete but unfinalized ones)
-are not resume points. Snapshot completion is recorded in memory only after
-publication and the latest pointer succeed. A process lock prevents concurrent
-resumes of the same history and is released by the OS after a crash.
-
-App mutations cannot be made transactional by saving JSON. The version-1 recovery
-policy fences the **entire `ENTITY_MATCHING` stage** in a durable `run-state.json`
-**before** executing it. If that stage may have run after the selected snapshot,
-replay is blocked, even if a later search index does not yet show the new person.
-Choose its completed post-engine snapshot when one exists: that graph includes
-successful identity IDs and original linking receipts. Otherwise reconcile with
-PeopleGatorApp manually before starting a new run. The client cannot establish
-whether an interrupted create succeeded, so it never blindly repeats that stage.
-The fence is deliberately conservative even for read-only/unresolved matching
-attempts; there is no server idempotency key or automatic rollback guarantee.
-Other completed engines are never rerun on resume. A crash inside a pure engine
-can recover only its preceding fully completed snapshot.
-
-The run ledger is checksummed too; missing, malformed or damaged ledgers cannot
-authorize replay. Every app export attempt is durably fenced before document/page/face/image/layout
-writes. A repeated export in the same history is blocked whether the earlier
-attempt succeeded, failed or crashed, including `DROP_EXISTING_ANNOTATIONS`.
-Reconcile partial app data manually; do not delete/reset the ledger to retry.
-A local-only resume remains available with app export disabled in the current
-INI. If needed, create a separate reviewed operation after reconciliation.
-Existing export functions can log failed individual operations rather than
-raising, so even a normal return is treated as an attempted export, never as
-proof that all records were stored. Engine checkpoints precede all final exports;
-XML/render output retries do not imply app retry permission.
-
-Checkpointing-disabled fresh runs retain the existing app behavior. Starting a
-new independent run does not consult previous run ledgers; operators must not
-use a fresh run to evade an unresolved app operation. No automatic worker retry,
-server checkpoint storage or exactly-once protocol is introduced.
-
-## Privacy, retention and validation
-
-Snapshots include private OCR, names, prompts recorded as document annotations,
-and original metadata. Store them outside version control in access-controlled
-storage with an appropriate retention/backup policy. New run/attempt directories
-are private (`0700`) and JSON/ledger files use `0600` on POSIX. Existing parent
-folder permissions remain the operator's responsibility; filesystem ACLs apply
-on Windows. Routine checkpoint diagnostics omit document payloads, paths and
-credentials. Do not publish a snapshot as a log or attach it unredacted to an issue.
-
-The conventional `processing-checkpoints/` directory and `*.checkpoint.json`
-files are ignored by Git; add any custom checkpoint directory to local ignore
-rules too, because its ledger/pointer also contains private references. Retain
-all required source assets and the original run ledger together. After review,
-reconciliation and the retention period, remove only the selected run's history,
-its resumed attempt directories and abandoned temporary siblings. Never clean
-an active history. Loss of the ledger intentionally prevents unsafe replay.
-
-Run deterministic tests without a live LLM, database or GPU:
+## Read-only JSON inspection
 
 ```bash
-python -m pytest -q tests/test_checkpoints.py tests/test_entity_matching.py tests/test_documentation.py
+python -m user_scripts.inspect_checkpoint /protected/stage-directory
+python -m user_scripts.inspect_checkpoint /protected/stage/checkpoint.json \
+  --details ocr entities --output-path /protected/diagnostics/stage-2.json
 ```
 
-They cover full inherited graph equivalence, every engine boundary, repeated
-methods, disabled mode, CLI precedence, modified cached/lazy images, input and
-resource relocation/integrity, interrupted publication, failed engines, secret
-redaction, durable create/export fencing and restored real linking receipts.
+This applies the same trust/environment/input/payload checks before loading.
+It does not initialize engines or app clients, execute import/export, or write to
+checkpoint history. It emits selected OCR transcription/geometry/confidence,
+region categories/polygons/source links, mentions/source offsets and cluster member
+indices/resolved IDs, alongside counts and document identity. `--details` selects
+`ocr`, `regions`, and/or `entities`; stdout is the default. Explicit output files
+are private and cannot overwrite registered checkpoint history. Compare these
+exports between stages to understand changes. This selected diagnostic JSON is
+intentionally not a second lossless recovery representation. Inspection needs no
+LLM/DB credentials or inference configuration; resource fingerprints are available
+in metadata and no inference is performed.
+
+## App recovery, privacy and retention
+
+A checksummed durable ledger fences the entire `ENTITY_MATCHING` stage **before**
+it runs. If a stage may have written after the selected snapshot, replay is
+blocked even when search-index absence suggests no result. Use its completed
+post-stage checkpoint if present: it contains IDs and original creation receipts.
+Otherwise reconcile manually with PeopleGatorApp before a new run. Uncertain
+receipts also stop recovery. No server idempotency, rollback or exactly-once
+claim is made. A run lock prevents concurrent resumes and is released on crash.
+
+Every app export attempt is fenced before writing records/images/layouts,
+including successful, partially failed and destructive replacement exports.
+Repeats in the same history require manual reconciliation. Existing export
+functions can log individual failures without raising; a return is never proof
+that all writes succeeded. Local-only output retry remains possible with app
+export disabled. Engine checkpoints precede final app/XML/render exports.
+Independent new histories do not reconcile old app operations; never start one
+to bypass an unresolved write. Worker retry/storage protocols are outside scope.
+
+JSON diagnostics and Pickle can contain private OCR, names, prompts and metadata.
+New directories use `0700`; marker/payload/ledger files use `0600` on POSIX.
+Keep trusted histories outside version control, with access-controlled backup and
+appropriate retention. Ignore rules cover `checkpoint.json`, `document.pkl` and
+the conventional `processing-checkpoints/`; custom directories need local ignore
+rules for ledgers/pointers too. Routine errors/logs omit private content and paths.
+Retain original assets and ledgers until processing/reconciliation finishes, then
+remove only the selected inactive history, redirected stages and abandoned staging
+files under your retention policy. Never publish unredacted diagnostic exports.

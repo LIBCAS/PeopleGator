@@ -79,7 +79,8 @@ target/
 .ipynb_checkpoints
 
 # Private processing snapshots and their recovery ledgers.
-*.checkpoint.json
+checkpoint.json
+document.pkl
 processing-checkpoints/
 
 # IPython

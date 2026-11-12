@@ -6,10 +6,10 @@ Tests focus on PeopleGator's document-processing pipeline: loading pages, runnin
 
 Optional processing checkpoints are tested in `tests/test_checkpoints.py` using
 real ALTO/PAGE fixtures, rich inherited OCR/AnnoPage state and mocked engines/app
-clients. Cases compare every field/type/order/reference after JSON round-trip,
+clients. Cases compare every field/type/order/reference after Pickle round-trip,
 resume every boundary, verify CLI precedence and disabled behavior, recover
 modified cached/lazy images, validate relocated/missing/changed inputs/resources,
-interrupt atomic publication in a subprocess, and prevent uncertain app-stage or
+interrupt payload/manifest publication in a subprocess, and verify pre-unpickle trust/compatibility checks and diagnostic JSON export, and prevent uncertain app-stage or
 repeated export replay. No live LLM, database or GPU is required. The supported
 types, explicit model audit and conservative recovery limits are documented in
 [CHECKPOINTS.md](CHECKPOINTS.md).

@@ -35,7 +35,7 @@ The `[DB_API]` configuration defines the connection. The CLI switches `--import-
 The local script loads the INI configuration and constructs a `PeopleGatorDocument` from page images, source ALTO/PAGE XML, and optional JSON metadata. `DocumentParser` creates and runs the configured engines in INI section order.
 
 When `[PARSE_FOLDER] PROCESSING_CHECKPOINTS` or `--processing-checkpoints` names
-a directory, the parser publishes a complete versioned JSON snapshot after each
+a directory, the parser publishes JSON metadata and a complete Pickle document after each
 successful engine. `--resume-from-checkpoint` restores its full inherited
 document graph and resumes the unfinished engine prefix without loading original
 XML or importing app annotations again. Configuration/resource/input fingerprints
@@ -92,7 +92,7 @@ The broader system design also includes occurrences of person names in OCR text.
 | --- | --- |
 | `people_gator/core/document_parser.py` | Configured engine orchestration and application import/export. |
 | `people_gator/core/layout.py` | Page/document objects, face-region metadata, ALTO/PAGE I/O and rendering. |
-| `people_gator/core/checkpoints.py`, `checkpoint_graph.py` | Optional per-engine JSON snapshots, complete inherited object-graph recovery, compatibility/integrity checks and durable app replay guards. |
+| `people_gator/core/checkpoints.py`, `checkpoint_document.py`, `checkpoint_inspection.py` | Hybrid checkpoint publication, trusted Pickle recovery, selected read-only JSON diagnostics, compatibility/integrity checks and durable app replay guards. |
 | `people_gator/engines/base.py` | Common processing-engine interfaces. |
 | `people_gator/text/` | Reusable text chunker, factory and exact OCR source mappings; consumed internally by text detectors. |
 | `people_gator/engines/face_detection.py` | YOLO detection in selected image regions; boxes and five landmarks. |

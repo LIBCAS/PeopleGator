@@ -134,10 +134,10 @@ def assert_graph_equal(original, restored, mapping=None):
 
 @pytest.mark.parametrize('fmt', ['alto', 'page'])
 def test_entire_graph_round_trip(fmt):
-    from people_gator.core.checkpoint_graph import GraphEncoder, restore_document
+    from people_gator.core.checkpoint_document import serialize_document, restore_document
     doc = rich_document(fmt)
-    graph = GraphEncoder().document(doc)
-    restored = restore_document(json.loads(json.dumps(graph, allow_nan=False)))
+    payload = serialize_document(doc)
+    restored = restore_document(payload)
     assert_graph_equal(doc, restored)
     page = restored.page_layouts[0]
     assert page.faces[0].source_region is page.regions[-2]
@@ -150,9 +150,9 @@ def test_entire_graph_round_trip(fmt):
 @pytest.mark.parametrize('empty_pages', [0, 1, 3])
 def test_empty_document_round_trip(empty_pages):
     from people_gator.core.layout import PeopleGatorDocument, PeopleGatorPageLayout
-    from people_gator.core.checkpoint_graph import GraphEncoder, restore_document
+    from people_gator.core.checkpoint_document import serialize_document, restore_document
     doc = PeopleGatorDocument(page_layouts=[PeopleGatorPageLayout(str(i)) for i in range(empty_pages)])
-    assert_graph_equal(doc, restore_document(GraphEncoder().document(doc)))
+    assert_graph_equal(doc, restore_document(serialize_document(doc)))
 
 
 def pipeline(tmp_path, monkeypatch, methods=('TEXT_ENTITY_DETECTION',) * 3, directory=True):
@@ -177,7 +177,7 @@ def mark(doc, ordinal):
 
 
 def snapshots(tmp_path):
-    return sorted((tmp_path / 'snapshots').rglob('*.checkpoint.json'))
+    return sorted((tmp_path / 'snapshots').rglob('checkpoint.json'))
 
 
 def resign(data):
@@ -197,7 +197,7 @@ def test_resume_each_boundary_matches_uninterrupted(tmp_path, monkeypatch, fmt, 
     payloads = [json.loads(p.read_text()) for p in original_paths]
     assert [p['last_completed'] for p in payloads] == [0, 1, 2]
     assert [p['completed_steps'][-1]['section'] for p in payloads] == ['ENGINE_0', 'ENGINE_1', 'ENGINE_2']
-    assert all(p['schema_version'] == 1 for p in payloads)
+    assert all(p['schema_version'] == 2 for p in payloads)
     for engine in engines:
         engine.process_document.reset_mock()
     restored = parser.process_document(None, resume_from_checkpoint=original_paths[resume_index])
@@ -225,7 +225,7 @@ def test_disabled_mode_and_distinct_runs(tmp_path, monkeypatch):
 
 
 def test_engine_failure_preserves_last_good_snapshot(tmp_path, monkeypatch):
-    from people_gator.core.checkpoint_graph import restore_document
+    from people_gator.core.checkpoint_document import restore_document
     parser, engines, config = pipeline(tmp_path, monkeypatch)
     def fail(doc):
         doc.source_metadata['partial'] = True
@@ -237,7 +237,7 @@ def test_engine_failure_preserves_last_good_snapshot(tmp_path, monkeypatch):
     assert len(paths) == 1
     payload = json.loads(paths[0].read_text())
     assert payload['next_step'] == 1
-    assert 'partial' not in restore_document(payload['document']).source_metadata
+    assert 'partial' not in restore_document((paths[0].parent / 'document.pkl').read_bytes()).source_metadata
     engines[1].process_document.side_effect = lambda d: mark(d, 1)
     assert parser.process_document(None, resume_from_checkpoint=paths[0]).source_metadata['stages'] == [0, 1, 2]
 
@@ -247,7 +247,7 @@ def test_atomic_failure_preserves_snapshot_and_completion(tmp_path, monkeypatch)
     parser, engines, config = pipeline(tmp_path, monkeypatch)
     replace = checkpoints.os.replace
     def fail_second(source, destination):
-        if Path(destination).name.startswith('0002-'):
+        if Path(destination).name == 'checkpoint.json' and Path(destination).parent.name.startswith('0002-'):
             raise OSError('private path and payload')
         replace(source, destination)
     monkeypatch.setattr(checkpoints.os, 'replace', fail_second)
@@ -261,7 +261,7 @@ def test_atomic_failure_preserves_snapshot_and_completion(tmp_path, monkeypatch)
     assert parser.process_document(None, resume_from_checkpoint=paths[0]).source_metadata['stages'] == [0, 1, 2]
 
 
-@pytest.mark.parametrize('damage', ['json', 'version', 'digest', 'history', 'next', 'field', 'reference', 'document', 'model', 'duplicate'])
+@pytest.mark.parametrize('damage', ['json', 'version', 'digest', 'history', 'next', 'document', 'model', 'duplicate'])
 def test_reject_corrupt_snapshots(tmp_path, monkeypatch, damage):
     from people_gator.core.checkpoints import CheckpointError
     parser, engines, config = pipeline(tmp_path, monkeypatch)
@@ -273,11 +273,7 @@ def test_reject_corrupt_snapshots(tmp_path, monkeypatch, damage):
     if damage == 'history': data['completed_steps'][0]['section'] = 'ENGINE_2'
     if damage == 'next': data['next_step'] = True
     if damage == 'document': data['document_identity'][0] = 'different'
-    if damage == 'model': data['model_identity'] = {}
-    if damage in ('field', 'reference'):
-        fields = data['document']['objects'][0]['fields']
-        if damage == 'field': del fields['page_layouts']
-        else: fields['page_layouts'] = {'ref': 999999}
+    if damage == 'model': data['compatibility']['code'] = {}
     raw = json.dumps(data if damage == 'digest' else resign(data))
     if damage == 'json': raw = '{"private":'
     if damage == 'duplicate': raw = '{"schema_version":1,"schema_version":2}'
@@ -335,7 +331,7 @@ def test_unknown_fields_and_handlers_fail_before_engine(tmp_path, monkeypatch):
                 lambda d: d.page_layouts[0].to_pagexml_started.__iadd__(lambda *args: None)):
         doc = rich_document()
         add(doc)
-        with pytest.raises(CheckpointError, match='Unsupported'):
+        with pytest.raises(CheckpointError, match='faithfully|Pickle|Unsupported'):
             parser.process_document(doc)
     assert not any(e.process_document.called for e in engines)
 
@@ -395,7 +391,7 @@ def test_uncertain_app_stage_is_never_replayed(tmp_path, monkeypatch, hazard):
     engines[1].process_document.side_effect = linking
     replace = checkpoints.os.replace
     def fail_checkpoint(source, destination):
-        if Path(destination).name.startswith('0002-'): raise OSError('interrupted')
+        if Path(destination).name == 'checkpoint.json' and Path(destination).parent.name.startswith('0002-'): raise OSError('interrupted')
         replace(source, destination)
     if hazard == 'checkpoint_failure': monkeypatch.setattr(checkpoints.os, 'replace', fail_checkpoint)
     if hazard != 'old_snapshot':
@@ -428,7 +424,7 @@ def test_export_repeat_and_missing_ledger_are_blocked(tmp_path, monkeypatch):
     assert imported.call_count == exported.call_count == 1
     ledger = Path(json.loads(path.read_text())['run_directory']) / 'run-state.json'
     ledger.unlink()
-    with pytest.raises(checkpoints.CheckpointError, match='ledger'):
+    with pytest.raises(checkpoints.CheckpointError, match='ledger|protected local'):
         parser.process_document(None, import_from_app=True, resume_from_checkpoint=path)
 
 
@@ -463,7 +459,7 @@ def test_cli_configuration_and_resume_outputs(tmp_path, monkeypatch, mode):
     monkeypatch.setattr(sys, 'argv', args)
     assert parse_folder.main() == 0
     expected = cli_dir if mode in ('cli', 'override') else ini_dir
-    paths = sorted(expected.rglob('*.checkpoint.json'))
+    paths = sorted(expected.rglob('checkpoint.json'))
     assert len(paths) == (2 if mode in ('cli', 'ini', 'override') else 0)
     assert not ini_dir.exists() if mode == 'override' else True
     if paths:
@@ -481,7 +477,7 @@ def test_cli_configuration_and_resume_outputs(tmp_path, monkeypatch, mode):
             for element in tree.findall('.//{*}Metadata'): element.getparent().remove(element)
             return etree.tostring(tree, method='c14n')
         assert normalized(original) == normalized(resumed)
-        assert len(list(expected.rglob('*.checkpoint.json'))) == 2
+        assert len(list(expected.rglob('checkpoint.json'))) == 2
 
 
 def test_token_limit_is_nonsecret_compatibility_setting(tmp_path, monkeypatch):
@@ -640,11 +636,11 @@ def test_device_change_and_uncertain_receipt_require_reconciliation(tmp_path, mo
 
 @pytest.mark.parametrize('sparse_format', ['csr', 'coo'])
 def test_sparse_ocr_formats_preserve_all_fields(sparse_format):
-    from people_gator.core.checkpoint_graph import GraphEncoder, restore_document
+    from people_gator.core.checkpoint_document import serialize_document, restore_document
     doc = rich_document()
     line = doc.page_layouts[0].regions[0].lines[0]
     line.logits = line.logits.asformat(sparse_format)
-    assert_graph_equal(doc, restore_document(GraphEncoder().document(doc)))
+    assert_graph_equal(doc, restore_document(serialize_document(doc)))
 
 
 def test_killed_app_engine_leaves_durable_fence_and_releases_lock(tmp_path, monkeypatch):
@@ -697,7 +693,7 @@ def test_damaged_ledger_cannot_authorize_replay(tmp_path, monkeypatch, damage):
         data = _sealed(data)
     ledger.write_text(json.dumps(data))
     for engine in engines: engine.process_document.reset_mock()
-    with pytest.raises(CheckpointError, match='ledger'):
+    with pytest.raises(CheckpointError, match='ledger|protected local'):
         parser.process_document(None, resume_from_checkpoint=path)
     assert not any(engine.process_document.called for engine in engines)
 
@@ -706,14 +702,14 @@ def test_metadata_timestamps_uuid_and_special_float_are_lossless():
     from datetime import date, timedelta
     from uuid import UUID, SafeUUID
     import struct
-    from people_gator.core.checkpoint_graph import GraphEncoder, restore_document
+    from people_gator.core.checkpoint_document import serialize_document, restore_document
     doc = rich_document()
     doc.extra['date'] = date(2026, 11, 12)
     doc.extra['time'] = datetime(2026, 11, 12, 1, 30, fold=1,
                                 tzinfo=timezone(timedelta(hours=2), 'named-offset'))
     doc.extra['uuid'] = UUID(str(uuid4()), is_safe=SafeUUID.safe)
     doc.extra['nan'] = struct.unpack('!d', bytes.fromhex('fff8000000000001'))[0]
-    restored = restore_document(GraphEncoder().document(doc))
+    restored = restore_document(serialize_document(doc))
     assert restored.extra['time'].fold == 1
     assert restored.extra['time'].tzname() == 'named-offset'
     assert restored.extra['uuid'].is_safe is SafeUUID.safe
@@ -721,18 +717,279 @@ def test_metadata_timestamps_uuid_and_special_float_are_lossless():
     assert_graph_equal(doc, restored)
 
 
-@pytest.mark.parametrize('kind', ['object', 'structured', 'metadata', 'overlap', 'timezone'])
-def test_unsupported_populated_values_fail_without_loss(kind):
+@pytest.mark.parametrize('kind', ['structured', 'metadata', 'timezone'])
+def test_native_pickle_supports_metadata_previously_needing_json_adapters(kind):
     import numpy as np
     from zoneinfo import ZoneInfo
-    from people_gator.core.checkpoint_graph import GraphEncoder, CheckpointError
+    from people_gator.core.checkpoint_document import serialize_document, restore_document
     doc = rich_document()
-    if kind == 'object': doc.extra['data'] = np.array([object()], dtype=object)
     if kind == 'structured': doc.extra['data'] = np.zeros(2, dtype=[('field', 'i4')])
     if kind == 'metadata': doc.extra['data'] = np.zeros(2, dtype=np.dtype('i4', metadata={'unit': 'pixel'}))
-    if kind == 'overlap':
-        array = np.arange(10)
-        doc.extra['data'] = [array, array[2:]]
     if kind == 'timezone': doc.extra['data'] = datetime(2026, 11, 12, tzinfo=ZoneInfo('UTC'))
-    with pytest.raises(CheckpointError, match='Unsupported|Overlapping'):
-        GraphEncoder().document(doc)
+    restored = restore_document(serialize_document(doc))
+    assert_graph_equal(doc, restored)
+    if kind == 'metadata': assert restored.extra['data'].dtype.metadata == {'unit': 'pixel'}
+
+
+def rewrite_registered_manifest(path, data):
+    """Simulate a locally registered producer error, separately from corruption."""
+    from people_gator.core.checkpoints import _sealed
+    data = resign(data)
+    path.write_text(json.dumps(data))
+    ledger_path = Path(data['run_directory']) / 'run-state.json'
+    ledger = json.loads(ledger_path.read_text())
+    ledger.pop('integrity_sha256')
+    ledger['checkpoints'][str(path.resolve())] = data['integrity_sha256']
+    ledger_path.write_text(json.dumps(_sealed(ledger)))
+
+
+def test_small_json_metadata_and_native_payload_pair(tmp_path, monkeypatch):
+    import hashlib
+    from people_gator.core.checkpoint_document import PROTOCOL
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    doc = rich_document()
+    large_text = 'private-ocr-state-' * 20000
+    doc.page_layouts[0].regions[0].lines[0].transcription = large_text
+    parser.process_document(doc)
+    path = snapshots(tmp_path)[0]
+    data = json.loads(path.read_text())
+    payload = (path.parent / 'document.pkl').read_bytes()
+    assert data['payload'] == {'filename': 'document.pkl', 'size': len(payload),
+                               'sha256': hashlib.sha256(payload).hexdigest(), 'protocol': PROTOCOL}
+    assert payload[:2] == bytes((0x80, PROTOCOL))
+    assert 'document' not in data
+    assert 'private-ocr-state-' not in path.read_text()
+    assert path.stat().st_size < 20000 < len(payload)
+    assert data['summary']['pages'] == 2
+    assert data['summary']['faces'] == 2
+    assert data['summary']['text_mentions'] == 2
+    assert data['summary']['clusters'] == 1
+    assert data['summary']['resolved_identities'] == 1
+    assert set(data['compatibility']['packages']) >= {'people-gator', 'anno-page', 'pero-ocr'}
+    assert (path.parent / 'document.pkl').stat().st_mode & 0o777 == 0o600
+    assert 'sensitive-credential-012345' not in path.read_text()
+    assert b'sensitive-credential-012345' not in payload
+    # Directory and manifest are equivalent explicit resume entry points.
+    parser.process_document(None, resume_from_checkpoint=path.parent)
+
+
+@pytest.mark.parametrize('damage', ['missing_payload', 'hash', 'size', 'protocol', 'header',
+    'python', 'package', 'code', 'manifest_field', 'input'])
+def test_invalid_hybrid_checkpoint_rejected_before_unpickling(tmp_path, monkeypatch, damage):
+    import hashlib
+    from people_gator.core import checkpoints
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    parser.process_document(rich_document())
+    path = snapshots(tmp_path)[0]
+    data = json.loads(path.read_text())
+    payload_path = path.parent / 'document.pkl'
+    if damage == 'missing_payload': payload_path.unlink()
+    if damage == 'hash': payload_path.write_bytes(b'corrupt')
+    if damage == 'size': data['payload']['size'] += 1
+    if damage == 'protocol': data['payload']['protocol'] = 999
+    if damage == 'header':
+        raw = payload_path.read_bytes()
+        raw = b'\x80\x04' + raw[2:]
+        payload_path.write_bytes(raw)
+        data['payload']['sha256'] = hashlib.sha256(raw).hexdigest()
+    if damage == 'python': data['compatibility']['python'] = [3, 10, 0]
+    if damage == 'package': data['compatibility']['packages']['anno-page'] = 'incompatible'
+    if damage == 'code': data['compatibility']['code'] = {}
+    if damage == 'manifest_field': del data['summary']
+    if damage == 'input': data['input_assets'] = [{'field': 'page_images_dir', 'path': str(tmp_path / 'missing'), 'files': []}]
+    rewrite_registered_manifest(path, data)
+    unpickle = Mock(side_effect=AssertionError('must reject before unpickling'))
+    monkeypatch.setattr(checkpoints, 'restore_document', unpickle)
+    with pytest.raises(checkpoints.CheckpointError):
+        parser.process_document(None, resume_from_checkpoint=path)
+    unpickle.assert_not_called()
+
+
+@pytest.mark.parametrize('phase', ['payload', 'manifest'])
+def test_two_file_commit_marker_published_last(tmp_path, monkeypatch, phase):
+    from people_gator.core import checkpoints
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    replace = checkpoints.os.replace
+    def fail_second(source, destination):
+        path = Path(destination)
+        if path.parent.name.startswith('0002-'):
+            if path.name == 'checkpoint.json':
+                assert (path.parent / 'document.pkl').exists()
+            if path.name == ('document.pkl' if phase == 'payload' else 'checkpoint.json'):
+                raise OSError('interrupted')
+        replace(source, destination)
+    monkeypatch.setattr(checkpoints.os, 'replace', fail_second)
+    with pytest.raises(checkpoints.CheckpointError, match='write failed'):
+        parser.process_document(rich_document())
+    assert len(snapshots(tmp_path)) == 1
+    incomplete, = (tmp_path / 'snapshots').rglob('0002-ENGINE_1')
+    assert not (incomplete / 'checkpoint.json').exists()
+    with pytest.raises(checkpoints.CheckpointError):
+        parser.process_document(None, resume_from_checkpoint=incomplete)
+    monkeypatch.setattr(checkpoints.os, 'replace', replace)
+    parser.process_document(None, resume_from_checkpoint=snapshots(tmp_path)[0])
+
+
+@pytest.mark.parametrize('kind', ['copied', 'public_marker', 'public_stage', 'payload_symlink', 'raw_pickle'])
+def test_only_protected_registered_local_checkpoints_can_unpickle(tmp_path, monkeypatch, kind):
+    from people_gator.core import checkpoints
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    parser.process_document(rich_document())
+    path = snapshots(tmp_path)[0]
+    if kind == 'copied':
+        copied = tmp_path / 'download' / 'attempt' / 'stage'
+        copied.parent.mkdir(mode=0o700, parents=True)
+        copied.parent.parent.chmod(0o700)
+        shutil.copytree(path.parent, copied)
+        path = copied / 'checkpoint.json'
+    if kind == 'public_marker': path.chmod(0o644)
+    if kind == 'public_stage': path.parent.chmod(0o777)
+    if kind == 'payload_symlink':
+        payload = path.parent / 'document.pkl'
+        target = path.parent / 'elsewhere.pkl'
+        payload.rename(target)
+        payload.symlink_to(target)
+    if kind == 'raw_pickle': path = path.parent / 'document.pkl'
+    unpickle = Mock(side_effect=AssertionError('untrusted files must not unpickle'))
+    monkeypatch.setattr(checkpoints, 'restore_document', unpickle)
+    with pytest.raises(checkpoints.CheckpointError):
+        parser.process_document(None, resume_from_checkpoint=path)
+    unpickle.assert_not_called()
+
+
+@pytest.mark.parametrize('kind', ['db', 'session', 'mock'])
+def test_live_clients_and_credentials_never_reach_either_file(tmp_path, monkeypatch, kind):
+    import requests
+    from people_gator.core.checkpoints import CheckpointError
+    from people_gator.core.db import DatabaseApiService
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    doc = rich_document()
+    if kind == 'db':
+        doc.client = object.__new__(DatabaseApiService)
+        doc.client.password = 'sensitive-credential-012345'
+    if kind == 'session': doc.client = requests.Session()
+    if kind == 'mock': doc.client = Mock(password='sensitive-credential-012345')
+    with pytest.raises(CheckpointError):
+        parser.process_document(doc)
+    assert not snapshots(tmp_path)
+    assert not list((tmp_path / 'snapshots').rglob('document.pkl'))
+    assert not any(e.process_document.called for e in engines)
+
+
+class LossyMetadata:
+    def __init__(self):
+        self.populated = 'must survive'
+
+    def __getstate__(self):
+        return {}
+
+
+def test_lossy_custom_pickle_state_is_rejected():
+    from people_gator.core.checkpoint_document import serialize_document, CheckpointError
+    doc = rich_document()
+    doc.extra['lossy'] = LossyMetadata()
+    with pytest.raises(CheckpointError, match='omitted'):
+        serialize_document(doc)
+
+
+def checkpoint_callback(*args):
+    return None
+
+
+def test_importable_runtime_callback_preserved():
+    from people_gator.core.checkpoint_document import serialize_document, restore_document
+    doc = rich_document()
+    doc.page_layouts[0].to_pagexml_started += checkpoint_callback
+    result = restore_document(serialize_document(doc))
+    assert result.page_layouts[0].to_pagexml_started._handlers[-1] is checkpoint_callback
+
+
+@pytest.mark.parametrize('cached_modified', [False, True])
+def test_unchanged_image_cache_externalized_modified_pixels_embedded(tmp_path, monkeypatch, cached_modified):
+    import cv2
+    import numpy as np
+    from people_gator.core.layout import PeopleGatorDocument, PeopleGatorPageLayout
+    from people_gator.core.checkpoint_document import serialize_document, restore_document, CheckpointError
+    image = np.random.default_rng(4).integers(0, 255, (100, 120, 3), dtype=np.uint8)
+    cv2.imwrite(str(tmp_path / 'p.jpg'), image)
+    doc = PeopleGatorDocument(page_layouts=[PeopleGatorPageLayout('p')], page_images_dir=str(tmp_path))
+    original = doc.get_page_image(doc.page_layouts[0])
+    if cached_modified: original[0, 0] = [0, 128, 255]
+    doc.page_images['p'] = original
+    doc.page_layouts[0].metadata['same_image'] = original
+    payload = serialize_document(doc)
+    assert (len(payload) > 20000) == cached_modified
+    result = restore_document(payload, tmp_path)
+    np.testing.assert_array_equal(result.page_images['p'], original)
+    assert result.page_images['p'] is result.page_layouts[0].metadata['same_image']
+    (tmp_path / 'p.jpg').unlink()
+    if cached_modified:
+        np.testing.assert_array_equal(restore_document(payload, tmp_path).page_images['p'], original)
+    else:
+        with pytest.raises(CheckpointError): restore_document(payload, tmp_path)
+
+
+def test_diagnostic_inspection_is_selected_json_and_read_only(tmp_path, monkeypatch, capsys):
+    from people_gator.core.checkpoint_inspection import inspect_checkpoint
+    from user_scripts import inspect_checkpoint as cli
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    parser.process_document(rich_document())
+    path = snapshots(tmp_path)[0]
+    before = {p: p.read_bytes() for p in (tmp_path / 'snapshots').rglob('*') if p.is_file()}
+    for engine in engines: engine.process_document.reset_mock()
+    selected = inspect_checkpoint(path, details=['ocr', 'entities'])
+    assert selected['summary']['faces'] == 2
+    assert selected['pages'][0]['ocr'][0]['text'].startswith('Karel Čapek')
+    assert selected['pages'][0]['mentions'][0]['source_spans'][0]['start'] == 0
+    assert selected['clusters'][0]['mentions'] == [0, 1]
+    assert 'regions' not in selected['pages'][0]
+    output = tmp_path / 'diagnostic.json'
+    monkeypatch.setattr(sys, 'argv', ['inspect_checkpoint', str(path.parent), '--details', 'entities', '--output-path', str(output)])
+    assert cli.main() == 0
+    assert json.loads(output.read_text())['clusters'][0]['entity_id'] == 'app-person'
+    assert output.stat().st_mode & 0o777 == 0o600
+    monkeypatch.setattr(sys, 'argv', ['inspect_checkpoint', str(path)])
+    assert cli.main() == 0
+    assert json.loads(capsys.readouterr().out)['summary']['pages'] == 2
+    ledger = Path(json.loads(path.read_text())['run_directory']) / 'run-state.json'
+    monkeypatch.setattr(sys, 'argv', ['inspect_checkpoint', str(path), '--output-path', str(ledger)])
+    assert cli.main() == 1
+    assert {p: p.read_bytes() for p in before} == before
+    assert not any(e.process_document.called for e in engines)
+
+
+def test_installed_diagnostic_cli_outside_checkout(tmp_path, monkeypatch):
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    parser.process_document(rich_document())
+    path = snapshots(tmp_path)[0]
+    result = subprocess.run([sys.executable, '-m', 'user_scripts.inspect_checkpoint', str(path)],
+                            cwd=tmp_path, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    face = data['pages'][0]['faces'][0]
+    assert face['name'] == 'Karel Čapek'
+    assert face['entity_id'] == 'app-person'
+    assert face['source_region_id'] == 'source'
+    assert face['landmarks']['left_eye_position'] == {'x': 0, 'y': .5}
+
+
+def test_overlapping_views_fail_instead_of_losing_relationships():
+    import numpy as np
+    from people_gator.core.checkpoint_document import serialize_document, CheckpointError
+    doc = rich_document()
+    image = np.arange(20)
+    doc.extra['shared_views'] = [image, image[3:]]
+    with pytest.raises(CheckpointError, match='overlapping'):
+        serialize_document(doc)
+
+
+def test_wrong_expected_document_rejected_before_unpickle(tmp_path, monkeypatch):
+    from people_gator.core import checkpoints
+    from people_gator.core.layout import PeopleGatorDocument
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    parser.process_document(rich_document())
+    unpickle = Mock(side_effect=AssertionError('wrong document must not unpickle'))
+    monkeypatch.setattr(checkpoints, 'restore_document', unpickle)
+    with pytest.raises(checkpoints.CheckpointError, match='different document'):
+        parser.process_document(PeopleGatorDocument(id='foreign'), resume_from_checkpoint=snapshots(tmp_path)[0])
+    unpickle.assert_not_called()

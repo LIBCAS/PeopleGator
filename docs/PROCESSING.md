@@ -278,7 +278,7 @@ These parameters are needed for the authenticated connection; the code does not 
 | `--input-metadata-path` | Optional JSON document metadata |
 | `--output-alto-path` / `--output-xml-path` | Output ALTO / PAGE XML directories |
 | `--output-render-path` | Optional annotated JPEG directory |
-| `--processing-checkpoints` | Optional directory for a complete JSON snapshot after each successful engine; empty disables |
+| `--processing-checkpoints` | Optional directory for JSON metadata + Pickle document after each successful engine; empty disables |
 | `--resume-from-checkpoint` | Resume a finalized snapshot, skipping completed engines and initial app import |
 | `--import-from-app` / `--export-to-app` | Import stored annotations before processing / export results after processing |
 | `--device`, `--gpu-id` | CPU or GPU choice and optional GPU index; CPU is the default |
@@ -306,7 +306,7 @@ The script can therefore run with just `--config ./config.ini` when the remainin
 when both are absent/empty no checkpoints are created. Like other document paths,
 the directory resolves from the process working directory. No checkpoint section
 or engine is added. See [checkpoint configuration and recovery](CHECKPOINTS.md)
-for the versioned full-document JSON contract, inherited-model audit, required
+for the versioned JSON metadata + Pickle document contract, inherited-model audit, required
 current credentials, compatible path relocation and conservative app replay guards.
 Engine checkpoints precede app/XML/render exports. Keep the original run ledger
 and inputs accessible; uncertain app creates and repeated app exports require
