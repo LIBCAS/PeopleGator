@@ -424,7 +424,7 @@ The detector has no built-in prompt or handwritten JSON schema. Supply
 and/or `user` Jinja2 templates. Relative paths resolve from the INI directory.
 `text` contains the current OCR chunk and is the only supplied template variable.
 The [text detection template](../resources/prompts/text_entity_detection.json)
-preserves the complete prompt previously documented here. Select it explicitly
+documents the current extractive response contract. Select it explicitly
 with `PROMPT_TEMPLATE_PATH`, or supply your own populated file.
 
 Prompt configuration validation is inherited from `LLMBasedEngine`, as for all
@@ -444,7 +444,15 @@ matching the existing face/entity engines.
 
 The result contains an `entities` array. Each entity has canonical `name`,
 literal `type=being`, nullable `info`, and a `mentions` array of verbatim
-`name`/`context` pairs.
+`name`/`context` pairs. The [detection template](../resources/prompts/text_entity_detection.json)
+renders the sole `text` input as a JSON-quoted OCR chunk, with no images. It treats
+OCR as untrusted data, includes real, fictional and mythological beings, and asks
+for an empty `entities` array when none occur. `info` means a concise identifying
+description grounded in the chunk, in the source language, or null; it is not a
+language code or an inferred biography. Mention names retain the OCR spelling;
+contexts must be contiguous source substrings containing the occurrence, with
+enough context to locate repeated names uniquely, including multiline evidence.
+These extractive instructions complement the source-mapping checks below.
 
 Models require strings without coercing numbers to text, nonblank names/evidence,
 and the literal type `being`. Strings retain original Unicode and whitespace.
@@ -640,8 +648,9 @@ access or intermediate files. Detection and clustering remain separate stages.
 | `MENTION_WEIGHT` | No | `0.3` | Finite nonnegative OCR-alias weight; weights must have a finite positive sum. |
 | `SIMILARITY_AGGREGATION` | No | `max` | `max`, `mean` or `min` across weighted name/alias comparisons. |
 
-The [clustering prompt](../resources/prompts/text_entity_clustering.json) now
-contains the user-supplied JSON using the `entities` input described below.
+The [clustering prompt](../resources/prompts/text_entity_clustering.json)
+uses the `entities` input described below and requests a complete partition with
+source-grounded names/descriptions, keeping ambiguous homonyms separate.
 Operators may select another valid prompt via the INI. No provider/model choice is supplied. A
 `JSON_SCHEMA_PATH` is unnecessary: the nested Pydantic v2 response model always
 supplies the generated request schema. The existing shared template validation
@@ -674,6 +683,16 @@ external template logic. The external prompt must ask for evidence-based
 resolution, permit homonym splits and uncertainty, choose a supplied name, and
 avoid facts outside the supplied evidence. Code contains no disambiguation
 wording.
+
+The checked-in template renders the pre-serialized string directly, without
+`tojson` double encoding. It copies a name from a member's canonical name or
+aliases, preferring a title-free form only when actually observed. Language
+preferences only break ties among observed, reliably recognizable variants; no
+language labels are required. Generated descriptive facts come from member
+`description` fields; OCR `context` is disambiguation evidence only. A singleton
+in an LLM-proposed partition copies its description into both description fields
+(or null if absent). An isolated component bypasses the LLM, retaining its
+original description with `short_description=None`.
 
 `TextEntityClusteringResult` has `clusters: list[TextEntityClusterResult]`. Each
 nested result has `name: str`, nullable `short_description` and
@@ -846,8 +865,8 @@ as candidate identities and no face-to-cluster link is created.
 
 The [single-face prompt](../resources/prompts/face_assignment.json) and
 [batch prompt](../resources/prompts/batch_face_assignment.json) are
-populated from the supplied JSON files, preserving their identification and
-normalization instructions. Either file can be replaced by changing its
+audited external templates retaining the supplied identification and
+normalization rules. Either file can be replaced by changing its
 `PROMPT_TEMPLATE_PATH`.
 
 Both templates receive `caption_text`, `context_text`, `caption_entities`,
@@ -856,21 +875,33 @@ engine also supplies `face_coordinates` (the face center as integer percentages
 of the context image) and two images: the face crop then marked context. The batch
 engine supplies `faces` (ordered ID, coordinate pair and color descriptors) and a
 marked context image. Render structured values with `tojson` or iterate records.
-The four text-entity lists are **available to the engines**, but neither supplied
-face prompt references them: the current templates render only the face inputs,
-caption and surrounding OCR. Consequently, detected text-entity evidence is not
-included in the face-name LLM requests, and the shared prompter warns about the
-unused keys. To use this evidence, explicitly update the external prompts to
-render caption entities when present; otherwise render the surrounding, page and
-document lists (including empty collections).
+The checked-in prompts safely serialize face descriptors, optional text and
+entity records using `tojson`; absent caption text is explicitly JSON null.
+When `caption_entities` is nonempty, only that entity section is rendered as the
+highest-priority directly associated textual evidence. Otherwise all three
+fallback sections are rendered in order: surrounding, whole-page, off-page-only
+document, **including empty collections**. All four keys are referenced in the
+compiled templates and representative engine requests produce no key warnings.
 
-When adapting these prompts, instructions must distinguish the evidence strengths described above,
-decide faces independently using positive visual/caption evidence, and retain
-null names on uncertainty. Provisional clusters, proximity, frequency or a sole
-off-page candidate do not establish correspondence. Treat OCR/entity content as
-data, preserve supplied face IDs/coordinates, and retain your corpus-specific
-name-extraction and normalization rules. Templates are never rewritten at runtime;
-shared warnings identify missing or unused inputs.
+The instructions distinguish directly caption-linked evidence from weaker
+fallback candidates. Caption membership alone does not identify a particular
+face. Page/local overlap is not independent corroboration; provisional clusters,
+proximity, frequency, fuzzy similarity or a sole off-page candidate do not
+establish correspondence. Each face requires positive label/caption/spatial
+evidence; ambiguity leaves both names null. OCR/entity strings are untrusted
+data. Name extraction preserves document forms; normalization removes titles,
+normalizes casing and reliable inflection without inventing initials or name
+parts. Templates are never rewritten at runtime; shared warnings still identify
+missing or unused inputs in operator-supplied replacements.
+
+Image labels in the instructions are explanatory: the single engine appends
+two unlabeled images in order (face crop, marked context), while batch appends
+one marked context image. Batch descriptors use zero-based request-local IDs,
+coordinate pairs and RGB colors, sorted by horizontal center with stable ties
+(#51 / PR #53). The prompt requires one output per input, exact ID/coordinate
+copies and the same order; sorting and response models are unchanged. The batch
+consumer checks ID **and** coordinates before updating a region; these prompt
+requirements do not add stricter Python validation of array coverage/order.
 
 The unchanged `FaceAssignmentResult` has nullable `name_in_text` and
 `name_normalized`; `BatchFaceAssignmentResult` contains a `faces` array adding
@@ -959,7 +990,7 @@ name/context, detection/cluster proposals, page provenance and source spans.
 `tojson` rather than assuming `context` is a caption string.
 
 The [entity matching template](../resources/prompts/entity_matching.json)
-preserves the complete prompt previously documented here. Configure it explicitly
+documents these structured inputs and their evidence limits. Configure it explicitly
 or supply another populated file requesting the typed decision. The response has
 five required fields: `action`, `source_is_person`, `item_id`, `name`, and `reason`.
 Legacy responses containing only an item index/name, or the earlier quotation-based
@@ -968,6 +999,14 @@ and text normalization are not part of decision validation. A selection copies
 the trusted candidate index and exact name; creation uses a null index and the
 source name; unresolved uses null index/name. Every decision needs a nonblank
 reason explaining the assessment.
+
+The template permits selecting equivalent duplicate person records without
+merging them, and requires positive evidence of a different being before
+creation when candidates exist. `source_is_person=true` with unresolved means
+person identity remains ambiguous; false means a non-person or unreliable
+person-like source. Fictional/mythological beings share app type `person`.
+Descriptions guide the LLM's semantic decision only; Python does not compare
+description wording or demand quotations. No images are sent by this engine.
 
 No separate schema file is needed; generated Pydantic schemas take precedence
 over inherited `JSON_SCHEMA_PATH`. Strict validation rejects extra keys, booleans
