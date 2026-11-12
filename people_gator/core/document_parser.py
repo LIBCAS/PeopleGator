@@ -1,6 +1,7 @@
 import logging
 from contextlib import nullcontext
 from time import monotonic
+from uuid import UUID
 
 from people_gator.core.layout import PeopleGatorDocument, PeopleGatorFaceRegionLayout
 from people_gator.engines import FaceDetectionYoloEngine, LLMFaceAssignmentEngine, LLMBatchFaceAssignmentEngine, EntityMatchingEngine, LLMTextEntityDetectionEngine, LLMTextEntityClusteringEngine
@@ -218,12 +219,17 @@ def import_document(document: PeopleGatorDocument, db_api_service: DatabaseApiSe
 
 
 def export_document(document: PeopleGatorDocument, db_api_service: DatabaseApiService, drop_existing_annotations: bool = False):
-    """Export document, page, face, image, and layout data, logging failed operations.
+    """Export pages, faces, linked text occurrences and artifacts, logging failures.
+
+    Text occurrences require a recorded name and resolved entity UUID. Failures
+    are isolated per mention. Re-export can append duplicate text rows: the app
+    create contract has no external occurrence ID or OCR offsets.
 
     Args:
         document: Document to process or transfer; updated in place.
         db_api_service: Optional authenticated PeopleGatorApp client.
-        drop_existing_annotations: Whether to remove stored annotations before export; defaults to False.
+        drop_existing_annotations: Whether to remove stored faces before export;
+            defaults to False. Existing text mentions are not deleted.
     """
     if document.library is None:
         logger.error("Document library is not specified, cannot export to PeopleGator App")
@@ -269,6 +275,38 @@ def export_document(document: PeopleGatorDocument, db_api_service: DatabaseApiSe
                 logger.error('Failed to create face %s in PeopleGator App', face_region.id)
             else:
                 logger.debug("Created face %s in PeopleGatorApp", face_region.id)
+
+        exported_mentions = skipped_mentions = failed_mentions = 0
+        for mention in page_layout.text_entities:
+            identity = mention.page_identity.identity if mention.page_identity else None
+            entity_id = identity.peoplegator_id if identity else None
+            if not isinstance(mention.name, str) or not mention.name.strip() or not isinstance(entity_id, str):
+                skipped_mentions += 1
+                continue
+            try:
+                UUID(entity_id)
+            except ValueError:
+                skipped_mentions += 1
+                continue
+
+            try:
+                db_mention = db_api_service.create_text_mention(
+                    name=mention.name, context=mention.text or None,
+                    entity_id=entity_id, source_id=db_page['source_id'])
+            except Exception as exc:
+                failed_mentions += 1
+                logger.warning('Page %s: text mention export failed (%s)', page_layout.id, type(exc).__name__)
+                continue
+            if db_mention is None:
+                failed_mentions += 1
+                logger.warning('Page %s: text mention export failed; no valid create response', page_layout.id)
+            else:
+                exported_mentions += 1
+        if skipped_mentions:
+            logger.warning('Page %s: skipped %d unresolved/invalid text mentions', page_layout.id, skipped_mentions)
+        if page_layout.text_entities:
+            logger.info('Page %s: exported %d text mentions; %d failed; %d skipped',
+                        page_layout.id, exported_mentions, failed_mentions, skipped_mentions)
 
         result = db_api_service.put_page_image(page_image, db_page['source_id'])
         if not result:

@@ -26,7 +26,7 @@ The database API is implemented in [PeopleGatorApp](https://github.com/DCGM/Peop
 | --- | --- |
 | Import | Load previously stored face occurrences and assigned identities before processing. |
 | Search and match | Find person entities using names proposed by the processing engines. |
-| Export | Create document, page, and face records and upload page images and layout data. |
+| Export | Create document, page, face and linked text-mention records and upload page images and layout data. |
 
 The `[DB_API]` configuration defines the connection. The CLI switches `--import-from-app` and `--export-to-app` enable the corresponding stages. See [Database API](PROCESSING.md#database-api) for the connection settings.
 
@@ -52,7 +52,7 @@ flowchart TD
     LOAD --> DP
     DP --> ENG["Run configured engines"]
     ENG --> EXP{"Export to app?"}
-    EXP -->|Yes| SAVE["Export document, pages and faces"]
+    EXP -->|Yes| SAVE["Export document, pages, faces and linked text mentions"]
     EXP -->|No| XML["Write ALTO/PAGE XML"]
     SAVE --> XML
 ```
@@ -177,4 +177,7 @@ optional [processing checkpoints](CHECKPOINTS.md) persist complete receipts and
 durably fence stage/export replay. There is no server idempotency guarantee. See
 [linking rules](PROCESSING.md#document-wide-entity-linking-entity_matching).
 The optional DB-based assignment of unnamed faces (step 5) remains deferred;
-text XML/API persistence and complete round-trip remain step 7 of #33.
+text XML serialization, import, cluster persistence and complete round-trip remain
+step 7 of #33. Normal app export now sends each linked page text occurrence via
+the existing `export_document()` and shared connector, preserving all in-memory
+OCR provenance. See [export fields and rerun limits](OUTPUT_FORMATS.md#peoplegatorapp-text-mention-export).

@@ -3,6 +3,7 @@ import logging
 
 from http import HTTPStatus
 from urllib.parse import urljoin
+from uuid import UUID
 
 from people_gator.core.connector import Connector
 from people_gator.core.layout import PeopleGatorFaceRegionLayout
@@ -316,6 +317,58 @@ class DatabaseApiService:
                 logger.error("Database operation create_face: invalid response model (%s)", type(e).__name__)
                 return None
 
+        return result
+
+    def create_text_mention(self, name, entity_id, source_id, context=None, route="/api/v1/text-mentions", response_model=None):
+        """Create one linked OCR occurrence through the shared authenticated connector.
+
+        Args:
+            name: Original recorded OCR spelling, not a normalized identity name.
+            entity_id: Previously resolved app entity UUID string.
+            source_id: Registered app page source UUID string.
+            context: Existing OCR context, or None when unavailable.
+            route: API route; defaults to the single text-mention create endpoint.
+            response_model: Optional Pydantic response class; None returns decoded JSON.
+
+        Returns:
+            Decoded create response or the requested model; None on unsuccessful
+            status, malformed response fields or model-validation failure.
+
+        Raises:
+            ValueError: If an otherwise successful response contains invalid JSON.
+            Exception: If the connector request fails; callers isolate each occurrence.
+        """
+        payload = {
+            'name': name, 'context': context, 'entity_id': entity_id,
+            'source_id': source_id, 'entity_link_state': 'automatic',
+        }
+        response = self.connector.post(self.compose_url(route), json=payload)
+        if response.status_code != HTTPStatus.CREATED:
+            logger.warning('Database operation create_text_mention failed (HTTP %s)', response.status_code)
+            return None
+
+        try:
+            result = response.json()
+        except ValueError:
+            logger.error('Database returned invalid JSON (HTTP %s)', response.status_code)
+            raise
+        # A 201 error object/invalid shape is not a confirmed annotation create.
+        try:
+            for field in ('mention_id', 'entity_id', 'source_id'):
+                UUID(result[field])
+            if not isinstance(result['name'], str) or not result['name'].strip():
+                raise ValueError('Missing recorded name')
+            if result['context'] is not None and not isinstance(result['context'], str):
+                raise ValueError('Invalid context')
+        except (KeyError, TypeError, AttributeError, ValueError):
+            logger.error('Database operation create_text_mention: invalid create response')
+            return None
+        if response_model:
+            try:
+                result = response_model(**result)
+            except Exception as exc:
+                logger.error('Database operation create_text_mention: invalid response model (%s)', type(exc).__name__)
+                return None
         return result
 
     def put_page_image(self, page_image, page_id, route="/api/v1/pages/{page_id}/image", response_model=None):

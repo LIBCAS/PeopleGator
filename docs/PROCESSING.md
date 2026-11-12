@@ -266,6 +266,38 @@ The `[DB_API]` section configures the PeopleGatorApp database connection. `Datab
 
 These parameters are needed for the authenticated connection; the code does not define defaults. `DocumentParser` initializes this connection when `[DB_API]` is present. Entity matching and the optional `--import-from-app` / `--export-to-app` stages use it.
 
+### Linked text-mention export
+
+`export_document()` (also used by `export_to_app` / `--export-to-app`) sends
+every eligible occurrence in each page's `text_entities` after registering the
+app page. It works with text-only, mixed and face-only documents; no new engine
+or configuration is required. It does not create or resolve person entities:
+run `ENTITY_MATCHING` first or supply previously linked mentions.
+
+`DatabaseApiService.create_text_mention()` posts one occurrence through the shared
+authenticated connector to `/api/v1/text-mentions`, expecting HTTP 201. Fields
+are the original `mention.name` as `name`, `mention.text` as `context` (None for
+missing/empty context), the resolved `page_identity.identity.peoplegator_id` as
+`entity_id`, and the registered `db_page['source_id']` as `source_id`, never an
+archive page ID. The new row uses `entity_link_state=automatic`, matching face
+export semantics; the in-memory model cannot certify manual verification.
+
+Missing identity wrappers/IDs, non-UUID entity IDs and missing/non-string/blank
+recorded names are skipped with a warning count. Non-success HTTP status,
+malformed response fields or optional response-model failure return None;
+invalid JSON and connector errors propagate from the service, following its
+existing conventions. Export catches each mention failure, logs only counts or
+exception types and continues with other mentions, faces and page artifacts.
+
+Repeated names remain distinct occurrences. Re-export can append duplicate rows,
+including with `drop_existing_annotations=True`: that existing option deletes
+faces only and does not replace stored text mentions. The current app create
+schema has no external occurrence ID or OCR-offset/source-span fields, so this
+export performs no deduplication or reconciliation. Original mention data and
+source spans remain unchanged in memory. Unlinked mention persistence, text
+import, cluster persistence and ALTO/PAGE text serialization remain separate
+work under #33. See [output limitations](OUTPUT_FORMATS.md#peoplegatorapp-text-mention-export).
+
 ## Processing script
 
 `user_scripts/parse_folder.py` loads the configuration and document, invokes `DocumentParser`, and saves requested outputs. Images are stored as `<page-id>.jpg` alongside matching source ALTO or PAGE XML files.
@@ -523,9 +555,10 @@ invalid-envelope responses retry through `LLMPrompter`; unrecoverable failures r
 all chunks succeed, so failure leaves the document unchanged. Logs contain counts,
 positions and failure types, never OCR, names, response payloads or credentials.
 
-Text-mention ALTO/PAGE serialization and app persistence remain follow-up work
-in #33; clustering and face cooperation are described below; XML export does not persist this engine's
-in-memory text detections.
+Text-mention ALTO/PAGE serialization remains follow-up work in #33. Linked
+occurrences can be sent through [app export](#linked-text-mention-export) after
+identity linking; unresolved detections remain in memory. Clustering and face
+cooperation are described below; XML export does not persist text detections.
 
 ### Standalone text-detection inspection CLI
 
@@ -1047,8 +1080,9 @@ the same app ID. No database-ID regrouping is performed.
 only, skips conflicting/unresolved clusters, preserves existing identity objects
 and allocates unique nonblank `person_text_*` / `MODS_PERSON_TEXT_*` IDs when a
 mention needs a wrapper. The optional subset argument supports focused propagation;
-XML export uses the same safe helper. Full text annotation XML/API persistence
-and round-trip remain **step 7 of #33**; these changes provide its in-memory handoff.
+XML export uses the same safe helper. Linked mentions can use the existing
+[app export](#linked-text-mention-export); full text XML serialization, import,
+cluster persistence and round-trip remain **step 7 of #33**.
 
 Successful units apply immediately. A later read/model/write failure raises a safe
 `RuntimeError` identifying the numeric unit; prior successful IDs remain available

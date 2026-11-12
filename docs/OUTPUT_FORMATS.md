@@ -188,8 +188,9 @@ The ALTO face readers and `altoxml_load_regions` hook are pending implementation
 with original mention references, proposed names/descriptions and optional
 `short_description`. `identity=None` represents a group before app linking; no
 app ID or page identity is fabricated or propagated. This is an in-memory
-contract only: no new ALTO/PAGE text-cluster serialization or PeopleGatorApp
-persistence is implemented. Existing XML and face output remain unchanged. See
+contract for clustering: this stage adds no ALTO/PAGE text-cluster serialization
+or app persistence. Resolved member occurrences can later use app export below.
+Existing XML and face output remain unchanged. See
 [clustering configuration and safety](PROCESSING.md#document-text-entity-clustering-text_entity_clustering).
 
 
@@ -221,3 +222,35 @@ source-less ALTO generation containing a populated face can currently fail with
 part of the [step-7 output work in #33](https://github.com/LIBCAS/PeopleGator/issues/33).
 The linking regressions exercise original-ALTO enrichment and PAGE generation
 with named faces, plus text-only generation in both formats.
+
+## PeopleGatorApp text-mention export
+
+Normal `export_document()` / `export_to_app` sends one request per linked page
+occurrence, independently of document clusters or unique names. The app's
+[`TextMentionCreateRequest`](https://github.com/DCGM/PeopleGatorApp/blob/main/people-gator-api/src/people_gator_api/schemas/mentions.py)
+accepts these exported fields:
+
+| Field | Source |
+| --- | --- |
+| `name` | Exact recorded `mention.name`, preserving spelling and whitespace |
+| `context` | Existing `mention.text`, or null when absent/empty |
+| `entity_id` | Resolved `mention.page_identity.identity.peoplegator_id` UUID |
+| `source_id` | Registered app page `source_id`, not the archive/layout ID |
+| `entity_link_state` | `automatic`, consistent with face export; never manually verified |
+
+Unresolved/invalid IDs and unusable recorded names are skipped with diagnostic
+counts, without creating entities or changing mention data. Each failed create
+is logged independently and remaining annotations and page artifacts continue.
+
+The app payload cannot store `source_spans`, OCR character offsets, local XML tags
+or external mention identifiers. These remain unchanged in memory; no XML
+serialization, database import or schema extension is added. Cluster persistence
+and unlinked mention creation are also outside this export contract.
+
+Identical names at separate positions are intentionally sent separately.
+Repeated export can append duplicates; strict per-occurrence idempotency is
+unavailable with the current API. `drop_existing_annotations` still removes only
+faces and does **not** delete or replace text mentions. There is no automatic
+deduplication, deletion or retry of uncertain mention writes. Reconcile app state
+before repeating an export after a partial/uncertain write. See
+[processing behavior](PROCESSING.md#linked-text-mention-export).
