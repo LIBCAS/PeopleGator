@@ -2,15 +2,11 @@
 
 from datetime import datetime
 from enum import Enum
-import hashlib
-from importlib.metadata import version
 import inspect
 from io import BytesIO
 from pathlib import Path
 import pickle
-import platform
 import struct
-import sys
 
 import numpy as np
 
@@ -38,21 +34,6 @@ def _attributes(value):
             if hasattr(value, key):
                 state[key] = getattr(value, key)
     return state
-
-
-def compatibility_identity():
-    """Identify the interpreter, dependencies and model/hook implementations."""
-    from anno_page.core import layout as anno_layout, metadata
-    from pero_ocr.core import layout as pero_layout
-    from people_gator.core import layout
-    from people_gator.text import chunking
-    modules = (anno_layout, metadata, pero_layout, layout, chunking, sys.modules[__name__])
-    return {'python': list(sys.version_info[:3]), 'implementation': platform.python_implementation(),
-            'pickle_protocol': PROTOCOL,
-            'packages': {name: version(name) for name in
-                ('people-gator', 'pero-ocr', 'anno-page', 'numpy', 'scipy', 'opencv-python', 'lxml')},
-            'code': {module.__name__: hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest()
-                     for module in modules}}
 
 
 def _check_state(value, secrets, seen=None):
@@ -246,7 +227,8 @@ def restore_document(payload, image_directory=None):
     except CheckpointError:
         raise
     except Exception:
-        raise CheckpointError('Pickle document is incomplete, corrupt or incompatible') from None
+        raise CheckpointError('Could not restore Pickle document; check for incomplete/corrupt data '
+                              'and ensure its classes and required dependencies are available') from None
 
 
 def serialize_document(document, secrets=()):

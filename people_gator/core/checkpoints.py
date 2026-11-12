@@ -4,15 +4,17 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import re
 import tempfile
 from uuid import uuid4, UUID
 
-from people_gator.core.checkpoint_document import (
-    CheckpointError, PROTOCOL, compatibility_identity, serialize_document, restore_document,
-)
+from people_gator import globals
+from people_gator.core.checkpoint_document import CheckpointError, PROTOCOL, serialize_document, restore_document
+
+logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 2
 _SECRET = re.compile(r'api.?key|password|passwd|(?:^|[_-])token(?:$|[_-])|secret|credential|authorization|private.?key', re.I)
@@ -450,7 +452,7 @@ class CheckpointRun:
                     'attempt_id': self.attempt_id, 'created_at': _timestamp(),
                     'document_identity': [document.id, document.library],
                     'run_directory': str(self.run_directory), 'parent_checkpoint': self.parent_checkpoint,
-                    'compatibility': compatibility_identity(), 'pipeline': self.pipeline,
+                    'compatibility': {'peoplegator_version': globals.software_version}, 'pipeline': self.pipeline,
                     'initial_configuration': self.initial_configuration,
                     'execution_configuration': self.current_configuration, 'initial_options': self.initial_options,
                     'input_assets': self.assets, 'completed_steps': completed,
@@ -541,7 +543,7 @@ def read_ledger(directory, run_id, document_id):
 
 
 def read_metadata(path):
-    """Validate manifest, environment and local provenance WITHOUT unpickling.
+    """Validate manifest/provenance and warn about software versions before unpickling.
 
     Args:
         path: Trusted local stage directory or its checkpoint.json marker.
@@ -579,8 +581,13 @@ def read_metadata(path):
         for key in ('run_id', 'document_id', 'attempt_id'):
             UUID(data[key])
         datetime.fromisoformat(data['created_at'])
-        if data['compatibility'] != compatibility_identity():
-            raise CheckpointError('Checkpoint Python/Pickle/package/code compatibility changed; use the original environment')
+        saved_version = data['compatibility'].get('peoplegator_version')
+        if saved_version is None:
+            # Earlier schema-2 manifests stored the same version in a package map.
+            # Their interpreter/dependency/source fingerprints are not loading gates.
+            saved_version = data['compatibility'].get('packages', {}).get('people-gator')
+        if not isinstance(saved_version, str) or not saved_version.strip():
+            raise CheckpointError('Malformed checkpoint PeopleGator software version')
         payload = data['payload']
         if (payload['filename'] != 'document.pkl' or type(payload['protocol']) is not int
                 or payload['protocol'] != PROTOCOL or type(payload['size']) is not int or payload['size'] < 2
@@ -613,6 +620,9 @@ def read_metadata(path):
             raise CheckpointError('Checkpoint was not published in this trusted local history; never load externally supplied Pickle files')
         if ledger['side_effect_step'] >= len(stages):
             raise CheckpointError('Invalid checkpoint run ledger stage')
+        if saved_version != globals.software_version:
+            logger.warning('Checkpoint PeopleGator version %s differs from current version %s; attempting restoration',
+                           saved_version, globals.software_version)
         return data, marker
     except CheckpointError:
         raise

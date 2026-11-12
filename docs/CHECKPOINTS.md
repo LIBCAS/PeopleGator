@@ -43,8 +43,8 @@ there is no migration or long-term archival/portable interchange guarantee.
 | Identity/history | Schema version, UTC timestamp, document/run/attempt UUIDs, logical document ID/library, original ledger directory and parent checkpoint. |
 | Configuration | Sanitized initial INI sections in original insertion order after CLI overrides, initial app/device options, and separately sanitized current execution settings. |
 | Pipeline/completion | Exact section name, ordinal, METHOD and per-section identity; successful ordered prefix with finish/duration/status, last completed and next stage. |
-| Compatibility | Python implementation and exact major/minor/micro version, Pickle protocol **5**, PeopleGator/pero-ocr/AnnoPage/NumPy/SciPy/OpenCV/lxml versions, and hashes of layout, metadata, source-mapping and callback implementations. |
-| Integrity | Payload filename `document.pkl`, byte size and SHA-256; original XML/image/metadata paths and content hashes; metadata checksum. |
+| Compatibility | PeopleGator software version in `compatibility.peoplegator_version`, such as `0.0.1`. A difference is advisory and never blocks recovery by itself. |
+| Integrity/format | Supported Pickle protocol **5**, payload filename `document.pkl`, byte size and SHA-256; original XML/image/metadata paths and content hashes; metadata checksum. |
 | Summary | Counts of pages, text regions/lines, non-text regions, faces, mentions, clusters and distinct resolved app identities. This is diagnostic, not document state. |
 
 The native Pickle memo preserves object identity, cycles and shared references.
@@ -105,11 +105,22 @@ not protect against a malicious actor already able to modify your private histor
 or Python environment; treat both as trusted code. Windows uses filesystem ACLs.
 
 Before unpickling, both resume and inspection validate JSON schema/completion
-history, UUIDs and ledger registration, Python/Pickle/package/code compatibility,
+history, UUIDs and ledger registration, supported Pickle protocol,
 required external inputs, payload size/hash and actual protocol header. Resume
 also validates the complete ordered current pipeline, resources and initial
 settings before unpickling. No failure silently restarts/skips stages. The
 payload is read once, and the verified bytes are the bytes passed to the unpickler.
+
+PeopleGator's saved software version is compared with the running software version.
+A mismatch logs a **WARNING containing both versions**, then attempts unpickling
+and continues with the unfinished engines when restoration succeeds. Exact Python,
+pero-ocr, AnnoPage or other dependency versions, source/module hashes and Git/build
+fingerprints are neither recorded nor required. Earlier schema-2 manifests that
+recorded versions in `compatibility.packages` use their `people-gator` entry for
+this warning; historical interpreter/dependency/code fields are ignored. Existing
+manifests do not need to be rewritten. If the actual Pickle cannot be restored,
+the error directs you to check the payload and available classes/dependencies;
+this is a restoration failure, rather than a version comparison failure.
 
 The current config must retain all engine sections/order/settings, endpoints,
 usernames, device selection and initial import flag. This strict rule covers
@@ -129,7 +140,8 @@ python -m user_scripts.inspect_checkpoint /protected/stage/checkpoint.json \
   --details ocr entities --output-path /protected/diagnostics/stage-2.json
 ```
 
-This applies the same trust/environment/input/payload checks before loading.
+This applies the same strict trust/input/payload checks and advisory software-version
+warning before loading.
 It does not initialize engines or app clients, execute import/export, or write to
 checkpoint history. It emits selected OCR transcription/geometry/confidence,
 region categories/polygons/source links, mentions/source offsets and cluster member

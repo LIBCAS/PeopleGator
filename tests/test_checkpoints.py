@@ -261,7 +261,7 @@ def test_atomic_failure_preserves_snapshot_and_completion(tmp_path, monkeypatch)
     assert parser.process_document(None, resume_from_checkpoint=paths[0]).source_metadata['stages'] == [0, 1, 2]
 
 
-@pytest.mark.parametrize('damage', ['json', 'version', 'digest', 'history', 'next', 'document', 'model', 'duplicate'])
+@pytest.mark.parametrize('damage', ['json', 'version', 'digest', 'history', 'next', 'document', 'duplicate'])
 def test_reject_corrupt_snapshots(tmp_path, monkeypatch, damage):
     from people_gator.core.checkpoints import CheckpointError
     parser, engines, config = pipeline(tmp_path, monkeypatch)
@@ -273,7 +273,6 @@ def test_reject_corrupt_snapshots(tmp_path, monkeypatch, damage):
     if damage == 'history': data['completed_steps'][0]['section'] = 'ENGINE_2'
     if damage == 'next': data['next_step'] = True
     if damage == 'document': data['document_identity'][0] = 'different'
-    if damage == 'model': data['compatibility']['code'] = {}
     raw = json.dumps(data if damage == 'digest' else resign(data))
     if damage == 'json': raw = '{"private":'
     if damage == 'duplicate': raw = '{"schema_version":1,"schema_version":2}'
@@ -765,7 +764,8 @@ def test_small_json_metadata_and_native_payload_pair(tmp_path, monkeypatch):
     assert data['summary']['text_mentions'] == 2
     assert data['summary']['clusters'] == 1
     assert data['summary']['resolved_identities'] == 1
-    assert set(data['compatibility']['packages']) >= {'people-gator', 'anno-page', 'pero-ocr'}
+    from people_gator import globals
+    assert data['compatibility'] == {'peoplegator_version': globals.software_version}
     assert (path.parent / 'document.pkl').stat().st_mode & 0o777 == 0o600
     assert 'sensitive-credential-012345' not in path.read_text()
     assert b'sensitive-credential-012345' not in payload
@@ -774,7 +774,7 @@ def test_small_json_metadata_and_native_payload_pair(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('damage', ['missing_payload', 'hash', 'size', 'protocol', 'header',
-    'python', 'package', 'code', 'manifest_field', 'input'])
+    'manifest_field', 'input'])
 def test_invalid_hybrid_checkpoint_rejected_before_unpickling(tmp_path, monkeypatch, damage):
     import hashlib
     from people_gator.core import checkpoints
@@ -792,9 +792,6 @@ def test_invalid_hybrid_checkpoint_rejected_before_unpickling(tmp_path, monkeypa
         raw = b'\x80\x04' + raw[2:]
         payload_path.write_bytes(raw)
         data['payload']['sha256'] = hashlib.sha256(raw).hexdigest()
-    if damage == 'python': data['compatibility']['python'] = [3, 10, 0]
-    if damage == 'package': data['compatibility']['packages']['anno-page'] = 'incompatible'
-    if damage == 'code': data['compatibility']['code'] = {}
     if damage == 'manifest_field': del data['summary']
     if damage == 'input': data['input_assets'] = [{'field': 'page_images_dir', 'path': str(tmp_path / 'missing'), 'files': []}]
     rewrite_registered_manifest(path, data)
@@ -993,3 +990,100 @@ def test_wrong_expected_document_rejected_before_unpickle(tmp_path, monkeypatch)
     with pytest.raises(checkpoints.CheckpointError, match='different document'):
         parser.process_document(PeopleGatorDocument(id='foreign'), resume_from_checkpoint=snapshots(tmp_path)[0])
     unpickle.assert_not_called()
+
+
+def test_peoplegator_version_is_the_only_recorded_software_identity(tmp_path, monkeypatch):
+    from people_gator import globals
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    parser.process_document(rich_document())
+    data = json.loads(snapshots(tmp_path)[0].read_text())
+    assert data['compatibility'] == {'peoplegator_version': globals.software_version}
+
+
+@pytest.mark.parametrize('entry_point', ['resume', 'inspect'])
+@pytest.mark.parametrize('metadata_format', ['current', 'legacy'])
+def test_peoplegator_version_mismatch_warns_before_unpickle_and_continues(
+        tmp_path, monkeypatch, caplog, entry_point, metadata_format):
+    import logging
+    from people_gator import globals
+    from people_gator.core import checkpoints
+    from people_gator.core.checkpoint_inspection import inspect_checkpoint
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    complete = parser.process_document(rich_document())
+    path = snapshots(tmp_path)[0]
+    data = json.loads(path.read_text())
+    original_paths = set(snapshots(tmp_path))
+    saved_version = '0.0.0-review'
+    if metadata_format == 'current':
+        data['compatibility'] = {'peoplegator_version': saved_version}
+    else:
+        data['compatibility'] = {'packages': {'people-gator': saved_version, 'anno-page': 'old'},
+            'python': [3, 10, 0], 'code': {'old-layout': 'different'}, 'implementation': 'other'}
+    rewrite_registered_manifest(path, data)
+    for engine in engines: engine.process_document.reset_mock()
+    caplog.set_level(logging.WARNING)
+    original_restore = checkpoints.restore_document
+    def restore_after_warning(*args, **kwargs):
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert saved_version in warnings[0].getMessage()
+        assert globals.software_version in warnings[0].getMessage()
+        return original_restore(*args, **kwargs)
+    restored = Mock(side_effect=restore_after_warning)
+    monkeypatch.setattr(checkpoints, 'restore_document', restored)
+    if entry_point == 'resume':
+        result = parser.process_document(None, resume_from_checkpoint=path)
+        assert_graph_equal(complete, result)
+        assert [e.process_document.call_count for e in engines] == [0, 1, 1]
+        newest = [json.loads(p.read_text()) for p in set(snapshots(tmp_path)) - original_paths]
+        assert len(newest) == 2
+        assert all(p['compatibility'] == {'peoplegator_version': globals.software_version} for p in newest)
+    else:
+        result = inspect_checkpoint(path)
+        assert result['summary']['pages'] == 2
+        assert not any(e.process_document.called for e in engines)
+    restored.assert_called_once()
+    assert 'sensitive-credential-012345' not in caplog.text
+    assert str(path) not in caplog.text
+
+
+@pytest.mark.parametrize('difference', ['none', 'python', 'packages', 'code'])
+def test_legacy_environment_metadata_is_not_a_resume_gate(tmp_path, monkeypatch, caplog, difference):
+    import logging
+    from people_gator import globals
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    complete = parser.process_document(rich_document())
+    path = snapshots(tmp_path)[0]
+    data = json.loads(path.read_text())
+    identity = {'packages': {'people-gator': globals.software_version}}
+    if difference == 'python': identity.update(python=[2, 7, 0], implementation='different')
+    if difference == 'packages': identity['packages'].update({'pero-ocr': 'other', 'anno-page': 'other', 'numpy': 'other'})
+    if difference == 'code': identity['code'] = {'any.module': 'different-source-hash'}
+    data['compatibility'] = identity
+    rewrite_registered_manifest(path, data)
+    caplog.set_level(logging.WARNING)
+    result = parser.process_document(None, resume_from_checkpoint=path)
+    assert_graph_equal(complete, result)
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+@pytest.mark.parametrize('failure', ['corrupt', 'missing_class'])
+def test_actual_pickle_restore_failure_is_actionable_after_version_warning(tmp_path, monkeypatch, caplog, failure):
+    import hashlib
+    import logging
+    from people_gator.core.checkpoints import CheckpointError
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    parser.process_document(rich_document())
+    path = snapshots(tmp_path)[0]
+    data = json.loads(path.read_text())
+    raw = b'\x80\x05(' if failure == 'corrupt' else b'\x80\x05cpeoplegator_missing_module\nMissingClass\n.'
+    (path.parent / 'document.pkl').write_bytes(raw)
+    data['payload'].update(size=len(raw), sha256=hashlib.sha256(raw).hexdigest())
+    data['compatibility'] = {'peoplegator_version': '0.0.0-review'}
+    rewrite_registered_manifest(path, data)
+    for engine in engines: engine.process_document.reset_mock()
+    caplog.set_level(logging.WARNING)
+    with pytest.raises(CheckpointError, match='restore.*Pickle.*classes.*dependencies'):
+        parser.process_document(None, resume_from_checkpoint=path)
+    assert '0.0.0-review' in caplog.text
+    assert not any(e.process_document.called for e in engines)
