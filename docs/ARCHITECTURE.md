@@ -34,6 +34,14 @@ The `[DB_API]` configuration defines the connection. The CLI switches `--import-
 
 The local script loads the INI configuration and constructs a `PeopleGatorDocument` from page images, source ALTO/PAGE XML, and optional JSON metadata. `DocumentParser` creates and runs the configured engines in INI section order.
 
+When `[PARSE_FOLDER] PROCESSING_CHECKPOINTS` or `--processing-checkpoints` names
+a directory, the parser publishes JSON metadata and a complete Pickle document after each
+successful engine. `--resume-from-checkpoint` restores its full inherited
+document graph and resumes the unfinished engine prefix without loading original
+XML or importing app annotations again. Configuration/resource/input fingerprints
+and the durable run ledger are checked before execution; app writes and final
+exports are fenced independently. See [the contract and inherited-model audit](CHECKPOINTS.md).
+
 ```mermaid
 flowchart TD
     CFG["INI configuration"] --> DP["DocumentParser"]
@@ -84,6 +92,7 @@ The broader system design also includes occurrences of person names in OCR text.
 | --- | --- |
 | `people_gator/core/document_parser.py` | Configured engine orchestration and application import/export. |
 | `people_gator/core/layout.py` | Page/document objects, face-region metadata, ALTO/PAGE I/O and rendering. |
+| `people_gator/core/checkpoints.py`, `checkpoint_document.py`, `checkpoint_inspection.py` | Hybrid checkpoint publication, trusted Pickle recovery, selected read-only JSON diagnostics, compatibility/integrity checks and durable app replay guards. |
 | `people_gator/engines/base.py` | Common processing-engine interfaces. |
 | `people_gator/text/` | Reusable text chunker, factory and exact OCR source mappings; consumed internally by text detectors. |
 | `people_gator/engines/face_detection.py` | YOLO detection in selected image regions; boxes and five landmarks. |
@@ -164,7 +173,8 @@ merging/cleanup stays with human/application workflows. Successful IDs propagate
 without rebuilding clusters or replacing protected links/local identity metadata. The existing factory,
 shared `[DB_API]` client and external prompt conventions remain in use. Creation
 receipts on the document protect same-document retries after uncertain writes;
-there is no durable journal or server idempotency guarantee. See
+optional [processing checkpoints](CHECKPOINTS.md) persist complete receipts and
+durably fence stage/export replay. There is no server idempotency guarantee. See
 [linking rules](PROCESSING.md#document-wide-entity-linking-entity_matching).
 The optional DB-based assignment of unnamed faces (step 5) remains deferred;
 text XML/API persistence and complete round-trip remain step 7 of #33.

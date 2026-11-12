@@ -4,6 +4,25 @@ Tests focus on PeopleGator's document-processing pipeline: loading pages, runnin
 
 ## What should be tested
 
+Optional processing checkpoints are tested in `tests/test_checkpoints.py` using
+real ALTO/PAGE fixtures, rich inherited OCR/AnnoPage state and mocked engines/app
+clients. Cases compare every field/type/order/reference after Pickle round-trip,
+resume every boundary, verify CLI precedence and disabled behavior, recover
+modified cached/lazy images, validate relocated/missing/changed inputs/resources,
+interrupt payload/manifest publication in a subprocess, verify strict pre-unpickle
+trust/format/integrity checks and diagnostic JSON export, and prevent uncertain
+app-stage or repeated export replay. Software-version mismatch cases require a
+WARNING with both saved/current PeopleGator versions and successful continuation;
+Python/dependency/source metadata cannot gate recovery. Actual corrupt Pickle and
+missing-class failures still produce actionable restoration errors. No live LLM,
+database or GPU is required. The supported
+types, explicit model audit and conservative recovery limits are documented in
+[CHECKPOINTS.md](CHECKPOINTS.md).
+
+```bash
+python -m pytest -q tests/test_checkpoints.py tests/test_entity_matching.py tests/test_documentation.py
+```
+
 | Area | Important cases |
 | --- | --- |
 | Document loading | Page images, ALTO/PAGE layouts, metadata, and engine configuration/order |

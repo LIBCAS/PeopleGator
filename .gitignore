@@ -78,6 +78,11 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# Private processing snapshots and their recovery ledgers.
+checkpoint.json
+document.pkl
+processing-checkpoints/
+
 # IPython
 profile_default/
 ipython_config.py

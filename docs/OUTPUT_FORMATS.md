@@ -208,8 +208,10 @@ source spans or clusters into ALTO/PAGE or upload text mentions to the app. Exis
 face output can use resolved IDs through its current fields. The in-memory
 `entity_linking_journal` retains creation receipts for retries of the same document
 but is not part of either XML format or the app persistence contract. Reconstructing
-a document loses these receipts; remote reconciliation is required after an
-uncertain write. See [linking/retry rules](PROCESSING.md#propagation-protected-links-and-retry-limits).
+a document from XML loses these receipts. Optional [processing checkpoints](CHECKPOINTS.md)
+preserve the complete object graph and receipts with durable replay guards;
+remote reconciliation remains required after an uncertain write. See
+[linking/retry rules](PROCESSING.md#propagation-protected-links-and-retry-limits).
 
 
 The existing face ALTO writer assumes a default ALTO namespace on its enclosing
