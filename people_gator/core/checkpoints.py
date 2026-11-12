@@ -67,14 +67,12 @@ def file_identity(path):
 
 
 def configuration_identity(config, config_dir):
-    """Capture ordered effective settings, redacting credentials and hashing resources.
+    """Capture ordered settings, redacting credential options by key and hashing resources.
 
     Args:
         config: Effective ConfigParser, after CLI overrides.
         config_dir: Base directory used by engine resource resolution.
     """
-    secrets = [v for section in config.sections() for k, v in config[section].items()
-               if _SECRET.search(k) and v]
     sections = []
     for section in config.sections():
         settings = {}
@@ -83,11 +81,6 @@ def configuration_identity(config, config_dir):
             if _SECRET.search(key):
                 settings[key] = {'credential_required': bool(value)}
             else:
-                if any(secret in value for secret in secrets):
-                    raise CheckpointError('Credential embedded in a non-credential setting; use separate credential options')
-                # URLs carrying credentials cannot be safely retained as settings.
-                if re.search(r'://[^/]*@|[?&](?:key|token|password|secret)=', value, re.I):
-                    raise CheckpointError('Credentials in resource/service URLs are unsupported; use credential options')
                 if section.startswith('ENGINE_') and key.endswith('_path') and value.strip():
                     path = Path(value)
                     if not path.is_absolute():
@@ -337,7 +330,7 @@ class CheckpointRun:
             self.initial_options = dict(options)
             self.assets = input_assets(document)
             # Preflight unsupported fields before expensive/external engine work.
-            serialize_document(document, self._secrets())
+            serialize_document(document)
             self.run_directory = self.directory / self.document_id / self.run_id
             self.run_directory.mkdir(mode=0o700, parents=True, exist_ok=False)
             # pathlib parents use the default umask; privatize our document folder.
@@ -362,11 +355,6 @@ class CheckpointRun:
             raise CheckpointError('Invalid checkpoint entity creation journal')
         if any(record['state'] == 'uncertain' for record in journal):
             raise CheckpointError('Uncertain entity creation receipt; manual reconciliation with PeopleGatorApp is required')
-
-    def _secrets(self):
-        """Collect credentials for private-state checks without persisting them."""
-        return [v for section in self.config.sections() for k, v in self.config[section].items()
-                if _SECRET.search(k) and v]
 
     def _restore(self, path, expected_document=None):
         """Validate metadata/configuration before unpickling a trusted local payload.
@@ -438,7 +426,7 @@ class CheckpointRun:
         if self.directory:
             from people_gator.core.checkpoint_inspection import document_summary
             validate_assets(self.assets, document, self.config, relocate=False)
-            payload = serialize_document(document, self._secrets())
+            payload = serialize_document(document)
             destination = self.directory / self.document_id / self.run_id / self.attempt_id
             destination.mkdir(mode=0o700, parents=True, exist_ok=True)
             destination.parent.chmod(0o700)
@@ -461,9 +449,6 @@ class CheckpointRun:
                     'payload': {'filename': 'document.pkl', 'size': len(payload),
                                 'sha256': hashlib.sha256(payload).hexdigest(), 'protocol': PROTOCOL}}
             data['integrity_sha256'] = _digest(data)
-            raw = json.dumps(data, ensure_ascii=True)
-            if any(json.dumps(secret, ensure_ascii=True)[1:-1] in raw for secret in self._secrets()):
-                raise CheckpointError('Credential found in checkpoint metadata')
             marker = stage / 'checkpoint.json'
             # Register provenance durably, then publish the JSON commit marker last.
             self.ledger['checkpoints'][str(marker)] = data['integrity_sha256']

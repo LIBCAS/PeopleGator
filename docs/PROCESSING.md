@@ -308,6 +308,9 @@ the directory resolves from the process working directory. No checkpoint section
 or engine is added. See [checkpoint configuration and recovery](CHECKPOINTS.md)
 for the versioned JSON metadata + Pickle document contract, inherited-model audit, required
 current credentials, compatible path relocation and conservative app replay guards.
+JSON configuration snapshots redact recognized credential options by key only;
+checkpointing does not scan values or document content for credential strings.
+The authoritative Pickle snapshot retains complete document content.
 PeopleGator software-version differences warn with both saved/current versions and
 attempt recovery; exact Python/dependency versions or source hashes are not required.
 Engine checkpoints precede app/XML/render exports. Keep the original run ledger

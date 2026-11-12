@@ -305,7 +305,6 @@ def test_configuration_and_resource_compatibility(tmp_path, monkeypatch, change)
 
 
 def test_credentials_and_logs_are_private(tmp_path, monkeypatch, caplog):
-    from people_gator.core.checkpoints import CheckpointError
     parser, engines, config = pipeline(tmp_path, monkeypatch)
     parser.process_document(rich_document())
     path = snapshots(tmp_path)[0]
@@ -316,11 +315,126 @@ def test_credentials_and_logs_are_private(tmp_path, monkeypatch, caplog):
     assert path.parent.stat().st_mode & 0o777 == 0o700
     config['ENGINE_0']['API_KEY'] = 'replacement-credential-987654'
     parser.process_document(None, resume_from_checkpoint=path)
-    doc = rich_document()
-    doc.source_metadata['accidental'] = config['ENGINE_0']['API_KEY']
-    with pytest.raises(CheckpointError, match='Credential found'):
-        parser.process_document(doc)
     assert all('replacement-credential-987654' not in p.read_text() for p in snapshots(tmp_path))
+
+
+@pytest.mark.parametrize('value,other', [
+    ('none', 'a-none-model'), ('test-model', 'test-model'),
+    ('shared', 'prefix-shared-suffix'),
+])
+def test_reused_credential_values_allow_pipeline_checkpoints(tmp_path, monkeypatch, value, other):
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    config['ENGINE_0']['API_KEY'] = value
+    config['ENGINE_0']['MODEL_NAME'] = other
+    config['ENGINE_1']['PASSWORD'] = value
+    doc = rich_document()
+    result = parser.process_document(doc)
+    assert result is doc
+    assert result.source_metadata['stages'] == [0, 1, 2]
+    assert all(engine.process_document.call_count == 1 for engine in engines)
+    assert len(snapshots(tmp_path)) == 3
+    for path in snapshots(tmp_path):
+        data = json.loads(path.read_text())
+        for field in ('initial_configuration', 'execution_configuration'):
+            sections = {s['section']: s['settings'] for s in data[field]}
+            assert sections['ENGINE_0']['api_key'] == {'credential_required': True}
+            assert sections['ENGINE_1']['password'] == {'credential_required': True}
+            assert sections['ENGINE_0']['model_name'] == other
+
+
+@pytest.mark.parametrize('value', [
+    'https://user:pass@example.invalid/service',
+    'https://example.invalid/service?key=value&token=other',
+    'https://example.invalid/service?password=value&secret=other',
+    'ordinary text containing ://user@host and ?token=value',
+])
+def test_credential_looking_values_allow_pipeline_checkpoints(tmp_path, monkeypatch, value):
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    config['ENGINE_0']['API_URL'] = value
+    parser.process_document(rich_document())
+    paths = snapshots(tmp_path)
+    assert len(paths) == 3
+    data = json.loads(paths[0].read_text())
+    assert data['initial_configuration'][1]['settings']['api_url'] == value
+    parser.process_document(None, resume_from_checkpoint=paths[0])
+    assert [engine.process_document.call_count for engine in engines] == [1, 2, 2]
+
+
+@pytest.mark.parametrize('value', ['', 'synthetic-option-value'])
+def test_configuration_redacts_only_recognized_option_keys(tmp_path, value):
+    from people_gator.core.checkpoints import configuration_identity
+    keys = ['API_KEY', 'PASSWORD', 'PASSWD', 'ACCESS_TOKEN', 'SECRET',
+            'CREDENTIAL', 'AUTHORIZATION', 'PRIVATE_KEY']
+    config = ConfigParser()
+    config['DEFAULT'] = {'API_KEY': value}
+    config['SERVICE'] = {key: value for key in keys[1:]}
+    config['SERVICE']['MODEL_NAME'] = value
+    config['SERVICE']['MAX_OUTPUT_TOKENS'] = '1000'
+    identity = configuration_identity(config, tmp_path)
+    settings = identity[0]['settings']
+    assert all(settings[key.lower()] == {'credential_required': bool(value)} for key in keys)
+    assert settings['model_name'] == value
+    assert settings['max_output_tokens'] == '1000'
+
+
+@pytest.mark.parametrize('fmt', ['alto', 'page'])
+def test_configured_credential_text_preserves_complete_document(tmp_path, monkeypatch, fmt):
+    import numpy as np
+    from people_gator.core.checkpoint_document import serialize_document, restore_document
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    value = 'configured-Čapek-"value"\n'
+    config['ENGINE_0']['API_KEY'] = value
+    doc = rich_document(fmt)
+    doc.page_layouts[0].regions[0].lines[0].transcription = f'OCR: {value}'
+    doc.source_metadata['original'] = {value: [value, value.encode(), bytearray(value.encode())]}
+    doc.extra['unicode'] = np.array([value])
+    doc.extra['bytes'] = np.array([value.encode()])
+    initial_payload = serialize_document(doc)
+    expected = deepcopy(doc)
+    for index in range(3):
+        mark(expected, index)
+    assert_graph_equal(expected, parser.process_document(doc))
+    paths = snapshots(tmp_path)
+    assert len(paths) == 3
+    for index, path in enumerate(paths):
+        stage = restore_document((path.parent / 'document.pkl').read_bytes())
+        stage_expected = deepcopy(expected)
+        stage_expected.source_metadata['stages'] = list(range(index + 1))
+        assert_graph_equal(stage_expected, stage)
+    assert_graph_equal(expected, parser.process_document(None, resume_from_checkpoint=paths[0]))
+    initial = restore_document(initial_payload)
+    expected.source_metadata.pop('stages')
+    assert_graph_equal(expected, initial)
+
+
+@pytest.mark.parametrize('value', ['completed', 'PeopleGatorDocument'])
+def test_generated_metadata_and_pickle_are_not_scanned(tmp_path, monkeypatch, value):
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    config['ENGINE_0']['API_KEY'] = value
+    result = parser.process_document(rich_document())
+    paths = snapshots(tmp_path)
+    assert len(paths) == 3
+    assert result.source_metadata['stages'] == [0, 1, 2]
+    path = paths[0]
+    if value == 'completed':
+        assert value in path.read_text()
+    else:
+        assert value.encode() in (path.parent / 'document.pkl').read_bytes()
+
+
+def test_engine_output_can_contain_configured_credential_text(tmp_path, monkeypatch):
+    from people_gator.core.checkpoint_document import restore_document
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    value = config['ENGINE_0']['API_KEY']
+    def add_text(doc):
+        doc.source_metadata['engine_output'] = value
+        doc.page_layouts[0].regions[0].lines[0].transcription = value
+        return mark(doc, 0)
+    engines[0].process_document.side_effect = add_text
+    result = parser.process_document(rich_document())
+    assert len(snapshots(tmp_path)) == 3
+    restored = restore_document((snapshots(tmp_path)[-1].parent / 'document.pkl').read_bytes())
+    assert_graph_equal(result, restored)
 
 
 def test_unknown_fields_and_handlers_fail_before_engine(tmp_path, monkeypatch):
@@ -855,7 +969,7 @@ def test_only_protected_registered_local_checkpoints_can_unpickle(tmp_path, monk
 
 
 @pytest.mark.parametrize('kind', ['db', 'session', 'mock'])
-def test_live_clients_and_credentials_never_reach_either_file(tmp_path, monkeypatch, kind):
+def test_live_clients_never_reach_either_file(tmp_path, monkeypatch, kind):
     import requests
     from people_gator.core.checkpoints import CheckpointError
     from people_gator.core.db import DatabaseApiService
