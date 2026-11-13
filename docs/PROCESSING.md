@@ -348,6 +348,14 @@ credentials are excluded. Every observable application request attempt is retain
 including malformed responses and retries; no response is represented by `null`.
 Provider SDK internal retries are not separately observable. Batch records are
 copied to every included face; text-only decisions have no face association.
+Face-related callers pass a local `interactions` output list to
+`LLMPrompter.process()` (also available through `__call__`) or
+`process_parallel()`. Single requests append attempt dictionaries directly;
+parallel calls append one attempt list per input request in input order. Both
+interfaces preserve existing collection entries and their normal return values.
+Callers append engine-labeled records to the participating faces in `finally`
+blocks, retaining attempts when a request raises. Text-only callers omit the
+collection. The prompter holds no mutable interaction state.
 Collection does not change the existing request, result or retry behavior.
 
 `PROCESSING_CHECKPOINTS = ./processing-checkpoints` is an optional additional

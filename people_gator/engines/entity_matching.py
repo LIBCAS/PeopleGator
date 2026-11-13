@@ -289,8 +289,14 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                 candidates = self._candidates(source, known, cache)
                 logger.debug('Entity unit %d: %d candidate entities', position, len(candidates))
                 operation = 'LLM decision'
-                with self.capture_face_prompts([[face for _, face in unit.faces]], "ENTITY_MATCHING"):
-                    decision = self.match_entity(name, source, candidates)
+                interactions = [] if unit.faces else None
+                try:
+                    decision = self.match_entity(name, source, candidates, interactions=interactions)
+                finally:
+                    for _, face in unit.faces:
+                        metadata = face.face_metadata
+                        metadata.prompts = getattr(metadata, 'prompts', [])
+                        metadata.prompts.extend(dict(engine="ENTITY_MATCHING", **record) for record in interactions)
                 if decision.action == 'unresolved' or not decision.source_is_person:
                     logger.debug('Entity unit %d: unresolved', position)
                     continue
@@ -369,13 +375,14 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
             result.append(cache[entity_id])
         return result
 
-    def match_entity(self, name, caption, db_entities):
+    def match_entity(self, name, caption, db_entities, interactions=None):
         """Supply evidence to the LLM and validate decision structure and references.
 
         Args:
             name: Canonical source proposal.
             caption: Source evidence mapping, or caption string for legacy callers.
             db_entities: Hydrated app candidates in request-local order.
+            interactions: Optional output list of rendered prompts and raw response attempts.
 
         Returns:
             A validated explicit decision; invalid decisions raise safely.
@@ -383,7 +390,7 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
         source = caption if isinstance(caption, dict) else {'captions': [caption] if caption else []}
         entities = self.prepare_entities(db_entities)
         result = self.llm_prompter(data={'name': name, 'context': source, 'entities': entities},
-                                   response_model=EntityMatchingResult)
+                                   response_model=EntityMatchingResult, interactions=interactions)
         try:
             result = EntityMatchingResult.model_validate(result)
         except ValidationError:

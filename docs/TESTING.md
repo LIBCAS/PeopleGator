@@ -419,7 +419,10 @@ not establish model extraction, summary or identification accuracy.
 `tests/test_face_prompts.py` uses mocked Responses and synthetic multi-page faces
 to verify independent metadata lists, role-marked rendered text, untouched raw
 responses, malformed/schema/transport/status failures and retries, and unchanged
-return/exception behavior. Single assignment and all three batch modes retain
+return/exception behavior. Public-interface regressions exercise caller-owned
+collections, repeated/omitted calls, preservation of pre-existing records, empty
+parallel input, ordered mixed success/failure groups and raising assignment
+calls. Single assignment and all three batch modes retain
 request-to-face association, ordering and independent record dictionaries. A
 POSIX process-pool smoke test checks worker records reach the parent document.
 Matching tests cover a shared multi-face unit, text-only and protected/unrelated

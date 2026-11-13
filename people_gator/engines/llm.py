@@ -5,7 +5,6 @@ import logging
 import numpy as np
 import multiprocessing
 
-from contextlib import contextmanager
 from typing import Any
 from openai import OpenAI
 from jinja2 import Template, TemplateError, meta
@@ -78,29 +77,30 @@ class LLMPrompter:
         self.max_attempts = max_attempts
         self.num_processes = num_processes
         self.raise_on_failure = raise_on_failure
-        # Opt-in, request-ordered attempt records; disabled for ordinary calls.
-        self.interactions = None
 
-    def __call__(self, data: dict, images: list|dict|None = None, response_model=None):
+    def __call__(self, data: dict, images: list|dict|None = None, response_model=None, interactions=None):
         """Delegate to the primary operation with the supplied arguments.
 
         Args:
             data: Template context mapping.
             images: Optional images as an ordered list or label-to-image mapping.
             response_model: Optional Pydantic response class; None returns decoded JSON.
+            interactions: Optional caller-owned output list; existing entries are preserved.
 
         Returns:
             The result of the delegated operation.
         """
-        return self.process(data, images, response_model)
+        return self.process(data, images, response_model, interactions=interactions)
 
-    def process_parallel(self, data_list: list[dict], images_list: list[list|dict|None]|None = None, response_model=None):
+    def process_parallel(self, data_list: list[dict], images_list: list[list|dict|None]|None = None, response_model=None, interactions=None):
         """Return LLM results in request order using a multiprocessing pool.
 
         Args:
             data_list: Prompt-context dictionaries in request order.
             images_list: Optional per-request images; None supplies no images.
             response_model: Optional Pydantic response class; None returns decoded JSON.
+            interactions: Optional output list receiving one attempt list per request,
+                in input order; existing entries are preserved, including on request failure.
         """
         if images_list is None:
             images_list = [None] * len(data_list)
@@ -108,12 +108,12 @@ class LLMPrompter:
         logger.debug("Preparing %d parallel LLM requests with %d processes", len(data_list), self.num_processes)
         request_args = [self._prepare_request_args(data, images, response_model) for data, images in zip(data_list, images_list)]
 
-        sender = self._send_request if self.interactions is None else self._send_request_with_interactions
+        sender = self._send_request if interactions is None else self._send_request_with_interactions
         with multiprocessing.Pool(processes=self.num_processes) as pool:
             results = pool.starmap(sender, [(self.api_url, self.api_key, args, self.max_attempts, self.json_schema, response_model, self.raise_on_failure) for args in request_args])
 
-        if self.interactions is not None:
-            self.interactions.extend(records for _, records in results)
+        if interactions is not None:
+            interactions.extend(records for _, records in results)
             results = [result for result, _ in results]
             for result in results:
                 if isinstance(result, Exception):
@@ -121,28 +121,22 @@ class LLMPrompter:
 
         return results
 
-    def process(self, data: dict, images: list|dict|None = None, response_model=None):
+    def process(self, data: dict, images: list|dict|None = None, response_model=None, interactions=None):
         """Render a prompt and return the structured LLM result.
 
         Args:
             data: Template context mapping.
             images: Optional images as an ordered list or label-to-image mapping.
             response_model: Optional Pydantic response class; None returns decoded JSON.
+            interactions: Optional caller-owned output list; existing entries are preserved.
 
         Returns:
             The latest LLM result; see _send_request for failure semantics.
         """
         request_args = self._prepare_request_args(data, images, response_model)
-        args = (self.api_url, self.api_key, request_args, self.max_attempts,
-                self.json_schema, response_model, self.raise_on_failure)
-        if self.interactions is None:
-            result = self._send_request(*args)
-        else:
-            records = []
-            self.interactions.append(records)
-            result = self._send_request(*args, interactions=records)
-
-        return result
+        return self._send_request(
+            self.api_url, self.api_key, request_args, self.max_attempts,
+            self.json_schema, response_model, self.raise_on_failure, interactions=interactions)
 
     @staticmethod
     def _send_request_with_interactions(*args):
@@ -198,8 +192,8 @@ class LLMPrompter:
             validated = False
             failure_type = LLMRequestError
             decode_stage = "HTTP response decoding"
-            record = {'prompt': prompt, 'response': None}
             if interactions is not None:
+                record = {'prompt': prompt, 'response': None}
                 interactions.append(record)
             try:
                 response = client.responses.create(**request_args)
@@ -400,35 +394,6 @@ class LLMBasedEngine(BaseEngine):
             prompt_template_user=self.prompt_template_user,
             json_schema=self.json_schema
         )
-
-    @contextmanager
-    def capture_face_prompts(self, face_groups, engine):
-        """Append request-ordered attempts to each participating face, even on failure.
-
-        Args:
-            face_groups: Ordered lists of faces, one group per LLM request.
-            engine: Engine method name written into each face diagnostic record.
-        """
-        if not any(face_groups):
-            yield
-            return
-        prompter = self.llm_prompter
-        previous = prompter.interactions
-        prompter.interactions = []
-        try:
-            yield
-        finally:
-            interactions = prompter.interactions
-            prompter.interactions = previous
-            for faces, records in zip(face_groups, interactions):
-                for face in faces:
-                    metadata = face.face_metadata
-                    if metadata is None:
-                        continue
-                    # Older trusted Pickle checkpoints predate this optional field.
-                    if not hasattr(metadata, 'prompts'):
-                        metadata.prompts = []
-                    metadata.prompts.extend(dict(engine=engine, **record) for record in records)
 
     def load_prompt_template(self):
         """Require readable prompt JSON with a usable system and/or user template.
