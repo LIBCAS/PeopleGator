@@ -274,7 +274,11 @@ class PeopleGatorPageIdentity(AnnoPageBaseMetadata):
 
 
 class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
-    """Face landmarks, provenance, and the page-local person identity."""
+    """Face landmarks, provenance, identity and separate LLM diagnostics.
+
+    Attributes:
+        prompts: Ordered face-associated LLM attempts; excluded from XML/app mappings.
+    """
 
     def __init__(self,
                  tag_id: str,
@@ -316,6 +320,7 @@ class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
                          confidence)
 
         self.page_identity: PeopleGatorPageIdentity = page_identity
+        self.prompts: list[dict] = []
 
         self.left_eye_position: Position = left_eye_position
         self.right_eye_position: Position = right_eye_position

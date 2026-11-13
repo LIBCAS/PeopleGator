@@ -47,6 +47,11 @@ there is no migration or long-term archival/portable interchange guarantee.
 | Integrity/format | Supported Pickle protocol **5**, payload filename `document.pkl`, byte size and SHA-256; original XML/image/metadata paths and content hashes; metadata checksum. |
 | Summary | Counts of pages, text regions/lines, non-text regions, faces, mentions, clusters and distinct resolved app identities. This is diagnostic, not document state. |
 
+Complete face metadata includes its ordered `prompts` diagnostics. The separate
+`OUTPUT_FACE_PROMPTS_PATH` is a relocatable final-output path, so it can be enabled,
+disabled or changed when resuming. Existing snapshots without that field remain
+usable by face processing and the separate exporter.
+
 The native Pickle memo preserves object identity, cycles and shared references.
 No object table, bespoke JSON type codecs, class registry or partial `to_dict()`
 reconstruction is used. Every populated attribute is checked against the local

@@ -310,6 +310,7 @@ work under #33. See [output limitations](OUTPUT_FORMATS.md#peoplegatorapp-text-m
 | `--input-metadata-path` | Optional JSON document metadata |
 | `--output-alto-path` / `--output-xml-path` | Output ALTO / PAGE XML directories |
 | `--output-render-path` | Optional annotated JPEG directory |
+| `--output-face-prompts-path` | Optional directory for one prompt/raw-response JSON list per face |
 | `--processing-checkpoints` | Optional directory for JSON metadata + Pickle document after each successful engine; empty disables |
 | `--resume-from-checkpoint` | Resume a finalized snapshot, skipping completed engines and initial app import |
 | `--import-from-app` / `--export-to-app` | Import stored annotations before processing / export results after processing |
@@ -329,9 +330,25 @@ IMPORT_FROM_APP = no
 EXPORT_TO_APP = no
 ```
 
-Supported keys are `INPUT_IMAGE_PATH`, `INPUT_ALTO_PATH`, `INPUT_XML_PATH`, `INPUT_METADATA_PATH`, `OUTPUT_ALTO_PATH`, `OUTPUT_XML_PATH`, `OUTPUT_RENDER_PATH`, `IMPORT_FROM_APP`, and `EXPORT_TO_APP`. Choose one input XML format. CLI path options override the corresponding configured values; passing an import/export flag enables it. `--config`, `--device`, `--gpu-id`, and `--logging-level` are CLI-only options in the current script.
+Supported keys are `INPUT_IMAGE_PATH`, `INPUT_ALTO_PATH`, `INPUT_XML_PATH`, `INPUT_METADATA_PATH`, `OUTPUT_ALTO_PATH`, `OUTPUT_XML_PATH`, `OUTPUT_RENDER_PATH`, `OUTPUT_FACE_PROMPTS_PATH`, `IMPORT_FROM_APP`, and `EXPORT_TO_APP`. Choose one input XML format. CLI path options override the corresponding configured values; passing an import/export flag enables it. `--config`, `--device`, `--gpu-id`, and `--logging-level` are CLI-only options in the current script.
 
 The script can therefore run with just `--config ./config.ini` when the remaining processing paths and options are defined in that file.
+
+`OUTPUT_FACE_PROMPTS_PATH = ./output/face-prompts` enables separate face diagnostics
+at the final output stage. `--output-face-prompts-path DIR` overrides it; an empty
+CLI value disables it. The directory resolves from the working directory and is
+created automatically. Each face receives a file, including faces with no LLM
+attempts. See [the JSON contract and filenames](OUTPUT_FORMATS.md#face-llm-diagnostics).
+
+Face metadata retains chronological `prompts` records for single assignment,
+every batch mode, and entity-matching decisions involving that face. Records
+contain the engine method, actual rendered text with `[system]`/`[user]` roles,
+and raw response text before parsing/validation. Image payloads and configured
+credentials are excluded. Every observable application request attempt is retained,
+including malformed responses and retries; no response is represented by `null`.
+Provider SDK internal retries are not separately observable. Batch records are
+copied to every included face; text-only decisions have no face association.
+Collection does not change the existing request, result or retry behavior.
 
 `PROCESSING_CHECKPOINTS = ./processing-checkpoints` is an optional additional
 `[PARSE_FOLDER]` key. The CLI value takes precedence, including an empty string;
@@ -345,7 +362,7 @@ checkpointing does not scan values or document content for credential strings.
 The authoritative Pickle snapshot retains complete document content.
 PeopleGator software-version differences warn with both saved/current versions and
 attempt recovery; exact Python/dependency versions or source hashes are not required.
-Engine checkpoints precede app/XML/render exports. Keep the original run ledger
+Engine checkpoints precede app/XML/render and face-prompt exports. Keep the original run ledger
 and inputs accessible; uncertain app creates and repeated app exports require
 manual reconciliation. Local output can be retried from the last engine snapshot.
 

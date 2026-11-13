@@ -1,4 +1,6 @@
 import os
+import json
+from urllib.parse import quote
 import cv2
 import torch
 import logging
@@ -7,7 +9,7 @@ import configparser
 
 from safe_gpu import safe_gpu
 
-from people_gator.core.layout import PeopleGatorDocument, render_to_image
+from people_gator.core.layout import PeopleGatorDocument, PeopleGatorFaceRegionLayout, render_to_image
 from people_gator.core.document_parser import DocumentParser
 
 
@@ -29,6 +31,7 @@ def parse_arguments():
     parser.add_argument("--output-xml-path", help="Path to directory where PAGE XML files will be saved.")
     parser.add_argument("--output-alto-path", help="Path to directory where ALTO files will be saved.")
     parser.add_argument("--output-render-path", help="Path to directory where rendered images will be saved.")
+    parser.add_argument("--output-face-prompts-path", help="Directory for per-face rendered LLM prompts and raw responses as JSON.")
     parser.add_argument("--processing-checkpoints", help="Directory for private per-engine JSON metadata + Pickle checkpoints (empty disables).")
     parser.add_argument("--resume-from-checkpoint", help="Continue from a trusted local checkpoint directory or checkpoint.json using the supplied configuration.")
 
@@ -152,6 +155,27 @@ def load_document(input_images_path, input_xml_path=None, input_alto_path=None, 
     return document
 
 
+def save_face_prompts(document, output_path):
+    """Write a separate UTF-8 JSON attempt list for every face, including empty ones.
+
+    Args:
+        document: Processed document with page layouts and face metadata.
+        output_path: Output directory, relative to the working directory or absolute.
+    """
+    os.makedirs(output_path, exist_ok=True)
+    for page_index, page in enumerate(document.page_layouts):
+        page_id = quote(str(page.id or "page"), safe="").replace("_", "%5F")
+        for region_index, face in enumerate(page.regions):
+            if not isinstance(face, PeopleGatorFaceRegionLayout):
+                continue
+            metadata = face.face_metadata
+            tag = getattr(metadata, 'tag_id', None) or face.id or "face"
+            face_id = quote(str(tag), safe="").replace("_", "%5F")
+            filename = f"{page_index}_{page_id}_{region_index}_{face_id}.json"
+            with open(os.path.join(output_path, filename), 'w', encoding='utf-8') as stream:
+                json.dump(getattr(metadata, 'prompts', []), stream, ensure_ascii=False, indent=4)
+
+
 def main():
     """Process configured input pages and write the requested outputs.
 
@@ -196,6 +220,9 @@ def main():
     if args.output_render_path is not None:
         config['PARSE_FOLDER']['OUTPUT_RENDER_PATH'] = args.output_render_path
 
+    if args.output_face_prompts_path is not None:
+        config['PARSE_FOLDER']['OUTPUT_FACE_PROMPTS_PATH'] = args.output_face_prompts_path
+
     if args.processing_checkpoints is not None:
         config['PARSE_FOLDER']['PROCESSING_CHECKPOINTS'] = args.processing_checkpoints
 
@@ -221,6 +248,7 @@ def main():
     output_xml_path = get_value_or_none(config, 'PARSE_FOLDER', 'OUTPUT_XML_PATH')
     output_alto_path = get_value_or_none(config, 'PARSE_FOLDER', 'OUTPUT_ALTO_PATH')
     output_render_path = get_value_or_none(config, 'PARSE_FOLDER', 'OUTPUT_RENDER_PATH')
+    output_face_prompts_path = get_value_or_none(config, 'PARSE_FOLDER', 'OUTPUT_FACE_PROMPTS_PATH')
 
     import_from_app = get_value_or_none(config, 'PARSE_FOLDER', 'IMPORT_FROM_APP', getboolean=True)
     export_to_app = get_value_or_none(config, 'PARSE_FOLDER', 'EXPORT_TO_APP', getboolean=True)
@@ -270,6 +298,9 @@ def main():
             output_image_path = os.path.join(output_render_path, f"{page_layout.id}.jpg")
             cv2.imwrite(output_image_path, rendered_image)
             logger.debug("Rendered page %s", page_layout.id)
+
+    if output_face_prompts_path:
+        save_face_prompts(document, output_face_prompts_path)
 
     logger.info("Processing completed successfully.")
 

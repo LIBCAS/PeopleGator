@@ -412,3 +412,26 @@ evidence and hydrated candidates through typed select/create/unresolved outcomes
 including equivalent duplicate records and empty optional fields. These tests
 verify instructions, request/response shapes and consumers; mocked outputs do
 not establish model extraction, summary or identification accuracy.
+
+
+## Face prompt/response diagnostics
+
+`tests/test_face_prompts.py` uses mocked Responses and synthetic multi-page faces
+to verify independent metadata lists, role-marked rendered text, untouched raw
+responses, malformed/schema/transport/status failures and retries, and unchanged
+return/exception behavior. Single assignment and all three batch modes retain
+request-to-face association, ordering and independent record dictionaries. A
+POSIX process-pool smoke test checks worker records reach the parent document.
+Matching tests cover a shared multi-face unit, text-only and protected/unrelated
+units, earlier records and failures. Export tests check every face, empty lists,
+Unicode, repeated/missing/unsafe IDs, stable collision-safe names, CLI/INI
+precedence and disabled/resumed output. XML comparisons ignore writer timestamps;
+face mappings and complete checkpoint round-trips preserve existing contracts.
+
+```bash
+python -m pytest -q tests/test_face_prompts.py tests/test_llm_responses.py tests/test_llm_prompts.py tests/test_face_assignment_text_entities.py tests/test_entity_matching.py tests/test_checkpoints.py tests/test_logging.py tests/test_documentation.py
+python -m pytest -q --runtime-mode=full
+```
+
+No live LLM, app service or GPU inference is needed. The real pool smoke test
+requires POSIX `fork`; other platforms retain deterministic inline-pool coverage.

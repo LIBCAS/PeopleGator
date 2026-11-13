@@ -289,7 +289,8 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                 candidates = self._candidates(source, known, cache)
                 logger.debug('Entity unit %d: %d candidate entities', position, len(candidates))
                 operation = 'LLM decision'
-                decision = self.match_entity(name, source, candidates)
+                with self.capture_face_prompts([[face for _, face in unit.faces]], "ENTITY_MATCHING"):
+                    decision = self.match_entity(name, source, candidates)
                 if decision.action == 'unresolved' or not decision.source_is_person:
                     logger.debug('Entity unit %d: unresolved', position)
                     continue

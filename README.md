@@ -154,7 +154,10 @@ peoplegator \
   --device cpu
 ~~~
 
-For PAGE XML use `--input-xml-path` and `--output-xml-path`. `--output-render-path` adds visual annotations. App import/export requires separate `[DB_API]` configuration and appropriate document metadata; see [Processing](docs/PROCESSING.md). The example illustrates the current CLI arguments; adapt the paths and model configuration for your local data.
+For PAGE XML use `--input-xml-path` and `--output-xml-path`. `--output-render-path` adds visual annotations.
+`--output-face-prompts-path ./output/face-prompts` optionally saves one rendered
+LLM prompt/raw-response JSON list per face, including failed attempts; see
+[face diagnostics](docs/OUTPUT_FORMATS.md#face-llm-diagnostics). App import/export requires separate `[DB_API]` configuration and appropriate document metadata; see [Processing](docs/PROCESSING.md). The example illustrates the current CLI arguments; adapt the paths and model configuration for your local data.
 
 For text-only inspection with a configured `TEXT_ENTITY_DETECTION` engine, use:
 

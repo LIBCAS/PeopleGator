@@ -20,7 +20,7 @@ SCHEMA_VERSION = 2
 _SECRET = re.compile(r'api.?key|password|passwd|(?:^|[_-])token(?:$|[_-])|secret|credential|authorization|private.?key', re.I)
 _PORTABLE = {'processing_checkpoints', 'input_image_path',
              'input_xml_path', 'input_alto_path', 'input_metadata_path',
-             'output_xml_path', 'output_alto_path', 'output_render_path',
+             'output_xml_path', 'output_alto_path', 'output_render_path', 'output_face_prompts_path',
              'export_to_app', 'drop_existing_annotations'}
 
 
