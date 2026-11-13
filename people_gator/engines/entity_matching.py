@@ -297,17 +297,13 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                 linked += 1
                 continue
             operation = 'candidate retrieval'
+            interactions = None
             try:
                 candidates = self._candidates(source, known, cache)
                 logger.debug('Entity unit %d: %d candidate entities', position, len(candidates))
                 operation = 'LLM decision'
                 interactions = [] if unit.faces else None
-                try:
-                    decision = self.match_entity(name, source, candidates, interactions=interactions)
-                finally:
-                    for _, face in unit.faces:
-                        metadata = face.face_metadata
-                        metadata.prompts.extend(dict(engine="ENTITY_MATCHING", **record) for record in interactions)
+                decision = self.match_entity(name, source, candidates, interactions=interactions)
                 if decision.action == 'unresolved' or not decision.source_is_person:
                     logger.debug('Entity unit %d: unresolved', position)
                     skipped += 1
@@ -352,6 +348,12 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                     logger.warning('Entity unit %d: uncertain create retained; manual reconciliation '
                                    'with app required before retry', position)
                 continue
+            finally:
+                # Diagnostic storage is document state, outside request recovery.
+                if interactions is not None:
+                    for _, face in unit.faces:
+                        metadata = face.face_metadata
+                        metadata.prompts.extend(dict(engine="ENTITY_MATCHING", **record) for record in interactions)
             # Propagation is outside the recoverable request boundary: broken
             # document state must still fail fast. Successful create receipts can
             # replay on retry without repeating the POST.

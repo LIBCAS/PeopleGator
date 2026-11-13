@@ -1130,7 +1130,9 @@ conflicts and uncertain prior creates. Partial linking is reported at WARNING.
 
 This recovery boundary covers per-unit requests and decision validation only.
 Configuration errors, invalid global cluster/document invariants, interrupts,
-unrelated engines and broken in-memory propagation can still fail fast. Successful
+unrelated engines, broken face-interaction storage and broken in-memory
+propagation can still fail fast. Interaction attachment runs outside the
+recoverable handler, including after a failed LLM attempt. Successful
 create receipts remain replayable after a propagation failure. There is no generic
 exception handling in `DocumentParser`. Reruns skip protected resolutions.
 

@@ -233,3 +233,32 @@ def test_arbitrary_external_status_is_not_logged(engine, caplog, status):
     engine.db_api_service.search_entities.side_effect = error
     assert engine.process_document(document()) is not None
     assert 'private' not in caplog.text and 'HTTP status=' not in caplog.text
+
+
+@pytest.mark.parametrize('llm_fails', [False, True])
+def test_face_interaction_storage_failure_propagates(engine, caplog, llm_fails):
+    from people_gator.engines.llm import LLMRequestError
+    doc = face_only(identity(), identity('Later'))
+    storage_error = RuntimeError('private-storage-payload')
+    storage = Mock()
+    storage.extend.side_effect = storage_error
+    doc.faces[0].face_metadata.prompts = storage
+    record = dict(prompt='[user]\nprivate-prompt', response='private-response')
+
+    def request(*, interactions, **kwargs):
+        interactions.append(record)
+        if llm_fails:
+            raise LLMRequestError('private-request-payload')
+        return decision()
+
+    engine.llm_prompter.side_effect = request
+    with pytest.raises(RuntimeError) as failure:
+        engine.process_document(doc)
+    assert failure.value is storage_error
+    storage.extend.assert_called_once()
+    assert list(storage.extend.call_args.args[0]) == [dict(engine='ENTITY_MATCHING', **record)]
+    assert engine.llm_prompter.call_count == 1
+    engine.db_api_service.create_entity.assert_not_called()
+    assert doc.faces[1].face_metadata.prompts == []
+    assert all(f.face_metadata.page_identity.identity.peoplegator_id is None for f in doc.faces)
+    assert 'private-' not in caplog.text

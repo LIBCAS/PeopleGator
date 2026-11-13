@@ -344,7 +344,9 @@ single candidate, safe distinct validation reasons, preserved protected/earlier
 IDs and successful later units. It exercises search/details/create exceptions and
 invalid payloads, exhausted LLM requests/responses, Pydantic payload privacy,
 uncertain-create receipts and retry skips, safe HTTP status handling, summary
-counts and interrupt propagation. Real `parse_folder.main()`/`DocumentParser`
+counts and interrupt propagation. A focused regression forces face-interaction
+storage errors after successful and failed LLM calls and requires the original
+storage exception to propagate without processing later units. Real `parse_folder.main()`/`DocumentParser`
 execution with a synthetic document and mocked provider/app operations verifies
 failed face interactions survive to final per-face JSON alongside PAGE XML,
 original-ALTO enrichment and rendered images. PAGE fixtures use PAGE output due
