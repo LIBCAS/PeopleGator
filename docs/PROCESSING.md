@@ -1040,8 +1040,9 @@ candidate index, the selected candidate's exact name and `entity_type=person`,
 and the original proposed name for creation. It does not compare free-form
 descriptions or quoted fragments to determine sameness or difference. The `reason`
 is retained on the typed decision without interpreting or logging its contents.
-Malformed/failed decisions raise safely; explicit `unresolved` outcomes leave
-annotations unchanged and never fall through to creation.
+Malformed/failed decisions leave their identity unit unchanged, log a safe reason
+and allow later units to run. Explicit `unresolved` outcomes also leave annotations
+unchanged and never fall through to creation.
 
 Equivalent duplicate app records do not require a unique choice: the LLM can
 select a matching existing record. Deduplicating, merging or rewriting those
@@ -1109,15 +1110,37 @@ XML export uses the same safe helper. Linked mentions can use the existing
 [app export](#linked-text-mention-export); full text XML serialization, import,
 cluster persistence and round-trip remain **step 7 of #33**.
 
-Successful units apply immediately. A later read/model/write failure raises a safe
-`RuntimeError` identifying the numeric unit; prior successful IDs remain available
-for retry. Logs identify the operation and exception type without credentials,
-OCR, names, model bodies or private explanations. Reruns skip protected resolutions.
+Successful units apply immediately. A recoverable candidate search/details,
+LLM request/decision or entity-create failure logs an error, leaves that unit's
+identities unchanged and continues to subsequent units. Failed searches/requests
+never become empty candidate sets or fallback creations. The engine returns the
+document so the existing final XML, render and optional face-prompt JSON outputs
+can run; earlier successes and protected resolutions remain intact.
+
+Logs identify the numeric unit, operation and exception type. Local validation
+reasons distinguish unavailable candidate indices (with candidate count/index),
+name mismatches, non-person candidates, invalid create proposals and unusable
+responses. External exception/Pydantic payloads are never printed; only safe
+categories and integer HTTP status codes, when available, are included. No names,
+OCR, captions, prompts, raw responses or credentials appear in these diagnostics.
+Face-involving LLM attempts still append to the participating faces in `finally`,
+including failures. A final summary reports processed, linked, failed and skipped
+unit counts; skipped includes unresolved decisions, unusable proposals, protected
+conflicts and uncertain prior creates. Partial linking is reported at WARNING.
+
+This recovery boundary covers per-unit requests and decision validation only.
+Configuration errors, invalid global cluster/document invariants, interrupts,
+unrelated engines, broken face-interaction storage and broken in-memory
+propagation can still fail fast. Interaction attachment runs outside the
+recoverable handler, including after a failed LLM attempt. Successful
+create receipts remain replayable after a propagation failure. There is no generic
+exception handling in `DocumentParser`. Reruns skip protected resolutions.
 
 `PeopleGatorDocument.entity_linking_journal` is an **in-memory** list of creation
 receipts (`state`, original object `targets`, source evidence, `entity_id`). A receipt
 is marked `uncertain` before POST; malformed/missing responses or exceptions retain
-that state and no app ID is fabricated. Retries of the same document skip uncertain
+that state and no app ID is fabricated. The failed unit logs that manual app
+reconciliation is required; later independent units continue. Retries of the same document skip uncertain
 targets and matching names/aliases with an actionable warning until a caller
 reconciles the app state. A successful response records `created` and its ID before
 propagation, so interrupted propagation can replay the receipt. Face-only direct
