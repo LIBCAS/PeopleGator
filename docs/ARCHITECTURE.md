@@ -172,8 +172,11 @@ quoted fragments. Equivalent duplicate app records may be selected; app record
 merging/cleanup stays with human/application workflows. Successful IDs propagate
 without rebuilding clusters or replacing protected links/local identity metadata. The existing factory,
 shared `[DB_API]` client and external prompt conventions remain in use. Creation
-receipts on the document protect same-document retries after uncertain writes;
-optional [processing checkpoints](CHECKPOINTS.md) persist complete receipts and
+receipts on the document protect same-document retries after uncertain writes.
+Recoverable per-unit request/decision failures leave identities unchanged and
+continue, preserving face diagnostics and allowing final outputs. Safe reasons
+and final failed/skipped counts make partial linking visible; global invariants
+and unrelated runtime failures still fail fast. Optional [processing checkpoints](CHECKPOINTS.md) persist complete receipts and
 durably fence stage/export replay. There is no server idempotency guarantee. See
 [linking rules](PROCESSING.md#document-wide-entity-linking-entity_matching).
 The optional DB-based assignment of unnamed faces (step 5) remains deferred;

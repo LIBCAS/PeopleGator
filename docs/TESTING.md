@@ -339,6 +339,21 @@ python -m pip check
 python -m compileall -q people_gator processing_api user_scripts
 ```
 
+`tests/test_entity_matching_failures.py` covers a bad decision at unit 12 with a
+single candidate, safe distinct validation reasons, preserved protected/earlier
+IDs and successful later units. It exercises search/details/create exceptions and
+invalid payloads, exhausted LLM requests/responses, Pydantic payload privacy,
+uncertain-create receipts and retry skips, safe HTTP status handling, summary
+counts and interrupt propagation. Real `parse_folder.main()`/`DocumentParser`
+execution with a synthetic document and mocked provider/app operations verifies
+failed face interactions survive to final per-face JSON alongside PAGE XML,
+original-ALTO enrichment and rendered images. PAGE fixtures use PAGE output due
+to the documented unrelated source-less face ALTO namespace limitation.
+
+```bash
+python -m pytest -q tests/test_entity_matching_failures.py tests/test_entity_matching.py tests/test_face_prompts.py tests/test_logging.py tests/test_documentation.py
+```
+
 No live app/model, private OCR or GPU is needed. Mocked decisions prove structural,
 reference and propagation checks, not semantic identity accuracy for a real corpus.
 Regression cases keep description content as LLM input: explicit select/create/

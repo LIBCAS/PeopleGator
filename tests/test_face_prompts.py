@@ -188,11 +188,7 @@ def test_matching_multiple_faces_text_only_and_unrelated_units(tmp_path, monkeyp
     raw = '{bad Čapek' if fail else json.dumps(dict(action='unresolved', source_is_person=True, item_id=None, name=None, reason='No matching evidence.'))
     create = Mock(return_value=NS(status='completed', output_text=raw))
     install_provider(monkeypatch, create)
-    if fail:
-        with pytest.raises(RuntimeError, match='LLM decision failed|inspect safe operation'):
-            engine.process_document(doc)
-    else:
-        assert engine.process_document(doc) is doc
+    assert engine.process_document(doc) is doc
     expected_count = 3 if fail else 1
     assert a.face_metadata.prompts == [earlier, *b.face_metadata.prompts]
     assert len(b.face_metadata.prompts) == expected_count

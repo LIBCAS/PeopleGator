@@ -206,7 +206,12 @@ IDs and never rebuilds document clusters by database ID.
 
 This is the handoff for step 7 of #33. The engine does not serialize text mentions,
 source spans or clusters into ALTO/PAGE or upload text mentions to the app. Existing
-face output can use resolved IDs through its current fields. The in-memory
+face output can use resolved IDs through its current fields. Recoverable
+entity-matching unit failures return the document with that unit unresolved, so
+configured final XML/render/face-prompt outputs can still be written. Failed
+face-associated LLM attempts remain in the separate diagnostic JSON; safe logs
+and a failed/skipped summary distinguish partial linking. Unrelated engine,
+serialization and global document errors can still abort output. The in-memory
 `entity_linking_journal` retains creation receipts for retries of the same document
 but is not part of either XML format or the app persistence contract. Reconstructing
 a document from XML loses these receipts. Optional [processing checkpoints](CHECKPOINTS.md)

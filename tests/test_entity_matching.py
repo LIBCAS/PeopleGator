@@ -179,11 +179,10 @@ def test_one_hit_still_uses_llm_with_hydrated_context(engine):
     {'action': 'select', 'source_is_person': True, 'item_id': True, 'name': 'Karel Čapek', 'reason': 'x'},
     {'action': 'create', 'source_is_person': True, 'item_id': None, 'name': 'Karel Čapek', 'reason': ''},
 ])
-def test_malformed_model_results_raise_without_creation(engine, bad):
+def test_malformed_model_results_continue_without_creation(engine, bad):
     doc = document()
     engine.llm_prompter.return_value = bad
-    with pytest.raises(RuntimeError, match='unit 0'):
-        engine.process_document(doc)
+    assert engine.process_document(doc) is doc
     engine.db_api_service.create_entity.assert_not_called()
     assert doc.text_entity_clusters[0].identity is None
 
@@ -208,8 +207,7 @@ def test_invalid_decisions_never_select_or_fall_through_to_create(engine, invali
     payload = {'action': 'select', 'source_is_person': True, 'item_id': 0,
                'name': 'Karel Čapek', 'reason': 'Supplied source context supports this person.'}
     engine.llm_prompter.return_value = dict(payload, **invalid)
-    with pytest.raises(RuntimeError):
-        engine.process_document(doc)
+    assert engine.process_document(doc) is doc
     engine.db_api_service.create_entity.assert_not_called()
     assert doc.text_entity_clusters[0].identity is None
 
@@ -227,8 +225,7 @@ def test_positive_different_being_evidence_can_create(engine):
 def test_bad_search_is_not_empty_search(engine, response):
     doc = document()
     engine.db_api_service.search_entities.return_value = response
-    with pytest.raises(RuntimeError):
-        engine.process_document(doc)
+    assert engine.process_document(doc) is doc
     engine.llm_prompter.assert_not_called()
     engine.db_api_service.create_entity.assert_not_called()
 
@@ -239,8 +236,7 @@ def test_invalid_hydration_never_creates(engine, detail):
     doc = document()
     engine.db_api_service.search_entities.return_value = {'items': [{'entity_id': 'existing'}]}
     engine.db_api_service.get_entity_info.return_value = detail
-    with pytest.raises(RuntimeError):
-        engine.process_document(doc)
+    assert engine.process_document(doc) is doc
     engine.db_api_service.create_entity.assert_not_called()
 
 
@@ -249,8 +245,7 @@ def test_non_person_candidate_cannot_be_selected(engine):
     engine.db_api_service.search_entities.return_value = {'items': [candidate(entity_type='organization')]}
     engine.db_api_service.get_entity_info.return_value = candidate(entity_type='organization')
     engine.llm_prompter.return_value = decision('select', 0)
-    with pytest.raises(RuntimeError):
-        engine.process_document(doc)
+    assert engine.process_document(doc) is doc
     engine.db_api_service.create_entity.assert_not_called()
 
 
@@ -380,8 +375,7 @@ def test_conflicting_protected_cluster_members_remain_untouched(engine):
 def test_uncertain_write_is_journaled_and_not_retried(engine, response):
     doc = document()
     engine.db_api_service.create_entity.return_value = response
-    with pytest.raises(RuntimeError):
-        engine.process_document(doc)
+    assert engine.process_document(doc) is doc
     assert doc.entity_linking_journal[0]['state'] == 'uncertain'
     assert all(m.page_identity is None for m in doc.text_entities)
     engine.process_document(doc)
@@ -395,9 +389,8 @@ def test_failures_keep_private_payloads_out_and_never_fabricate_success(engine, 
         engine.db_api_service.search_entities.return_value = {'items': [{'entity_id': 'existing'}]}
     target = engine.llm_prompter if operation == 'llm' else getattr(engine.db_api_service, operation)
     target.side_effect = RuntimeError('private-credential OCR name provider body')
-    with pytest.raises(RuntimeError) as failure:
-        engine.process_document(doc)
-    assert 'private-credential' not in str(failure.value) + caplog.text
+    assert engine.process_document(doc) is doc
+    assert 'private-credential' not in caplog.text
     assert doc.text_entity_clusters[0].identity is None
     assert all(m.page_identity is None for m in doc.text_entities)
     if operation != 'create_entity':
@@ -411,8 +404,7 @@ def test_partial_retry_preserves_success_and_does_not_repeat_creation(engine):
     doc = document()
     other = add_cluster(doc, name='Ada Lovelace', description='mathematician')
     engine.llm_prompter.side_effect = [decision('create'), RuntimeError('private')]
-    with pytest.raises(RuntimeError):
-        engine.process_document(doc)
+    assert engine.process_document(doc) is doc
     assert doc.text_entity_clusters[0].identity.peoplegator_id == 'created'
     assert other.identity is None
     engine.db_api_service.create_entity.return_value = {'entity_id': 'ada'}
@@ -597,8 +589,7 @@ def test_uncertain_write_also_blocks_other_same_name_sources_on_retry(engine):
     doc = document()
     other = add_cluster(doc)
     engine.db_api_service.create_entity.side_effect = RuntimeError('lost response')
-    with pytest.raises(RuntimeError):
-        engine.process_document(doc)
+    assert engine.process_document(doc) is doc
     engine.process_document(doc)
     assert other.identity is None
     engine.db_api_service.create_entity.assert_called_once()
@@ -607,8 +598,7 @@ def test_uncertain_write_also_blocks_other_same_name_sources_on_retry(engine):
 def test_page_only_uncertain_write_journal_survives_retry(engine):
     doc = face_only(identity())
     engine.db_api_service.create_entity.return_value = None
-    with pytest.raises(RuntimeError):
-        engine.process_page(doc.page_layouts[0])
+    assert engine.process_page(doc.page_layouts[0]) is doc.page_layouts[0]
     engine.process_page(doc.page_layouts[0])
     engine.db_api_service.create_entity.assert_called_once()
 
@@ -633,8 +623,7 @@ def test_strict_schema_and_decision_validation_reject_forged_model_instances(eng
     doc = document()
     engine.llm_prompter.return_value = EntityMatchingResult.model_construct(
         action='select', source_is_person=True, item_id=True, name='Karel Čapek', reason='valid')
-    with pytest.raises(RuntimeError):
-        engine.process_document(doc)
+    assert engine.process_document(doc) is doc
     engine.db_api_service.create_entity.assert_not_called()
     schema = EntityMatchingResult.model_json_schema()
     assert schema['additionalProperties'] is False
@@ -784,7 +773,6 @@ def test_equivalent_duplicate_app_records_can_be_selected_without_merging(engine
 def test_selection_without_search_hits_fails_without_creation(engine):
     doc = document()
     engine.llm_prompter.return_value = decision('select', 0)
-    with pytest.raises(RuntimeError):
-        engine.process_document(doc)
+    assert engine.process_document(doc) is doc
     assert doc.text_entity_clusters[0].identity is None
     engine.db_api_service.create_entity.assert_not_called()

@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from people_gator.engines import DocumentProcessingEngine, LLMBasedEngine
+from people_gator.engines.llm import LLMRequestError, LLMResponseError
 from people_gator.engines.face_entity_context import FaceEntityContext, assigned_caption
 from people_gator.core.layout import PeopleGatorDocument, PeopleGatorIdentity, PeopleGatorFaceRegionLayout
 
@@ -50,6 +51,10 @@ def _name_keys(names):
         names: Proposed names and observed aliases.
     """
     return {' '.join(unicodedata.normalize('NFKC', n).casefold().split()) for n in _strings(names)}
+
+
+class _MatchingValidationError(ValueError):
+    """A locally authored reason safe to log without private response content."""
 
 
 class EntityMatchingResult(BaseModel):
@@ -235,9 +240,9 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
         Args:
             document: Original document, updated in place and returned unchanged in identity.
 
-        Raises:
-            RuntimeError: A read, model request or uncertain create failed. Earlier
-                successful IDs remain applied; uncertain writes are blocked on retry.
+        Recoverable read, model and create failures leave the unit unresolved and
+        continue. Invalid document invariants and propagation errors still raise;
+        uncertain writes remain blocked on retry.
         """
         if self.db_api_service is None:
             logger.warning('Database API service is not initialized. Skipping entity matching.')
@@ -252,23 +257,28 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                 if identity.peoplegator_id is not None:
                     known.append((source, identity.peoplegator_id))
         logger.info('Entity matching: %d document identity units', len(units))
+        linked = failed = skipped = 0
         for position, unit in enumerate(units):
             identities = unit.identities()
             protected = {i.peoplegator_id for i in identities if i.peoplegator_id is not None}
             if len(protected) > 1:
                 logger.warning('Entity unit %d: conflicting protected IDs; unchanged', position)
+                skipped += 1
                 continue
             if protected and not all(_text(value) for value in protected):
                 logger.warning('Entity unit %d: unusable protected ID; unchanged', position)
+                skipped += 1
                 continue
             if protected:
                 self._apply(document, unit, next(iter(protected)))
+                linked += 1
                 continue
             source = unit.evidence(context)
             name = source['name']
             if (not name or not any(c.isalpha() for c in name)
                     or name.casefold() in {'none', 'null', 'unknown', 'unnamed', 'unidentified', 'person'}):
                 logger.debug('Entity unit %d: no usable person proposal', position)
+                skipped += 1
                 continue
             pending = document.entity_linking_journal
             targets = unit.targets()
@@ -277,12 +287,14 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
             if any(record['state'] == 'uncertain' and (record in receipts or
                    names & _name_keys([record['source']['name'], *record['source']['aliases']]))
                    for record in pending):
-                logger.warning('Entity unit %d: uncertain prior create; reconcile with app before retry', position)
+                logger.warning('Entity unit %d: uncertain prior create; manual reconciliation with app required before retry', position)
+                skipped += 1
                 continue
             completed = next((r for r in receipts if r['state'] == 'created'), None)
             if completed is not None:
                 self._apply(document, unit, completed['entity_id'])
                 known.append((source, completed['entity_id']))
+                linked += 1
                 continue
             operation = 'candidate retrieval'
             try:
@@ -298,6 +310,7 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                         metadata.prompts.extend(dict(engine="ENTITY_MATCHING", **record) for record in interactions)
                 if decision.action == 'unresolved' or not decision.source_is_person:
                     logger.debug('Entity unit %d: unresolved', position)
+                    skipped += 1
                     continue
                 if decision.action == 'select':
                     entity = candidates[decision.item_id]
@@ -311,18 +324,44 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                     if (not isinstance(created, dict) or not _text(created.get('entity_id'))
                             or created.get('entity_type', 'person') != 'person'
                             or created.get('name', name) != name):
-                        raise ValueError('Invalid create response')
+                        raise _MatchingValidationError('invalid entity create response')
                     entity = {k: source[k] for k in ('name', 'aliases', 'description', 'short_description')}
                     entity.update(entity_type='person', entity_id=created['entity_id'])
                     record.update(state='created', entity_id=entity['entity_id'])
                     logger.debug('Entity unit %d: created an entity', position)
-                cache[entity['entity_id']] = entity
-                known.append((source, entity['entity_id']))
-                operation = 'identity propagation'
-                self._apply(document, unit, entity['entity_id'])
             except Exception as exc:
-                logger.error('Entity unit %d: %s failed (%s)', position, operation, type(exc).__name__)
-                raise RuntimeError(f'Entity matching failed at unit {position}; inspect safe operation diagnostics') from None
+                failed += 1
+                # Only local validation reasons are safe; SDK/Pydantic messages
+                # can contain names, prompts, credentials or raw response bodies.
+                if isinstance(exc, _MatchingValidationError):
+                    reason = str(exc)
+                elif isinstance(exc, LLMResponseError):
+                    reason = 'invalid/unusable LLM response after retries'
+                elif isinstance(exc, LLMRequestError):
+                    reason = 'LLM request exhausted without a usable response'
+                elif isinstance(exc, ValidationError):
+                    reason = 'invalid/unusable response schema'
+                else:
+                    reason = 'external request or response processing error'
+                status = getattr(exc, 'status_code', None)
+                if type(status) is int and 100 <= status <= 599:
+                    reason += f'; HTTP status={status}'
+                logger.error('Entity unit %d: %s failed (%s): %s; unchanged',
+                             position, operation, type(exc).__name__, reason)
+                if operation == 'entity creation':
+                    logger.warning('Entity unit %d: uncertain create retained; manual reconciliation '
+                                   'with app required before retry', position)
+                continue
+            # Propagation is outside the recoverable request boundary: broken
+            # document state must still fail fast. Successful create receipts can
+            # replay on retry without repeating the POST.
+            self._apply(document, unit, entity['entity_id'])
+            cache[entity['entity_id']] = entity
+            known.append((source, entity['entity_id']))
+            linked += 1
+        log_summary = logger.warning if failed or skipped else logger.info
+        log_summary('Entity matching summary: %d processed; %d linked; %d failed; %d skipped',
+                    len(units), linked, failed, skipped)
         return document
 
     def process_page(self, page_layout):
@@ -349,11 +388,11 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
         queries = _strings([source['name'], *source['aliases'], *source['descriptions']])
         response = self.db_api_service.search_entities(query=queries)
         if not isinstance(response, dict) or not isinstance(response.get('items'), list):
-            raise ValueError('Invalid search response')
+            raise _MatchingValidationError('invalid candidate search response')
         ids = []
         for hit in response['items']:
             if not isinstance(hit, dict) or not _text(hit.get('entity_id')):
-                raise ValueError('Invalid search hit')
+                raise _MatchingValidationError('invalid candidate search hit')
             ids.append(hit['entity_id'])
         names = _name_keys([source['name'], *source['aliases']])
         ids.extend(entity_id for previous, entity_id in known
@@ -368,7 +407,7 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                         or any(not isinstance(a, str) for a in (detail.get('aliases') or []))
                         or any(detail.get(k) is not None and not isinstance(detail[k], str)
                                for k in ('description', 'short_description'))):
-                    raise ValueError('Invalid candidate detail')
+                    raise _MatchingValidationError('invalid candidate details response')
                 cache[entity_id] = {k: detail.get(k) for k in
                                     ('entity_id', 'entity_type', 'name', 'aliases', 'description', 'short_description')}
             result.append(cache[entity_id])
@@ -393,18 +432,25 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
         try:
             result = EntityMatchingResult.model_validate(result)
         except ValidationError:
-            raise ValueError('Invalid entity decision') from None
+            raise _MatchingValidationError(
+                f'invalid/unusable LLM decision schema; candidate_count={len(entities)}') from None
         if result.action == 'unresolved':
             return result
         if not result.source_is_person:
-            raise ValueError('Non-person decision cannot link or create')
+            raise _MatchingValidationError('non-person source cannot link or create')
         if result.action == 'select':
             index = result.item_id
-            if (index is None or not 0 <= index < len(entities)
-                    or result.name != entities[index]['name'] or entities[index]['entity_type'] != 'person'):
-                raise ValueError('Invalid candidate selection')
+            if index is None or not 0 <= index < len(entities):
+                raise _MatchingValidationError(
+                    f'invalid/unavailable candidate index; candidate_count={len(entities)}; candidate_index={index}')
+            if result.name != entities[index]['name']:
+                raise _MatchingValidationError(
+                    f'candidate name mismatch; candidate_count={len(entities)}; candidate_index={index}')
+            if entities[index]['entity_type'] != 'person':
+                raise _MatchingValidationError(
+                    f'non-person candidate; candidate_count={len(entities)}; candidate_index={index}')
         elif result.item_id is not None or result.name != name:
-            raise ValueError('Invalid creation proposal')
+            raise _MatchingValidationError('invalid create proposal: source name mismatch')
         return result
 
     @staticmethod
