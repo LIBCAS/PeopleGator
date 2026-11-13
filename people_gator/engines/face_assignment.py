@@ -134,7 +134,6 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
             finally:
                 metadata = face_item.face_region.face_metadata
                 if metadata is not None:
-                    metadata.prompts = getattr(metadata, 'prompts', [])
                     metadata.prompts.extend(dict(engine="LLM_FACE_ASSIGNMENT", **record) for record in interactions)
             face_item.result = result
 
@@ -366,7 +365,6 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                 for face in face_item.face_regions:
                     metadata = face.face_metadata
                     if metadata is not None:
-                        metadata.prompts = getattr(metadata, 'prompts', [])
                         metadata.prompts.extend(dict(engine="LLM_BATCH_FACE_ASSIGNMENT", **record) for record in records)
 
         for face_item, result in zip(all_face_data, results):
@@ -400,7 +398,6 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                     for face in face_item.face_regions:
                         metadata = face.face_metadata
                         if metadata is not None:
-                            metadata.prompts = getattr(metadata, 'prompts', [])
                             metadata.prompts.extend(dict(engine="LLM_BATCH_FACE_ASSIGNMENT", **record) for record in records)
 
             for face_item, result in zip(face_data, results):
@@ -417,7 +414,6 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                     for face in face_item.face_regions:
                         metadata = face.face_metadata
                         if metadata is not None:
-                            metadata.prompts = getattr(metadata, 'prompts', [])
                             metadata.prompts.extend(dict(engine="LLM_BATCH_FACE_ASSIGNMENT", **record) for record in interactions)
                 face_item.result = result
 

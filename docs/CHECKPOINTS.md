@@ -49,8 +49,12 @@ there is no migration or long-term archival/portable interchange guarantee.
 
 Complete face metadata includes its ordered `prompts` diagnostics. The separate
 `OUTPUT_FACE_PROMPTS_PATH` is a relocatable final-output path, so it can be enabled,
-disabled or changed when resuming. Existing snapshots without that field remain
-usable by face processing and the separate exporter.
+disabled or changed when resuming. After restoring and validating a trusted
+snapshot, `checkpoints.load_document()` initializes each missing face `prompts`
+attribute to an independent empty list, preserving existing lists. This is the
+sole compatibility normalization point for snapshots predating the field; engines
+and the exporter rely on it. Low-level `restore_document()` does not mutate
+restored state, so native Pickle round-trip fidelity verification stays exact.
 
 The native Pickle memo preserves object identity, cycles and shared references.
 No object table, bespoke JSON type codecs, class registry or partial `to_dict()`

@@ -115,9 +115,6 @@ def test_assignment_modes_attach_exact_attempts_to_only_participating_faces(tmp_
     engine.llm_prompter.prompt_template_system = Template('Identify {{ caption_text }}')
     engine.llm_prompter.prompt_template_user = Template('{{ face_coordinates | default(faces) }}')
     doc = diagnostic_document()
-    # A legacy trusted checkpoint can lack this newly introduced attribute.
-    first = next(r for r in doc.page_layouts[0].regions if isinstance(r, PeopleGatorFaceRegionLayout))
-    del first.face_metadata.prompts
     requests = []
     counts = {}
 
@@ -272,8 +269,6 @@ def test_cli_ini_precedence_disabled_output_and_final_processed_document(tmp_pat
     from user_scripts import parse_folder
     doc = face_only(identity(), identity())
     doc.faces[0].face_metadata.prompts.append(dict(engine='ENTITY_MATCHING', prompt='Čapek', response='raw'))
-    # Legacy checkpoint metadata still exports an empty list when no new call ran.
-    del doc.faces[1].face_metadata.prompts
     ini = tmp_path / 'ini-output'
     cli = tmp_path / 'cli-output'
     config = ConfigParser()
@@ -436,3 +431,49 @@ def test_assignment_retains_attempts_when_an_explicit_request_raises(tmp_path, m
             assert all(record['response'] == 'bad Čapek' for record in records)
         else:
             assert records == []
+
+
+@pytest.mark.parametrize('fmt', ['alto', 'page'])
+def test_legacy_checkpoint_normalizes_missing_prompts_only_at_validated_load(tmp_path, monkeypatch, fmt):
+    from test_checkpoints import pipeline, snapshots, assert_graph_equal
+    from test_entity_matching import document, face
+    from people_gator.core.checkpoint_document import serialize_document, restore_document
+    from user_scripts.parse_folder import save_face_prompts
+    doc = document(fmt)
+    for page in doc.page_layouts:
+        del face(page).face_metadata.prompts
+    doc.source_metadata = {}
+    saved = face(doc.page_layouts[0], suffix='saved')
+    record = dict(engine='LLM_FACE_ASSIGNMENT', prompt='[user]\nČapek', response='raw')
+    saved.face_metadata.prompts.append(record)
+    doc.source_metadata['saved_prompts'] = saved.face_metadata.prompts
+    no_metadata = deepcopy(saved)
+    no_metadata.id = 'no-metadata'
+    no_metadata.face_metadata = None
+    doc.page_layouts[0].regions.append(no_metadata)
+
+    payload = serialize_document(doc)
+    raw = restore_document(payload)
+    assert_graph_equal(doc, raw)
+    assert not hasattr(raw.page_layouts[0].faces[0].face_metadata, 'prompts')
+    assert not hasattr(raw.page_layouts[1].faces[0].face_metadata, 'prompts')
+
+    parser, _, _ = pipeline(tmp_path, monkeypatch)
+    parser.process_document(doc)
+    restored = parser.process_document(None, resume_from_checkpoint=snapshots(tmp_path)[-1])
+    first = restored.page_layouts[0].faces[0].face_metadata
+    second = restored.page_layouts[1].faces[0].face_metadata
+    preserved = restored.page_layouts[0].faces[1].face_metadata
+    assert first.prompts == second.prompts == []
+    assert first.prompts is not second.prompts
+    assert preserved.prompts == [record]
+    assert preserved.prompts is restored.source_metadata['saved_prompts']
+    assert restored.page_layouts[0].faces[2].face_metadata is None
+    assert not hasattr(doc.page_layouts[0].faces[0].face_metadata, 'prompts')
+
+    output = tmp_path / 'prompts'
+    save_face_prompts(restored, output)
+    assert sorted((json.loads(path.read_text()) for path in output.glob('*.json')), key=len) == [[], [], [], [record]]
+    assert_graph_equal(restored, restore_document(serialize_document(restored)))
+    first.prompts.append(dict(engine='ENTITY_MATCHING', prompt='one face', response=None))
+    assert second.prompts == [] and preserved.prompts == [record]

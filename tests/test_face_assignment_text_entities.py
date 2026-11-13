@@ -198,7 +198,7 @@ def engine_document():
         regions.append(region)
         for j in range(2):
             face = PeopleGatorFaceRegionLayout(id=f'f{index}{j}', polygon=np.array(polygon(index * 60 + j * 15, 20, 10, 10)), category='face',
-                                              source_region=region, face_metadata=NS(page_identity=NS(identity=NS(name=None))))
+                                              source_region=region, face_metadata=NS(prompts=[], page_identity=NS(identity=NS(name=None))))
             p.regions.append(face)
     image = np.zeros((120, 120, 3), dtype=np.uint8)
     return NS(id='document', page_layouts=[p, q], text_entity_clusters=[], pages_iterator=lambda: iter([(image, p), (image, q)])), regions
@@ -339,7 +339,7 @@ def batch_ordering_document(boxes):
         faces.append(PeopleGatorFaceRegionLayout(
             id=f'f{index}', category='face', source_region=src,
             polygon=np.array(polygon(left + 10, top + 10, right - left, bottom - top)),
-            face_metadata=NS(page_identity=NS(identity=NS(name=None)))))
+            face_metadata=NS(prompts=[], page_identity=NS(identity=NS(name=None)))))
     p.regions.extend(faces)
     image = np.zeros((120, 120, 3), dtype=np.uint8)
     doc = NS(id='document', page_layouts=[p], text_entity_clusters=[],
@@ -545,7 +545,7 @@ def test_real_document_parser_detection_clustering_then_face_context(tmp_path, m
         src = AnnoPageRegionLayout('photo', np.array(polygon(0, 0, 60, 60)), category='image',
                                    graphical_metadata=GraphicalObjectMetadata('tag', 'mods', title='Čapek 😀'))
         face = PeopleGatorFaceRegionLayout('face', np.array(polygon(10, 20, 10, 10)), category='face',
-                                          source_region=src, face_metadata=NS(page_identity=NS(identity=NS(name=None))))
+                                          source_region=src, face_metadata=NS(prompts=[], page_identity=NS(identity=NS(name=None))))
         p.regions.extend([src, face])
     original_regions = [region for p in doc.page_layouts for region in p.regions]
     ocr = [(ln, ln.transcription) for p in doc.page_layouts for ln in p.lines_iterator()]

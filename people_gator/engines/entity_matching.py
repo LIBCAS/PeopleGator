@@ -295,7 +295,6 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                 finally:
                     for _, face in unit.faces:
                         metadata = face.face_metadata
-                        metadata.prompts = getattr(metadata, 'prompts', [])
                         metadata.prompts.extend(dict(engine="ENTITY_MATCHING", **record) for record in interactions)
                 if decision.action == 'unresolved' or not decision.source_is_person:
                     logger.debug('Entity unit %d: unresolved', position)

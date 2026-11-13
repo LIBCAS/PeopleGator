@@ -173,7 +173,7 @@ def save_face_prompts(document, output_path):
             face_id = quote(str(tag), safe="").replace("_", "%5F")
             filename = f"{page_index}_{page_id}_{region_index}_{face_id}.json"
             with open(os.path.join(output_path, filename), 'w', encoding='utf-8') as stream:
-                json.dump(getattr(metadata, 'prompts', []), stream, ensure_ascii=False, indent=4)
+                json.dump(metadata.prompts if metadata is not None else [], stream, ensure_ascii=False, indent=4)
 
 
 def main():

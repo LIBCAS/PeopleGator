@@ -616,7 +616,7 @@ def read_metadata(path):
 
 
 def load_document(data, marker, config):
-    """Verify external inputs and the exact payload bytes before trusted unpickling.
+    """Restore a validated checkpoint and initialize missing face prompt lists.
 
     Args:
         data: Validated JSON metadata.
@@ -636,6 +636,10 @@ def load_document(data, marker, config):
         if [document.id, document.library] != data['document_identity']:
             raise CheckpointError('Checkpoint document identity mismatch')
         validate_assets(data['input_assets'], document, config)
+        for face in document.faces:
+            metadata = face.face_metadata
+            if metadata is not None and not hasattr(metadata, 'prompts'):
+                metadata.prompts = []
         return document
     except CheckpointError:
         raise

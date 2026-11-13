@@ -430,6 +430,9 @@ units, earlier records and failures. Export tests check every face, empty lists,
 Unicode, repeated/missing/unsafe IDs, stable collision-safe names, CLI/INI
 precedence and disabled/resumed output. XML comparisons ignore writer timestamps;
 face mappings and complete checkpoint round-trips preserve existing contracts.
+Legacy-checkpoint tests restore missing face prompt lists at the validated loading
+boundary, preserve existing lists and aliases, exercise null metadata and export,
+and verify that low-level Pickle round-trips leave the stored graph untouched.
 
 ```bash
 python -m pytest -q tests/test_face_prompts.py tests/test_llm_responses.py tests/test_llm_prompts.py tests/test_face_assignment_text_entities.py tests/test_entity_matching.py tests/test_checkpoints.py tests/test_logging.py tests/test_documentation.py

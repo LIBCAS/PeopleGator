@@ -290,6 +290,8 @@ corresponding files. The exporter does not remove older files from the directory
 These records are separate debugging artifacts, excluded from ALTO/PAGE XML,
 face `to_dict()` mappings and PeopleGatorApp payloads/imports. Complete trusted
 [Pickle checkpoints](CHECKPOINTS.md) retain the lists and resumed final output
-can enable or relocate this directory. Older face metadata without the field
-exports `[]` and starts a new list when another face-related request runs.
+can enable or relocate this directory. After restoration and validation, the
+checkpoint loader initializes missing face `prompts` attributes to independent
+empty lists. Engines and the exporter use this invariant directly. Faces with no
+metadata export `[]`.
 Without the output setting, processing writes no prompt files.
