@@ -254,3 +254,44 @@ faces and does **not** delete or replace text mentions. There is no automatic
 deduplication, deletion or retry of uncertain mention writes. Reconcile app state
 before repeating an export after a partial/uncertain write. See
 [processing behavior](PROCESSING.md#linked-text-mention-export).
+
+
+## Face LLM diagnostics
+
+`[PARSE_FOLDER] OUTPUT_FACE_PROMPTS_PATH` or `--output-face-prompts-path DIR`
+optionally writes one UTF-8 `.json` file for every face on every processed page.
+Each file contains only that face's ordered `PeopleGatorFaceMetadata.prompts`
+list, with `ensure_ascii=False` and four-space indentation. Unused faces have `[]`.
+
+```json
+[
+    {
+        "engine": "LLM_FACE_ASSIGNMENT",
+        "prompt": "[system]\nIdentify the face.\n[user]\nCaption: Karel Čapek",
+        "response": "{\"name_normalized\": \"Karel Čapek\", \"name_in_text\": null}"
+    }
+]
+```
+
+The engine is `LLM_FACE_ASSIGNMENT`, `LLM_BATCH_FACE_ASSIGNMENT`, or
+`ENTITY_MATCHING`. Responses retain original text, including whitespace,
+Markdown fences and invalid JSON; attempts without a response use `null`.
+The prompt includes rendered text parts and their roles, including image labels
+when supplied, without image binary/base64 or request authentication/settings.
+
+Filenames use `<page_index>_<page_id>_<region_index>_<face_tag_or_id>.json`.
+Indices are zero-based positions in the final document/page region lists. IDs are
+percent-encoded (including underscores and path separators); missing IDs use
+`page`/`face`, and missing face tags fall back to region IDs. Indices keep names
+unique even for repeated IDs, missing metadata and equal tags on different pages.
+Names are stable for the same document ordering; rerunning export replaces the
+corresponding files. The exporter does not remove older files from the directory.
+
+These records are separate debugging artifacts, excluded from ALTO/PAGE XML,
+face `to_dict()` mappings and PeopleGatorApp payloads/imports. Complete trusted
+[Pickle checkpoints](CHECKPOINTS.md) retain the lists and resumed final output
+can enable or relocate this directory. After restoration and validation, the
+checkpoint loader initializes missing face `prompts` attributes to independent
+empty lists. Engines and the exporter use this invariant directly. Faces with no
+metadata export `[]`.
+Without the output setting, processing writes no prompt files.

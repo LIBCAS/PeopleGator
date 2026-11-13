@@ -120,14 +120,21 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         logger.debug("Page %s: prepared %d LLM assignment requests", page_layout.id, len(face_data))
 
         for face_item in face_data:
-            result = self.llm_prompter(data={
-                                                     "face_coordinates": face_item.face_coordinates,
-                                                     "context_text": face_item.context_text,
-                                                     "caption_text": face_item.caption_text,
-                                                     **face_item.entity_context
-                                                 },
-                                                 images=[face_item.face_image, face_item.context_image],
-                                                 response_model=FaceAssignmentResult)
+            interactions = []
+            try:
+                result = self.llm_prompter(
+                    data={
+                        "face_coordinates": face_item.face_coordinates,
+                        "context_text": face_item.context_text,
+                        "caption_text": face_item.caption_text,
+                        **face_item.entity_context
+                    },
+                    images=[face_item.face_image, face_item.context_image],
+                    response_model=FaceAssignmentResult, interactions=interactions)
+            finally:
+                metadata = face_item.face_region.face_metadata
+                if metadata is not None:
+                    metadata.prompts.extend(dict(engine="LLM_FACE_ASSIGNMENT", **record) for record in interactions)
             face_item.result = result
 
         page_layout = self.update_layout(page_layout, face_data)
@@ -349,9 +356,16 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
 
         data = [face_item.to_dict() for face_item in all_face_data]
         images = [[face_item.context_image] for face_item in all_face_data]
-        results = self.llm_prompter.process_parallel(data_list=data,
-                                                     images_list=images,
-                                                     response_model=BatchFaceAssignmentResult)
+        interactions = []
+        try:
+            results = self.llm_prompter.process_parallel(
+                data_list=data, images_list=images, response_model=BatchFaceAssignmentResult, interactions=interactions)
+        finally:
+            for face_item, records in zip(all_face_data, interactions):
+                for face in face_item.face_regions:
+                    metadata = face.face_metadata
+                    if metadata is not None:
+                        metadata.prompts.extend(dict(engine="LLM_BATCH_FACE_ASSIGNMENT", **record) for record in records)
 
         for face_item, result in zip(all_face_data, results):
             face_item.result = result
@@ -375,18 +389,32 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         if self.processing_mode == ProcessingMode.PAGE_PARALLEL:
             data = [face_item.to_dict() for face_item in face_data]
             images = [[face_item.context_image] for face_item in face_data]
-            results = self.llm_prompter.process_parallel(data_list=data,
-                                                         images_list=images,
-                                                         response_model=BatchFaceAssignmentResult)
+            interactions = []
+            try:
+                results = self.llm_prompter.process_parallel(
+                    data_list=data, images_list=images, response_model=BatchFaceAssignmentResult, interactions=interactions)
+            finally:
+                for face_item, records in zip(face_data, interactions):
+                    for face in face_item.face_regions:
+                        metadata = face.face_metadata
+                        if metadata is not None:
+                            metadata.prompts.extend(dict(engine="LLM_BATCH_FACE_ASSIGNMENT", **record) for record in records)
 
             for face_item, result in zip(face_data, results):
                 face_item.result = result
 
         else:
             for face_item in face_data:
-                result = self.llm_prompter.process(data=face_item.to_dict(),
-                                                   images=[face_item.context_image],
-                                                   response_model=BatchFaceAssignmentResult)
+                interactions = []
+                try:
+                    result = self.llm_prompter.process(
+                        data=face_item.to_dict(), images=[face_item.context_image],
+                        response_model=BatchFaceAssignmentResult, interactions=interactions)
+                finally:
+                    for face in face_item.face_regions:
+                        metadata = face.face_metadata
+                        if metadata is not None:
+                            metadata.prompts.extend(dict(engine="LLM_BATCH_FACE_ASSIGNMENT", **record) for record in interactions)
                 face_item.result = result
 
         self.update_layout(face_data)

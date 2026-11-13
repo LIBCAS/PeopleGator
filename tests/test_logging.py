@@ -188,7 +188,7 @@ def test_matching_candidates_preserve_identity(processing, count, caplog):
     face = processing.PeopleGatorFaceRegionLayout("face1", None, None,
         SimpleNamespace(graphical_metadata=SimpleNamespace(title="Czech writer")))
     identity = processing.PeopleGatorIdentity("private-name", None)
-    face.face_metadata = SimpleNamespace(identity_name="private-name", page_identity=SimpleNamespace(identity=identity))
+    face.face_metadata = SimpleNamespace(prompts=[], identity_name="private-name", page_identity=SimpleNamespace(identity=identity))
     page = SimpleNamespace(id="P1", regions=[face], text_entities=[])
     engine = object.__new__(EntityMatchingEngine)
     candidates = [{"entity_id": str(i), "entity_type": "person", "name": "private-name",
@@ -216,7 +216,7 @@ def test_assignment_updates_and_missing_results(processing, caplog):
     )
 
     identity = processing.PeopleGatorIdentity("before", None)
-    face = SimpleNamespace(id="f1", face_metadata=SimpleNamespace(page_identity=SimpleNamespace(identity=identity)))
+    face = SimpleNamespace(id="f1", face_metadata=SimpleNamespace(prompts=[], page_identity=SimpleNamespace(identity=identity)))
     page = SimpleNamespace(id="P1")
     single = object.__new__(LLMFaceAssignmentEngine)
     data = FaceAssignmentData(face, None, (10, 20), None)
@@ -355,7 +355,7 @@ def test_single_assignment_request_contract(processing, caplog, tmp_path):
     from people_gator.engines.face_assignment import LLMFaceAssignmentEngine, FaceAssignmentData, FaceAssignmentResult
 
     identity = processing.PeopleGatorIdentity("before", None)
-    face = SimpleNamespace(id="f1", face_metadata=SimpleNamespace(page_identity=SimpleNamespace(identity=identity)))
+    face = SimpleNamespace(id="f1", face_metadata=SimpleNamespace(prompts=[], page_identity=SimpleNamespace(identity=identity)))
     data = FaceAssignmentData(face, None, (10, 20), None, context_text="private OCR")
     page = SimpleNamespace(id="P1")
     prompt = tmp_path / 'single-prompt.json'
@@ -385,7 +385,7 @@ def test_batch_assignment_page_requests(processing, parallel, caplog, tmp_path):
     from people_gator.enums import ProcessingMode
 
     identity = processing.PeopleGatorIdentity("before", None)
-    face = SimpleNamespace(id="f1", face_metadata=SimpleNamespace(page_identity=SimpleNamespace(identity=identity)))
+    face = SimpleNamespace(id="f1", face_metadata=SimpleNamespace(prompts=[], page_identity=SimpleNamespace(identity=identity)))
     data = BatchFaceAssignmentData(faces=[{"id": 0, "coordinates": (10, 20)}], face_regions=[face])
     page = SimpleNamespace(id="P1")
     prompt = tmp_path / 'batch-prompt.json'

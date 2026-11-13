@@ -47,6 +47,15 @@ there is no migration or long-term archival/portable interchange guarantee.
 | Integrity/format | Supported Pickle protocol **5**, payload filename `document.pkl`, byte size and SHA-256; original XML/image/metadata paths and content hashes; metadata checksum. |
 | Summary | Counts of pages, text regions/lines, non-text regions, faces, mentions, clusters and distinct resolved app identities. This is diagnostic, not document state. |
 
+Complete face metadata includes its ordered `prompts` diagnostics. The separate
+`OUTPUT_FACE_PROMPTS_PATH` is a relocatable final-output path, so it can be enabled,
+disabled or changed when resuming. After restoring and validating a trusted
+snapshot, `checkpoints.load_document()` initializes each missing face `prompts`
+attribute to an independent empty list, preserving existing lists. This is the
+sole compatibility normalization point for snapshots predating the field; engines
+and the exporter rely on it. Low-level `restore_document()` does not mutate
+restored state, so native Pickle round-trip fidelity verification stays exact.
+
 The native Pickle memo preserves object identity, cycles and shared references.
 No object table, bespoke JSON type codecs, class registry or partial `to_dict()`
 reconstruction is used. Every populated attribute is checked against the local

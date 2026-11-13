@@ -198,7 +198,7 @@ def engine_document():
         regions.append(region)
         for j in range(2):
             face = PeopleGatorFaceRegionLayout(id=f'f{index}{j}', polygon=np.array(polygon(index * 60 + j * 15, 20, 10, 10)), category='face',
-                                              source_region=region, face_metadata=NS(page_identity=NS(identity=NS(name=None))))
+                                              source_region=region, face_metadata=NS(prompts=[], page_identity=NS(identity=NS(name=None))))
             p.regions.append(face)
     image = np.zeros((120, 120, 3), dtype=np.uint8)
     return NS(id='document', page_layouts=[p, q], text_entity_clusters=[], pages_iterator=lambda: iter([(image, p), (image, q)])), regions
@@ -221,7 +221,7 @@ def test_all_engine_modes_exact_requests_and_null_preservation(tmp_path, mode, c
     before = deepcopy([m.__dict__ for page_ in doc.page_layouts for m in page_.text_entities])
     original_lines = [(ln, ln.transcription) for pg in doc.page_layouts for ln in pg.lines_iterator()]
 
-    def respond(data, images, response_model):
+    def respond(data, images, response_model, interactions=None):
         requests.append((deepcopy(data), images, response_model))
         request = renderer._prepare_request_args(data, images, response_model)
         text = request['input'][1]['content'][0]['text']
@@ -239,7 +239,7 @@ def test_all_engine_modes_exact_requests_and_null_preservation(tmp_path, mode, c
         assert response_model is BatchFaceAssignmentResult
         return BatchFaceAssignmentResult(faces=[dict(id=f['id'], coordinates=f['coordinates'], name_in_text=None, name_normalized=None) for f in data['faces']])
 
-    def parallel(data_list, images_list, response_model):
+    def parallel(data_list, images_list, response_model, interactions=None):
         return [respond(d, i, response_model) for d, i in zip(data_list, images_list)]
 
     engine.llm_prompter = Mock(side_effect=respond)
@@ -300,7 +300,7 @@ def test_result_correspondence_images_and_partial_predictions(tmp_path, mode):
     engine = make_engine(tmp_path, mode)
     requests = []
 
-    def respond(data, images, response_model):
+    def respond(data, images, response_model, interactions=None):
         requests.append(data)
         if mode == 'single':
             # Independent per-face decisions in the original face order.
@@ -315,7 +315,7 @@ def test_result_correspondence_images_and_partial_predictions(tmp_path, mode):
 
     engine.llm_prompter = Mock(side_effect=respond)
     engine.llm_prompter.process.side_effect = respond
-    engine.llm_prompter.process_parallel.side_effect = lambda data_list, images_list, response_model: [respond(d, i, response_model) for d, i in zip(data_list, images_list)]
+    engine.llm_prompter.process_parallel.side_effect = lambda data_list, images_list, response_model, interactions=None: [respond(d, i, response_model) for d, i in zip(data_list, images_list)]
     engine.process_document(doc)
     assert [f.face_metadata.page_identity.identity.name for f in p.regions[1:]] == [None, 'Caption A', None, 'Caption B']
     assert np.count_nonzero(image) == 0  # Markers only modify copied crops.
@@ -339,7 +339,7 @@ def batch_ordering_document(boxes):
         faces.append(PeopleGatorFaceRegionLayout(
             id=f'f{index}', category='face', source_region=src,
             polygon=np.array(polygon(left + 10, top + 10, right - left, bottom - top)),
-            face_metadata=NS(page_identity=NS(identity=NS(name=None)))))
+            face_metadata=NS(prompts=[], page_identity=NS(identity=NS(name=None)))))
     p.regions.extend(faces)
     image = np.zeros((120, 120, 3), dtype=np.uint8)
     doc = NS(id='document', page_layouts=[p], text_entity_clusters=[],
@@ -389,7 +389,7 @@ def test_batch_horizontal_center_order_and_result_mapping(tmp_path, mode, boxes,
 
     requests = []
 
-    def respond(data, images, response_model):
+    def respond(data, images, response_model, interactions=None):
         requests.append(data)
         assert data['faces'] == descriptors
         request = renderer._prepare_request_args(data, response_model=response_model)
@@ -406,7 +406,7 @@ def test_batch_horizontal_center_order_and_result_mapping(tmp_path, mode, boxes,
 
     engine.llm_prompter = Mock()
     engine.llm_prompter.process.side_effect = respond
-    engine.llm_prompter.process_parallel.side_effect = lambda data_list, images_list, response_model: [
+    engine.llm_prompter.process_parallel.side_effect = lambda data_list, images_list, response_model, interactions=None: [
         respond(data, images, response_model) for data, images in zip(data_list, images_list)]
     assert engine.process_document(doc) is doc
     assert len(requests) == bool(boxes)
@@ -545,7 +545,7 @@ def test_real_document_parser_detection_clustering_then_face_context(tmp_path, m
         src = AnnoPageRegionLayout('photo', np.array(polygon(0, 0, 60, 60)), category='image',
                                    graphical_metadata=GraphicalObjectMetadata('tag', 'mods', title='Čapek 😀'))
         face = PeopleGatorFaceRegionLayout('face', np.array(polygon(10, 20, 10, 10)), category='face',
-                                          source_region=src, face_metadata=NS(page_identity=NS(identity=NS(name=None))))
+                                          source_region=src, face_metadata=NS(prompts=[], page_identity=NS(identity=NS(name=None))))
         p.regions.extend([src, face])
     original_regions = [region for p in doc.page_layouts for region in p.regions]
     ocr = [(ln, ln.transcription) for p in doc.page_layouts for ln in p.lines_iterator()]
@@ -557,7 +557,7 @@ def test_real_document_parser_detection_clustering_then_face_context(tmp_path, m
     seen = []
     face_requests = []
 
-    def predict(self, data, response_model, images=None):
+    def predict(self, data, response_model, images=None, interactions=None):
         seen.append(response_model)
         if response_model is TextEntityDetectionResult:
             return {'entities': [{'name': 'Karel Čapek', 'type': 'being', 'info': 'writer',
@@ -610,7 +610,7 @@ def test_unresolved_predictions_preserve_existing_face_identities(tmp_path, mode
     before = [deepcopy(identity.__dict__) for identity in identities]
     engine = make_engine(tmp_path, mode)
 
-    def predict(data, images, response_model):
+    def predict(data, images, response_model, interactions=None):
         if mode == 'single':
             positive = data['face_coordinates'][0] == 40
             name = f" {data['caption_text']} " if positive else unresolved_name
@@ -621,7 +621,7 @@ def test_unresolved_predictions_preserve_existing_face_identities(tmp_path, mode
 
     engine.llm_prompter = Mock(side_effect=predict)
     engine.llm_prompter.process.side_effect = predict
-    engine.llm_prompter.process_parallel.side_effect = lambda data_list, images_list, response_model: [
+    engine.llm_prompter.process_parallel.side_effect = lambda data_list, images_list, response_model, interactions=None: [
         predict(d, i, response_model) for d, i in zip(data_list, images_list)]
     assert engine.process_document(doc) is doc
     assert [identity.name for identity in identities] == ['Existing 0', ' Caption A ', 'Existing 2', ' Caption B ']
@@ -727,13 +727,13 @@ def test_later_page_direct_preparation_and_processing_preserve_original_indices(
     prepared = engine.prepare_face_data(image, p, document=document)
     requests = []
 
-    def predict(data, images, response_model):
+    def predict(data, images, response_model, interactions=None):
         requests.append(data)
         return FaceAssignmentResult(name_in_text=None, name_normalized=None) if mode == 'single' else BatchFaceAssignmentResult(faces=[])
 
     engine.llm_prompter = Mock(side_effect=predict)
     engine.llm_prompter.process.side_effect = predict
-    engine.llm_prompter.process_parallel.side_effect = lambda data_list, images_list, response_model: [
+    engine.llm_prompter.process_parallel.side_effect = lambda data_list, images_list, response_model, interactions=None: [
         predict(d, i, response_model) for d, i in zip(data_list, images_list)]
     assert engine.process_page(image, p, document=document) is p
     assert len(requests) == len(prepared) == (4 if mode == 'single' else 2)
@@ -776,13 +776,13 @@ def test_noncontiguous_caption_lines_in_all_engine_modes(tmp_path, mode, legacy)
     requests = []
     engine = make_engine(tmp_path, mode)
 
-    def predict(data, images, response_model):
+    def predict(data, images, response_model, interactions=None):
         requests.append(data)
         return FaceAssignmentResult(name_in_text=None, name_normalized=None) if mode == 'single' else BatchFaceAssignmentResult(faces=[])
 
     engine.llm_prompter = Mock(side_effect=predict)
     engine.llm_prompter.process.side_effect = predict
-    engine.llm_prompter.process_parallel.side_effect = lambda data_list, images_list, response_model: [
+    engine.llm_prompter.process_parallel.side_effect = lambda data_list, images_list, response_model, interactions=None: [
         predict(d, i, response_model) for d, i in zip(data_list, images_list)]
     assert engine.process_document(doc) is doc
     assert len(requests) == (4 if mode == 'single' else 2)

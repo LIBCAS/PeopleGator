@@ -78,26 +78,29 @@ class LLMPrompter:
         self.num_processes = num_processes
         self.raise_on_failure = raise_on_failure
 
-    def __call__(self, data: dict, images: list|dict|None = None, response_model=None):
+    def __call__(self, data: dict, images: list|dict|None = None, response_model=None, interactions=None):
         """Delegate to the primary operation with the supplied arguments.
 
         Args:
             data: Template context mapping.
             images: Optional images as an ordered list or label-to-image mapping.
             response_model: Optional Pydantic response class; None returns decoded JSON.
+            interactions: Optional caller-owned output list; existing entries are preserved.
 
         Returns:
             The result of the delegated operation.
         """
-        return self.process(data, images, response_model)
+        return self.process(data, images, response_model, interactions=interactions)
 
-    def process_parallel(self, data_list: list[dict], images_list: list[list|dict|None]|None = None, response_model=None):
+    def process_parallel(self, data_list: list[dict], images_list: list[list|dict|None]|None = None, response_model=None, interactions=None):
         """Return LLM results in request order using a multiprocessing pool.
 
         Args:
             data_list: Prompt-context dictionaries in request order.
             images_list: Optional per-request images; None supplies no images.
             response_model: Optional Pydantic response class; None returns decoded JSON.
+            interactions: Optional output list receiving one attempt list per request,
+                in input order; existing entries are preserved, including on request failure.
         """
         if images_list is None:
             images_list = [None] * len(data_list)
@@ -105,29 +108,52 @@ class LLMPrompter:
         logger.debug("Preparing %d parallel LLM requests with %d processes", len(data_list), self.num_processes)
         request_args = [self._prepare_request_args(data, images, response_model) for data, images in zip(data_list, images_list)]
 
+        sender = self._send_request if interactions is None else self._send_request_with_interactions
         with multiprocessing.Pool(processes=self.num_processes) as pool:
-            results = pool.starmap(self._send_request, [(self.api_url, self.api_key, args, self.max_attempts, self.json_schema, response_model, self.raise_on_failure) for args in request_args])
+            results = pool.starmap(sender, [(self.api_url, self.api_key, args, self.max_attempts, self.json_schema, response_model, self.raise_on_failure) for args in request_args])
+
+        if interactions is not None:
+            interactions.extend(records for _, records in results)
+            results = [result for result, _ in results]
+            for result in results:
+                if isinstance(result, Exception):
+                    raise result
 
         return results
 
-    def process(self, data: dict, images: list|dict|None = None, response_model=None):
+    def process(self, data: dict, images: list|dict|None = None, response_model=None, interactions=None):
         """Render a prompt and return the structured LLM result.
 
         Args:
             data: Template context mapping.
             images: Optional images as an ordered list or label-to-image mapping.
             response_model: Optional Pydantic response class; None returns decoded JSON.
+            interactions: Optional caller-owned output list; existing entries are preserved.
 
         Returns:
             The latest LLM result; see _send_request for failure semantics.
         """
         request_args = self._prepare_request_args(data, images, response_model)
-        result = self._send_request(self.api_url, self.api_key, request_args, self.max_attempts, self.json_schema, response_model, self.raise_on_failure)
-
-        return result
+        return self._send_request(
+            self.api_url, self.api_key, request_args, self.max_attempts,
+            self.json_schema, response_model, self.raise_on_failure, interactions=interactions)
 
     @staticmethod
-    def _send_request(api_url, api_key, request_args: dict, max_attempts: int, json_schema, response_model=None, raise_on_failure=False):
+    def _send_request_with_interactions(*args):
+        """Return attempt records across a process boundary, retaining request errors.
+
+        Args:
+            *args: Positional arguments for the unchanged request operation.
+        """
+        records = []
+        try:
+            result = LLMPrompter._send_request(*args, interactions=records)
+        except Exception as exc:
+            result = exc
+        return result, records
+
+    @staticmethod
+    def _send_request(api_url, api_key, request_args: dict, max_attempts: int, json_schema, response_model=None, raise_on_failure=False, interactions=None):
         """Request and validate an LLM response with bounded retries.
 
         Args:
@@ -138,6 +164,7 @@ class LLMPrompter:
             json_schema: Output schema used when no response model is supplied; may be None.
             response_model: Optional Pydantic response class; None returns decoded JSON.
             raise_on_failure: Distinguish failed requests from invalid response content; defaults to False.
+            interactions: Optional list receiving rendered text and raw output for each attempt.
 
         Returns:
             The latest decoded result, optionally validated, or None. A decoded
@@ -155,12 +182,23 @@ class LLMPrompter:
         failure_type = LLMRequestError
         client = OpenAI(base_url=api_url, api_key=api_key)
 
+        prompt = "\n".join(
+            f"[{message['role']}]\n" + "\n".join(
+                part['text'] for part in message['content'] if part['type'] == 'input_text')
+            for message in request_args['input']
+            if any(part['type'] == 'input_text' for part in message['content'])
+        ) if interactions is not None else None
         for attempt in range(max_attempts):
             validated = False
             failure_type = LLMRequestError
             decode_stage = "HTTP response decoding"
+            if interactions is not None:
+                record = {'prompt': prompt, 'response': None}
+                interactions.append(record)
             try:
                 response = client.responses.create(**request_args)
+                if interactions is not None:
+                    record['response'] = getattr(response, 'output_text', None)
                 status = getattr(response, "status", None)
                 if status == "incomplete":
                     result = None
