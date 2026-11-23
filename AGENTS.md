@@ -8,17 +8,10 @@ For a new feature, bug or maintenance request, follow [Creating GitHub issues](d
 
 ## Isolated implementation workspace (Codex CLI)
 
-For a request consisting only of **`Implement LIBCAS/PeopleGator issue #N`**, carry out the entire [temporary-clone workflow](docs/AGENT_TEMP_CLONES.md) automatically. The user must not need to supply workspace, branch or cleanup instructions. This rule applies to implementation and PR revisions, not read-only reviews or preparing issues.
+For **`Implement LIBCAS/PeopleGator issue #N`**, automatically follow the [agent-owned temporary-clone workflow](docs/AGENT_TEMP_CLONES.md); the requester does not need to provide workspace instructions. The same policy applies to PR revisions, not read-only reviews or issue preparation.
 
-1. Treat the checkout where Codex was started as **read-only**. Read its instructions, verify the official `LIBCAS/PeopleGator` remote and the issue/PR, and do not switch branches or modify files there.
-2. Create a **unique, agent-owned OS temporary directory** (for example with Python `tempfile.mkdtemp()`) and clone the **remote repository**, never the potentially dirty local checkout. Fetch the latest `origin/develop`. For new implementation, create `issue/<number>-short-description` from it; for PR updates, check out the existing remote issue branch. Do not use Git worktrees.
-3. Perform **all edits, dependency installs, tests, Git operations and PR preparation within the temporary clone**. Set the working directory explicitly for each tool invocation; a shell `cd` may not persist. Never touch another agent's clone. Keep the existing development/PR workflow below.
-4. After a successful push and PR creation/update, verify a clean clone, no unpushed commits, the correct remote branch/PR target, and the exact agent-owned directory before deleting **only that temporary clone**. If any work is uncommitted/unpushed or the handoff fails, preserve it and report its path and the blocker. For review changes, use a fresh clone of the existing remote issue branch.
-5. If the sandbox prevents modifying the temporary clone or Git metadata, or blocks network operations, request **narrowly scoped approval** or report the blocker. Do not fall back to editing the primary checkout or disabling the sandbox globally.
+**Never modify the original checkout or another agent's workspace.** Verify the official remote, create a unique temporary clone of it, and use the latest `origin/develop` for new implementation or the existing remote PR branch for revisions. Perform all edits, installs, tests and Git operations inside that clone; do not use worktrees or fall back to the original checkout on permission failure. After pushing and handing off a PR against `develop`, remove **only** the agent-owned clone, and only after confirming clean, pushed state and a safe path. Otherwise preserve it and report the blocker. The linked guide contains the detailed portable setup, checks and cleanup gates.
 
-See [Temporary clones for coding agents](docs/AGENT_TEMP_CLONES.md) for portable setup, verification, review and cleanup instructions.
-
-## Read before editing
 
 - [Architecture](docs/ARCHITECTURE.md): module ownership and end-to-end job flow.
 - [Processing](docs/PROCESSING.md): input, engine order and person-occurrence lifecycle.
