@@ -1,10 +1,10 @@
 # Agent instructions
 
-Before changing code, read [README.md](README.md), the applicable guide in `docs/`, the complete GitHub issue, affected callers and existing tests. Base new work on the latest `origin/develop` and open pull requests against protected `develop`.
+Before changing code or documentation, read [README.md](README.md), the applicable guide in `docs/`, the complete GitHub issue, affected callers and existing tests. Base new work on the latest `origin/develop` and open pull requests against protected `develop`.
 
 ## Preparing issues
 
-For a new feature, bug or maintenance request, follow [Creating GitHub issues](docs/ISSUE_WORKFLOW.md). Turn the user's plain-language description into a clear, testable issue by inspecting related issues/PRs, docs and affected source code. Ask focused questions for material missing decisions; otherwise draft the full issue with scope, acceptance criteria and a validation plan. Reuse an existing relevant issue when possible. Publish a new issue after the user approves the draft, or immediately when explicitly instructed to create it.
+For a new feature, bug or maintenance request, follow [Creating GitHub issues](docs/ISSUE_WORKFLOW.md). Inspect related issues/PRs, documentation, affected source and tests before writing requirements. Ask the requester about material decisions that are not established; **do not guess behavior, defaults or contracts**. If explicitly asked to publish an issue with unresolved material decisions, use a `[Draft]` title and list the open questions rather than presenting it as implementation-ready. Otherwise resolve those decisions first. Reuse an existing relevant issue where possible, and publish a ready issue after approval or when explicitly instructed.
 
 ## Isolated implementation workspace (Codex CLI)
 
@@ -28,10 +28,19 @@ See [Temporary clones for coding agents](docs/AGENT_TEMP_CLONES.md) for portable
 
 ## Before implementation
 
-1. Read the **entire issue, comments, linked issues/PRs and dependencies**. Check that the goal, scope and acceptance criteria are clear. Resolve material questions with the requester and update the issue before coding; a `[Draft]` issue with open decisions needs refinement first.
-2. Inspect affected code, callers, configuration, output formats and available tests. Distinguish current behavior from planned functionality. Follow established interfaces, especially ALTO/PAGE XML and PeopleGatorApp identity contracts.
-3. Make a short implementation plan mapping **each acceptance criterion** to the intended change and a way to verify it. Keep the implementation inside the approved scope and raise newly discovered requirements separately.
+1. Read the **entire issue, comments, linked issues/PRs and dependencies**. An issue without a `[Draft]` prefix is not proof that every decision was made. If behavior, scope, defaults, validation/error handling, compatibility, persisted data or a public/API contract is materially unclear, **stop the affected work, ask the requester, and update the issue and plan with the decision before implementing it**. Do not invent a plausible requirement. Do not ask about details already settled by the issue, existing code, documentation or conventions.
+2. Inspect affected code, existing model methods and utilities, callers, configuration, output formats and available tests. Distinguish current behavior from planned functionality. Follow established interfaces, especially ALTO/PAGE XML and PeopleGatorApp identity contracts.
+3. Make a short implementation plan mapping **each acceptance criterion** to the smallest necessary change and a way to verify it. Keep implementation inside the approved scope and raise newly discovered requirements separately.
 4. Check which development dependencies and tests can actually run. The repository is establishing packaging and a test suite; record any environment blockers rather than assuming checks are available.
+
+## Implementation style and scope
+
+- Prefer the **simplest direct implementation that humans can readily understand**; do not optimize for line count or add abstractions for hypothetical future needs.
+- Before adding a helper, wrapper, model or module, check whether an existing model method, utility or engine already owns the responsibility. Share logic only when its semantics truly agree; keep engine-specific decisions in their engines.
+- Prefer explicit data flow and initialized object invariants. Avoid repeated fallback checks, temporary state, extra context managers, redundant validation and compatibility shims **unless a concrete supported scenario requires them**. Necessary defensive handling and compatibility guarantees must be retained.
+- Make focused edits: no unrelated refactoring, formatting churn, new configuration/dependencies, speculative edge cases or contract changes without approval. Record adjacent findings separately rather than expanding the issue.
+- Remove superseded code, helpers and redundant tests/fixtures when replacing an implementation, while retaining meaningful regression coverage. Keep new tests and documentation proportional to the approved change.
+- Review the final diff and justify any nontrivial new abstraction or layer; explain what behavior and contracts are preserved and what was actually verified.
 
 ## GitHub development workflow
 
@@ -48,4 +57,4 @@ All implementation work follows: **ready issue → branch → implementation and
 
 ## Handoff
 
-Provide the issue and PR links, branch/target, changed behavior/files, **acceptance criteria completed or outstanding**, tests actually run and their results, checks not run (with reasons), documentation changes, temporary-clone cleanup status (or preserved recovery path) and remaining risks/decisions. Link newly discovered work to a separate GitHub issue. Opening a PR requests review; it does not authorize merging.
+Provide the issue and PR links, branch/target, changed behavior/files, **acceptance criteria completed or outstanding**, tests actually run and their results, checks not run (with reasons), documentation changes, justification for any new abstraction, temporary-clone cleanup status (or preserved recovery path) and remaining risks/decisions. Link newly discovered work to a separate GitHub issue. Opening a PR requests review; it does not authorize merging.
