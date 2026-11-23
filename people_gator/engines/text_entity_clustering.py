@@ -125,9 +125,11 @@ class LLMTextEntityClusteringEngine(DocumentProcessingEngine, LLMBasedEngine):
         total = self.name_weight + self.mention_weight
         weights = [self.name_weight / total, self.mention_weight / total]
         denominator = 2 * max(weights)
-        scores = [partial_token_sort_ratio(_normalized_name(a), _normalized_name(b)) *
+        first_names = [_normalized_name(name) for name in _names(first)]
+        second_names = [_normalized_name(name) for name in _names(second)]
+        scores = [partial_token_sort_ratio(a, b) *
                   ((weights[i] + weights[j]) / denominator)
-                  for i, a in enumerate(_names(first)) for j, b in enumerate(_names(second))]
+                  for i, a in enumerate(first_names) for j, b in enumerate(second_names)]
         if self.aggregation == 'max':
             return max(scores)
         if self.aggregation == 'min':
@@ -251,7 +253,7 @@ class LLMTextEntityClusteringEngine(DocumentProcessingEngine, LLMBasedEngine):
             ValueError: Prior annotations cannot form a safe partition.
             RuntimeError: LLM request failure; all prior annotations remain intact.
         """
-        mentions = [m for page in document.page_layouts for m in page.text_entities]
+        mentions = document.text_entities
         if len({id(m) for m in mentions}) != len(mentions):
             raise ValueError('A text mention object occurs more than once in the document')
         staged, covered = self._protected(document, mentions)

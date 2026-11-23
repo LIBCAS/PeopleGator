@@ -354,23 +354,30 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
             logger.debug("Page %s: prepared %d LLM assignment requests", page_layout.id, len(face_data))
             all_face_data.extend(face_data)
 
-        data = [face_item.to_dict() for face_item in all_face_data]
-        images = [[face_item.context_image] for face_item in all_face_data]
+        self._assign_parallel(all_face_data)
+        self.update_layout(all_face_data)
+
+    def _assign_parallel(self, face_data):
+        """Assign ordered batches, retaining all attempts before propagating errors.
+
+        Args:
+            face_data: Prepared batches for either one page or the whole document.
+        """
+        data = [face_item.to_dict() for face_item in face_data]
+        images = [[face_item.context_image] for face_item in face_data]
         interactions = []
         try:
             results = self.llm_prompter.process_parallel(
                 data_list=data, images_list=images, response_model=BatchFaceAssignmentResult, interactions=interactions)
         finally:
-            for face_item, records in zip(all_face_data, interactions):
+            for face_item, records in zip(face_data, interactions):
                 for face in face_item.face_regions:
                     metadata = face.face_metadata
                     if metadata is not None:
                         metadata.prompts.extend(dict(engine="LLM_BATCH_FACE_ASSIGNMENT", **record) for record in records)
 
-        for face_item, result in zip(all_face_data, results):
+        for face_item, result in zip(face_data, results):
             face_item.result = result
-
-        self.update_layout(all_face_data)
 
     def process_page(self, page_image, page_layout, document=None):
         """Process one page in place and return its layout.
@@ -387,21 +394,7 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         logger.debug("Page %s: prepared %d LLM assignment requests", page_layout.id, len(face_data))
 
         if self.processing_mode == ProcessingMode.PAGE_PARALLEL:
-            data = [face_item.to_dict() for face_item in face_data]
-            images = [[face_item.context_image] for face_item in face_data]
-            interactions = []
-            try:
-                results = self.llm_prompter.process_parallel(
-                    data_list=data, images_list=images, response_model=BatchFaceAssignmentResult, interactions=interactions)
-            finally:
-                for face_item, records in zip(face_data, interactions):
-                    for face in face_item.face_regions:
-                        metadata = face.face_metadata
-                        if metadata is not None:
-                            metadata.prompts.extend(dict(engine="LLM_BATCH_FACE_ASSIGNMENT", **record) for record in records)
-
-            for face_item, result in zip(face_data, results):
-                face_item.result = result
+            self._assign_parallel(face_data)
 
         else:
             for face_item in face_data:

@@ -438,11 +438,11 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                 f'invalid/unusable LLM decision schema; candidate_count={len(entities)}') from None
         if result.action == 'unresolved':
             return result
-        if not result.source_is_person:
-            raise _MatchingValidationError('non-person source cannot link or create')
+        # The response model guarantees person/action consistency and index type.
+        # Only references to this request's candidates/source remain to validate.
         if result.action == 'select':
             index = result.item_id
-            if index is None or not 0 <= index < len(entities):
+            if index >= len(entities):
                 raise _MatchingValidationError(
                     f'invalid/unavailable candidate index; candidate_count={len(entities)}; candidate_index={index}')
             if result.name != entities[index]['name']:
@@ -451,7 +451,7 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
             if entities[index]['entity_type'] != 'person':
                 raise _MatchingValidationError(
                     f'non-person candidate; candidate_count={len(entities)}; candidate_index={index}')
-        elif result.item_id is not None or result.name != name:
+        elif result.name != name:
             raise _MatchingValidationError('invalid create proposal: source name mismatch')
         return result
 

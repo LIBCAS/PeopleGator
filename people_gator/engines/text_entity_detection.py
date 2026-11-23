@@ -262,14 +262,14 @@ class LLMTextEntityDetectionEngine(DocumentProcessingEngine, LLMBasedEngine):
                         rejected += 1
                         continue
                     page = document.page_layouts[chunk.page_index]
+                    line = page.regions[spans[0].source.region_index].lines[spans[0].source.line_index] if len(spans) == 1 else None
                     # Legacy manual single-line annotations have no source_spans.
                     if any(existing.source_spans == spans or
-                           (len(spans) == 1 and existing.line is page.regions[spans[0].source.region_index].lines[spans[0].source.line_index]
+                           (line is not None and existing.line is line
                             and existing.span == (spans[0].start, spans[0].end))
                            for existing in page.text_entities):
                         continue
                     if spans not in staged:
-                        line = page.regions[spans[0].source.region_index].lines[spans[0].source.line_index] if len(spans) == 1 else None
                         staged[spans] = (page, PeopleGatorTextEntityMention(
                             name=chunk.text[start:end], text=chunk.text[a:b], line=line,
                             span=(spans[0].start, spans[0].end) if line is not None else None,

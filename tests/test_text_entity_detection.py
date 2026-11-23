@@ -62,6 +62,27 @@ def test_single_line_metadata_legacy_and_idempotence():
     assert manual.identity_name == 'Manual'
 
 
+def test_legacy_deduplication_uses_line_objects_with_repeated_ids():
+    from people_gator.core.layout import PeopleGatorTextEntityMention
+    doc = document('Karel came', 'Karel left')
+    page = doc.page_layouts[0]
+    first, second = page.regions[0].lines
+    manual = PeopleGatorTextEntityMention('Karel', 'manual', second, (0, 5))
+    page.text_entities.append(manual)
+    detector = engine()
+    detector.llm_prompter = Mock(return_value={'entities': [entity(), entity(context='Karel left')]})
+
+    detector.process_document(doc)
+    detector.process_document(doc)
+
+    assert page.text_entities[0] is manual
+    assert len(page.text_entities) == 2
+    detected = page.text_entities[1]
+    assert detected.line is first and detected.span == (0, 5)
+    assert detected.source_spans[0].source.line_index == 0
+    assert manual.source_spans == () and manual.text == 'manual'
+
+
 @pytest.mark.parametrize('text,name,context,expected', [
     ('Karel came; Karel left', 'Karel', 'Karel left', (12, 17)),
     ('Karel came; Karel left', 'Karel', 'Karel', None),

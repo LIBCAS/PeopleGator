@@ -618,13 +618,18 @@ def test_invalid_cluster_membership_aborts_before_app_mutation(engine, invalid):
     engine.db_api_service.search_entities.assert_not_called()
 
 
-def test_strict_schema_and_decision_validation_reject_forged_model_instances(engine):
+@pytest.mark.parametrize('invalid', [
+    {'item_id': True}, {'item_id': -1}, {'item_id': None},
+    {'source_is_person': False}, {'action': 'create', 'item_id': 0},
+])
+def test_strict_schema_and_decision_validation_reject_forged_model_instances(engine, invalid):
     from people_gator.engines.entity_matching import EntityMatchingResult
     doc = document()
-    engine.llm_prompter.return_value = EntityMatchingResult.model_construct(
-        action='select', source_is_person=True, item_id=True, name='Karel Čapek', reason='valid')
+    payload = dict(action='select', source_is_person=True, item_id=0, name='Karel Čapek', reason='valid')
+    engine.llm_prompter.return_value = EntityMatchingResult.model_construct(**dict(payload, **invalid))
     assert engine.process_document(doc) is doc
     engine.db_api_service.create_entity.assert_not_called()
+    assert doc.text_entity_clusters[0].identity is None
     schema = EntityMatchingResult.model_json_schema()
     assert schema['additionalProperties'] is False
     assert schema['properties']['action']['enum'] == ['select', 'create', 'unresolved']
