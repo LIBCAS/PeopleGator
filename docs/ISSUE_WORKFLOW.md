@@ -6,14 +6,27 @@ PeopleGator issues describe **what should change and how the result will be veri
 
 1. **Describe the request.** Explain the problem or desired result in your own words. Add a sample document, error, XML fragment or expected output when useful.
 2. **Investigate.** The AI assistant searches existing open and closed issues/PRs and [TODO.md](TODO.md), reads [AGENTS.md](../AGENTS.md) and the relevant processing, architecture and output-format docs, and inspects affected code.
-3. **Clarify only important decisions.** Ask focused questions if the intended behavior, scope or a data contract is genuinely unclear. Resolve details already documented in the repository without asking the user.
-4. **Draft the issue.** Use the sections below and the [change-request template](../.github/ISSUE_TEMPLATE/change_request.md). Distinguish verified current behavior, requested changes, and assumptions.
-5. **Review and publish.** Let the requester review the proposed title and body before posting unless they explicitly asked the assistant to create the issue immediately. Reuse or refine an existing issue when it covers the request.
+3. **Clarify material decisions before deciding.** If behavior, scope, defaults, validation/error handling, compatibility, stored data or an API contract is not established by the request or repository, ask the requester concise, focused questions. Do not guess. Resolve details already settled by the code or documentation without asking.
+4. **Draft the issue.** Use the sections below and the [change-request template](../.github/ISSUE_TEMPLATE/change_request.md). Separate verified current behavior, explicit requested changes, proposed options and unresolved decisions. Do not turn a proposal or assumption into an agreed requirement or acceptance criterion.
+5. **Review and publish.** Let the requester review the proposed title and body unless explicitly asked to create the issue immediately. If immediate publication was requested despite unresolved material decisions, publish a `[Draft]` issue with visible open questions. Otherwise clarify those decisions before publishing a ready issue. Reuse or refine an existing issue when it covers the request.
 6. **Implement later.** Work starts from an issue-specific branch based on `develop` and finishes with a tested pull request for review, following [AGENTS.md](../AGENTS.md).
 
-If an important decision is still unresolved, keep a `[Draft]` title and list the open questions. A draft can be refined in the same issue once requirements are settled.
+A `[Draft]` issue must identify the outstanding decisions in an **Open questions / decisions** section. Update that same issue with the requester's answers before removing `[Draft]`; do not start implementation while material decisions remain open.
 
 **Implementation readiness:** Before assigning an issue to a coding agent, confirm that its intended outcome, scope, acceptance criteria and required decisions are clear enough to implement and verify. The agent should refine an issue with material open questions before beginning work, then follow the [implementation workflow](../AGENTS.md#github-development-workflow).
+
+## When to ask rather than assume
+
+A decision is **material** when different reasonable answers would change the expected result or scope, a default or failure policy, a compatibility requirement, stored data, or an interface/API contract. Clarify it with the requester **before choosing an implementation**. Existing, verified conventions can resolve ordinary details without another question.
+
+| Situation | Required action |
+| --- | --- |
+| It is unclear whether ambiguous matches should link to an existing identity or remain unmatched. | Ask which behavior is intended; do not invent a matching rule. |
+| A proposed change would add a default, new validation failure, persistence field or compatibility behavior not requested or documented. | Ask whether that behavior is wanted; do not silently expand the issue. |
+| Existing code and documentation unambiguously define the relevant engine interface or file/path convention. | Follow that contract without asking the requester to repeat it. |
+| The choice is only an internal name or straightforward local implementation detail with no effect on observable behavior. | Choose the simplest established approach without unnecessary questions. |
+
+If a material question arises **during implementation**, follow [the agent instructions](../AGENTS.md#before-implementation): stop the affected work, obtain the decision, and update the issue before continuing.
 
 ## Implementing an existing issue with Codex CLI
 
@@ -53,17 +66,18 @@ Create or refine a GitHub issue for LIBCAS/PeopleGator from this description:
 Follow docs/ISSUE_WORKFLOW.md and AGENTS.md. Search related issues/PRs
 and inspect relevant code and documentation. Identify verified behavior,
 the expected result, scope, acceptance criteria, and processing tests.
-Ask me short, focused questions if an important requirement needs a
-decision. Otherwise draft the full title and issue body for my review.
-Create the GitHub issue when I approve it.
+Ask me short, focused questions before making any material requirement
+decision that the request or repository does not settle. Do not guess.
+Otherwise draft the issue for my review. Create it when I approve;
+if I request immediate publication with open decisions, use [Draft].
 ```
 
 An AI agent should:
 
 - Prefer refining a relevant existing issue over creating a duplicate; preserve its original goal and discussion.
-- Explain current behavior only when supported by code, tests or another cited source. Mark proposals and assumptions clearly.
+- Explain current behavior only when supported by code, tests or another cited source. Distinguish verified facts, explicit requirements, proposals and open questions.
 - Define testable acceptance criteria and a focused validation plan rather than prescribing routine implementation details.
-- Flag decisions about person matching, confidence, model choice, coordinates, XML compatibility or API data contracts for clarification when they change existing behavior.
+- Ask the requester about unresolved material decisions (for example person matching, confidence, model choice, coordinates, XML compatibility, error policy or API contracts) instead of assuming the answer.
 - Keep each implementation issue small enough for a focused pull request; use a parent issue with linked tasks for a larger project.
 - Propose labels and priority only when supported by existing repository labels and user instructions.
 
