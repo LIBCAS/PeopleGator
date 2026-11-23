@@ -1,460 +1,157 @@
 # Testing
 
-Tests focus on PeopleGator's document-processing pipeline: loading pages, running processing engines, matching identities, and saving annotations. For a feature or bug fix, derive test cases from the issue's acceptance criteria and reproduce the reported bug before fixing it when practical.
+PeopleGator tests cover document loading, processing engines, identity linking, output formats, recovery and packaging. Treat the `tests/test_*.py` modules as the authoritative inventory of individual regressions; this guide explains their purpose and how to run them. Derive new cases from issue acceptance criteria and reproduce bugs before fixing them when practical.
 
 ## What should be tested
 
-Optional processing checkpoints are tested in `tests/test_checkpoints.py` using
-real ALTO/PAGE fixtures, rich inherited OCR/AnnoPage state and mocked engines/app
-clients. Cases compare every field/type/order/reference after Pickle round-trip,
-resume every boundary, verify CLI precedence and disabled behavior, recover
-modified cached/lazy images, validate relocated/missing/changed inputs/resources,
-interrupt payload/manifest publication in a subprocess, verify strict pre-unpickle
-trust/format/integrity checks and diagnostic JSON export, and prevent uncertain
-app-stage or repeated export replay. Software-version mismatch cases require a
-WARNING with both saved/current PeopleGator versions and successful continuation;
-Python/dependency/source metadata cannot gate recovery. Actual corrupt Pickle and
-missing-class failures still produce actionable restoration errors. No live LLM,
-database or GPU is required. Credential regressions exercise short/reused option
-values and credential-looking URLs through complete pipelines and per-engine
-publication. Only recognized credential option fields become boolean markers in
-the initial/current JSON configurations. ALTO/PAGE round-trips retain matching OCR,
-nested metadata, Unicode/binary arrays and engine-produced text; generated JSON
-and Pickle substrings cannot block saving. Live-client and fidelity rejection
-checks remain covered. The supported
-types, explicit model audit and conservative recovery limits are documented in
-[CHECKPOINTS.md](CHECKPOINTS.md).
-
-```bash
-python -m pytest -q tests/test_checkpoints.py tests/test_entity_matching.py tests/test_documentation.py
-```
-
-| Area | Important cases |
+| Area | Required coverage |
 | --- | --- |
-| Document loading | Page images, ALTO/PAGE layouts, metadata, and engine configuration/order |
-| Face detection | Source-region filtering, bounding boxes, five landmarks, zero or multiple faces |
-| LLM face assignment | Names proposed from image/OCR/caption context, single and batch results, missing responses |
-| Entity matching | One, multiple or no person candidates; ambiguous and unassigned faces |
-| ALTO XML | Face blocks, person and face tags, MODS references, coordinates, and existing OCR content |
-| PAGE XML | Face regions, polygon coordinates, identity metadata, and source-region references |
+| Document loading and processing | ALTO/PAGE input, metadata, engine selection/order, empty pages and errors |
+| Face detection and assignment | Regions, coordinates, landmarks, image/OCR/caption evidence, single/batch modes and ambiguous results |
+| Text processing | Reading order and OCR source spans, detection, clustering, identity propagation and unchanged original evidence |
+| LLM and database integration | Prompt/schema validation, retries and failures, candidate decisions, protected IDs and partial app writes |
+| Output and recovery | ALTO/PAGE round trips, linked text-mention export, diagnostic JSON, checkpoint integrity and replay safeguards |
+| Deployment | Dependency extras, installed entry points, worker subprocess outcomes, logging and documentation |
 
-Use synthetic documents and mocked model outputs or person-database responses so tests remain fast and repeatable. Include XML round-trip tests as the import functionality is implemented.
+Use small synthetic documents and mocked LLM, model and database responses for deterministic tests. Verify **existing document content remains intact**, not only newly written fields. Mocked correctness does not establish model extraction or identity accuracy on a real corpus; live integration and corpus evaluation require separate tests.
 
 ## How to run tests
 
-Install the test/build tools from a checkout, then run the focused packaging tests or the full available suite:
+For the full processing/API environment, install the runtime and test dependencies and run:
 
 ```bash
-python -m pip install -e '.[test]'
-python -m pytest -q tests/test_packaging.py
 python -m pip install -e '.[full,test]'
 python -m pytest -q --runtime-mode=full
+python -m pip check
 python -m build
+python -m compileall -q people_gator processing_api user_scripts
 ```
 
-`tests/test_packaging.py` validates dependency specifications and entry points, builds an sdist and a wheel from that sdist, checks every source module is packaged, and installs the wheel without dependencies into a temporary isolated environment to check lightweight imports and console-script registration. Build subprocesses use the already installed build tools without network access. This verifies distribution structure; it does not replace runtime dependency installation or processing checks.
+The full runtime mode requires both the processing stack and DocAPI: missing dependencies fail rather than silently skip tests. The build and syntax checks complement behavioral tests; neither proves the issue requirements on its own.
 
-`tests/test_runtime.py` checks installed engine and API imports outside the checkout, CLI help, API defaults with the DocAPI runner mocked, and synthetic PAGE-to-PAGE/ALTO processing with an empty engine configuration. The API starts a service rather than parsing `--help`. Runtime tests default to `--runtime-mode=full`, which requires both the processing stack and DocAPI: missing dependencies fail rather than silently skipping checks. For all runtime checks, install `.[full,test]` in a clean environment and run `python -m pytest -q --runtime-mode=full` and `python -m pip check`. Actual inference still requires a compatible model and configuration.
+Use **separate clean environments** when testing partial installations:
 
-`tests/test_worker.py` mocks `subprocess.Popen` to check job input/metadata paths, every combination of ALTO/PAGE/render outputs, missing settings and optional values, mutually exclusive XML inputs, device/GPU selection, effective logging level, and worker CLI forwarding/defaults. It also checks that the original engine configuration is unchanged and no database/authentication arguments are passed. Run `python -m pytest -q tests/test_worker.py` with `.[worker,test]` or `.[full,test]`; these tests need DocAPI but no processing models, live service or GPU. Tool mode skips these DocAPI checks. The full runtime suite also runs a real worker subprocess on a synthetic PAGE document and checks ALTO, PAGE and rendered results.
+| Environment | Install | Test command |
+| --- | --- | --- |
+| Client only (without processing stack) | `python -m pip install '.[client,test]'` | `python -m pytest -q --runtime-mode=client` |
+| Local processing tool (without DocAPI) | `python -m pip install '.[tool,test]'` | `python -m pytest -q --runtime-mode=tool` |
+| Packaging only | `python -m pip install -e '.[test]'` | `python -m pytest -q tests/test_packaging.py` |
 
-`tests/test_worker.py` checks subprocess completion using mocked `Popen` results
-and DocAPI's real `WorkerResponse`: success, positive and negative non-zero exit
-codes, populated/empty stdout and stderr, missing job IDs, diagnostic logging,
-failure-message contents, and unchanged subprocess arguments/environment. Run
-`python -m pytest -q tests/test_worker.py` with `.[worker,test]` or `.[full,test]`;
-no live service, processing model, or GPU is needed. Tool mode skips these DocAPI
-checks.
+Run `python -m pip check` in each environment. The partial runtime modes skip only tests requiring packages outside that mode; the client-only mode also checks that processing dependencies are absent.
 
-Use a separate clean environment for each partial installation:
+`tests/test_packaging.py` checks dependency declarations and entry points, builds an sdist and wheel, and verifies packaged imports and commands without runtime dependencies. `tests/test_runtime.py` exercises installed imports, CLI behavior and synthetic PAGE-to-ALTO/PAGE processing (with DocAPI mocked where appropriate). `tests/test_worker.py` covers DocAPI job options, subprocess forwarding and success/failure propagation; run it with `.[worker,test]` or `.[full,test]`. The full suite also exercises a real worker subprocess on synthetic data.
 
-```bash
-# Client-only environment: no AnnoPage, pero-ocr, PyTorch or Ultralytics.
-python -m pip install '.[client,test]'
-python -m pytest -q --runtime-mode=client
-python -m pip check
+Python 3.10 and Windows may require independent verification even when checks pass on another platform. Confirm that pytest actually **collected and executed tests**; record exact commands, outcomes and blockers in the PR. If essential validation is blocked, leave the PR in draft rather than claim success.
 
-# Local processing environment, without DocAPI.
-python -m pip install '.[tool,test]'
-python -m pytest -q --runtime-mode=tool
-python -m pip check
-```
-
-The client mode asserts that the processing packages above are absent and exercises installed API/client imports, client help and the mocked API wrapper. Tool mode exercises processing imports, local command help and synthetic XML processing. Only checks outside the explicitly selected partial mode are skipped. `tests/test_packaging.py` runs with `.[test]` alone, including a dependency-free base wheel installation. Virtual-environment executable paths and console-script suffixes account for POSIX and Windows; execution on Windows and Python 3.10 still needs independent validation.
-
-The wider processing regression suite and CI are still being established. For new processing tests, replace the focused module above with the tests added or modified. Confirm that the runner **collected and executed tests** and check its exit status.
-
-For a syntax check of the processing code, run:
-
-```bash
-python -m compileall -q people_gator user_scripts
-```
-
-Syntax checks complement behavioral tests; they do not prove an issue is implemented. When dependencies or test tooling are unavailable, record the exact blocker and which acceptance criteria remain unverified. Keep the PR in draft while essential validation is incomplete.
+For changes confined to documentation, run applicable documentation checks and inspect links and contract references. Full processing tests are not necessary unless tested behavior changed.
 
 ## Text chunking
 
-`tests/test_text_chunking.py` tests factory validation, public imports without
-site packages, empty/irregular OCR, region reading order, page-local boundaries,
-verbatim whitespace/Unicode, deterministic results and input preservation.
-Configuration tests extract and strip `CHUNKING_*` keys from a sample
-NER `[ENGINE_1]` section while leaving its own `METHOD` and LLM settings intact.
-They cover `LINES`/`LINE_AWARE`, defaults, partial options, lowercase ConfigParser
-keys, unknown extracted options and rejection of whole-engine/prefixed config.
-These lightweight examples complement the registered detector tests below.
-It enumerates budgets 1–12 and every valid overlap for several line patterns,
-reconstructs canonical page text and checks every mapped source character,
-exact overlap, progress and hard limits. Substring tests cover split lines,
-multiline matches, synthetic separators and canonical overlap occurrence keys.
-The ALTO/PAGE fixtures in `tests/resources/text_chunking/` load through the real
-document model for one and two pages, including repeated IDs and PAGE reading
-order. Only those XML integration cases require processing extras (and are
-explicitly skipped in client mode); all other chunker tests use the standard
-library plus pytest. Run:
+`tests/test_text_chunking.py` covers factory defaults/validation, `CHUNKING_*` option extraction, source reading order, verbatim Unicode/whitespace, line/page boundaries, hard budgets, overlap and synthetic separators. It verifies that every source character can be mapped back to its original page/region/line/offset, that overlapping windows have stable occurrence keys, and that source layouts remain unchanged. ALTO/PAGE integration fixtures require processing extras; lightweight chunk tests run without the processing stack.
 
 ```bash
-python -m pytest -q tests/test_text_chunking.py tests/test_documentation.py
-python -m pytest -q --runtime-mode=full
-python -m compileall -q people_gator
+python -m pytest -q tests/test_text_chunking.py
 ```
 
 ## How to write new tests
 
-1. Translate the issue's acceptance criteria into specific test cases. For a bug, add a regression case that exposes the old behavior when feasible.
-2. Add `tests/test_*.py` files for the relevant processing components. Use small synthetic images, ALTO/PAGE XML and metadata fixtures in `tests/resources/`.
-3. Mock face-detection models, LLM calls and person-database responses; use temporary output directories.
-4. Check resulting face regions, identities and XML structure, including existing document content. Cover typical, empty and error cases.
-5. Run focused and available full-suite checks. In the PR, map each acceptance criterion to the test or other evidence that verifies it, and report test outcomes and any remaining gaps.
+1. Convert each acceptance criterion into observable assertions; include typical, empty, error and previously failing cases.
+2. Reuse small fixtures in `tests/resources/`; mock model calls, app responses and external services.
+3. Check output structure, object identity/provenance and preservation of existing XML and document metadata when relevant.
+4. Run the affected modules and the available complete suite, then report **actual** results and any unverified criteria.
+5. Keep tests focused and readable. Avoid duplicating equivalent fixtures or building helpers used only to hide straightforward setup.
 
-See [Output formats](OUTPUT_FORMATS.md) for ALTO and PAGE XML examples.
+See [Output formats](OUTPUT_FORMATS.md) for ALTO/PAGE examples and [Processing](PROCESSING.md) for engine contracts.
 
 ## Logging and inline documentation
 
-`tests/test_documentation.py` uses the Python AST to require docstrings for every
-project-defined class and callable under `people_gator`, `processing_api`, and
-`user_scripts`, including constructors, properties, and private helpers. It checks
-Google-style parameter entries against signatures without importing optional
-runtime dependencies. This establishes structural coverage only: semantic
-accuracy, defaults, return values, and exception contracts still require manual
-review against the implementation and its callers.
-
-`tests/test_logging.py` uses captured records, synthetic pages, and mocked model,
-HTTP, and subprocess responses to check logging levels, safe failure diagnostics,
-empty inputs, handler reuse, and unchanged coordinates, identities, XML, and worker
-results. It requires the applicable runtime extras; client/tool modes explicitly
-skip tests belonging to the other runtime. Run both alongside the existing suite:
+`tests/test_documentation.py` checks class/callable docstring coverage and Google-style parameter names using the Python AST; structural presence does not establish semantic accuracy. `tests/test_logging.py` checks log levels, safe failure diagnostics, repeated setup/handlers, and unchanged output with mocked requests and jobs. They do not require live services.
 
 ```bash
 python -m pytest -q tests/test_documentation.py tests/test_logging.py
-python -m pytest -q --runtime-mode=full
-python -m compileall -q people_gator processing_api user_scripts
 ```
-
-These tests make no live model/service requests. They check the current worker
-success/failure contract from PR #31. Existing LLM response/validation behavior,
-including known limitations, is preserved; passing tests do not establish that
-those separate LLM defects are fixed.
 
 ## Text entity detection
 
-`tests/test_text_entity_detection.py` uses mocked prompter/Responses results for
-factory configuration, engine ordering, external prompt templates and generated model schemas,
-malformed/empty/partial results, retries, failure atomicity, safe logs, occurrence
-ambiguity, normalized/fuzzy OCR matching, Unicode and multiline spans, overlap
-and rerun deduplication, legacy manual annotations and unresolved identity helpers.
-Real ALTO/PAGE fixtures run through `DocumentParser` without images or app access,
-retaining original OCR and pre-existing face annotations. These tests require
-processing extras and skip explicitly in client mode. Run:
+| Test module | Main regressions |
+| --- | --- |
+| `test_text_entity_detection.py` | Engine configuration, strict/partial responses, exact/normalized/fuzzy evidence, Unicode/multiline source mapping, overlap/rerun deduplication, failure atomicity and ALTO/PAGE preservation |
+| `test_detect_text_entities_cli.py` | Standalone ALTO/PAGE inspection, page-grouped stdout/JSON (including empty/repeated-ID pages), CLI/config errors, safe logging, atomic file replacement and direct execution outside the checkout |
+| `test_llm_responses.py` | Completed/incomplete/failed Responses statuses, output-token limits, retries, malformed JSON, response privacy and request-error policies |
+| `test_llm_prompts.py` | Required external prompts, valid JSON/Jinja roles, generated structured schemas, template-variable diagnostics and sequential/parallel requests |
 
 ```bash
-python -m pytest -q tests/test_text_entity_detection.py tests/test_text_chunking.py tests/test_documentation.py tests/test_logging.py
-python -m pytest -q --runtime-mode=full
-python -m pip check
-python -m compileall -q people_gator
+python -m pytest -q tests/test_text_entity_detection.py tests/test_detect_text_entities_cli.py tests/test_llm_responses.py tests/test_llm_prompts.py
 ```
 
-No live LLM, database or GPU inference is required. Passing mocked tests does not
-establish extraction quality for a particular model or OCR corpus.
-
-`tests/test_detect_text_entities_cli.py` exercises the standalone diagnostic
-`main()` with real ALTO/PAGE fixtures and mocked LLM results, including Unicode,
-multiline provenance, page-grouped stdout/JSON, repeated page IDs, stable page ordering, empty pages and documents,
-exclusive detector selection despite face/linking/DB configuration, required
-arguments and failures in configuration, XML, detection and writing. Atomic-write
-regressions preserve an existing output and remove temporary files on failure.
-Module subprocess checks cover help and a nonzero error exit. Run these with
-processing extras (they skip explicitly in client mode):
-
-```bash
-python -m pytest -q tests/test_detect_text_entities_cli.py tests/test_text_entity_detection.py tests/test_documentation.py
-```
-
-The diagnostic CLI tests also cover the default `INFO` level, all supported
-`--logging-level` values, invalid-level rejection, repeated logging setup without
-duplicate handlers, captured error records, and unchanged stdout/JSON behavior.
-
-Text-detector response-model tests verify nested Pydantic types, generated
-provider schema and class-based prompter calls, typed response consumption,
-strict candidate/evidence validation, partial-invalid filtering, private rejection
-counts, unchanged Unicode/whitespace, legacy arrays, invalid envelopes and absence
-of a built-in prompt/schema. The inherited JSON schema setting cannot override
-the response model's generated schema.
-
-The diagnostic CLI's direct-file regression runs its absolute script path from
-outside the checkout, with a stale `people_gator` package on `PYTHONPATH`. It loads
-empty synthetic OCR through the real engine without model requests and checks
-successful JSON output. A separate regression requires an unavailable factory
-engine to fail during configuration before any XML loading.
-
-`tests/test_llm_responses.py` checks incomplete/token-limited Responses results,
-including empty, truncated and superficially valid JSON. None is accepted as a
-complete extraction or retried with an unchanged exhausted allowance. Tests also
-check safe token-count diagnostics, HTTP-versus-model JSON decoding errors,
-retention of the configured hard output limit and ordinary complete responses.
-Non-completed status regressions cover failed/cancelled/queued/in-progress/unknown
-and missing/null statuses with empty or apparently valid JSON, safe retries followed by a
-completed response, opt-in request errors versus default `None`, and discarding
-previous invalid content. Clustering regressions verify that a later failed
-candidate group leaves the exact original cluster list and mentions unchanged,
-without singleton fallback or a success log. Successful Responses mocks provide
-an explicit `completed` status, matching the provider contract.
-Run alongside detector, CLI, logging and documentation tests:
-
-```bash
-python -m pytest -q tests/test_llm_responses.py tests/test_text_entity_detection.py tests/test_detect_text_entities_cli.py tests/test_logging.py tests/test_documentation.py
-```
-
-Page-grouped diagnostic output regressions cover all-empty ALTO/PAGE documents
-with every page retained in JSON and console headers, mixed empty/nonempty pages,
-and repeated/missing page IDs disambiguated by original indices. They verify
-Unicode/multiline evidence and ordered source spans survive the page grouping;
-zero-page documents still produce an empty pages array and the no-mentions message.
-
-`tests/test_llm_prompts.py` covers the updated shared prompt contract in
-`LLMBasedEngine` for face assignment, batch face assignment, entity matching and
-text detection. Missing/blank paths, unreadable/malformed/empty JSON, invalid
-encoding, object/role types, blank content and Jinja2 syntax fail before prompter
-or client construction. Valid system/user combinations use config-relative paths;
-the text detector has no validation override. CLI failures load no OCR and leave
-existing output unchanged.
-
-Sequential and parallel prompter tests verify missing/unused key warnings, typo
-handling, system/user union, shared variables, loop locals/globals, normal undefined
-rendering, safe variable-name-only warnings and unchanged Pydantic response models
-for every inheritor. The existing single/batch assignment request-flow regressions
-now initialize real engines with explicit valid prompt files.
-
-```bash
-python -m pytest -q tests/test_llm_prompts.py tests/test_text_entity_detection.py tests/test_detect_text_entities_cli.py tests/test_llm_responses.py tests/test_logging.py tests/test_documentation.py
-python -m pytest -q --runtime-mode=full
-```
+These tests use mocked Responses results. They verify source-grounded structure and controlled failure behavior, not the semantic quality of an LLM on unseen OCR.
 
 ## Document text clustering
 
-`tests/test_text_entity_clustering.py` tests weighted canonical/alias fuzzy
-candidates, thresholds/weights/aggregation, OCR/Unicode/initial/reordered names,
-contextual homonym splits, strict typed request-local partitions, missing/extra/
-duplicate/noninteger/empty memberships, unsupported names, singleton fallback,
-transport/exhaustion atomicity, deterministic ordering, reruns/new mentions,
-protected manual/pre-linked clusters, conflicting IDs and invalid prior groups.
-It verifies exact object/source-span preservation and image/face retention. Real
-ALTO/PAGE fixtures pass through detection then clustering via `DocumentParser`,
-with mocked Responses and no app, image loading or GPU inference. Shared prompt
-tests include the new inheritor and generated Pydantic schema. Run:
+`tests/test_text_entity_clustering.py` verifies name/alias fuzzy candidates, thresholds, contextual homonym separation and request-local complete partitions. It also checks strict response membership, singleton behavior, deterministic order, protected/pre-linked clusters, staged failure atomicity and preservation of original mentions/source spans. ALTO/PAGE integration uses mocked model output, with no app or GPU inference.
 
 ```bash
-python -m pytest -q tests/test_text_entity_clustering.py tests/test_text_entity_detection.py tests/test_llm_prompts.py tests/test_llm_responses.py tests/test_documentation.py
-python -m pytest -q --runtime-mode=full
-python -m build --no-isolation
-python -m pip check
-python -m compileall -q people_gator processing_api user_scripts
+python -m pytest -q tests/test_text_entity_clustering.py tests/test_text_entity_detection.py
 ```
 
-RapidFuzz is declared only in processing extras (`tool` and `full`); packaging
-checks continue to exercise dependency-free base/client boundaries. Mocked
-resolution tests do not establish model accuracy or factual summary quality on
-real OCR. Python 3.10 syntax is checked independently of runtime availability.
+RapidFuzz is a processing-extra dependency; client/base installs remain free of it.
 
 ## Face assignment with text evidence
 
-Batch ordering regressions in `tests/test_face_assignment_text_entities.py`
-use unequal-width boxes that reverse under the old sort key, equal horizontal
-centers, reversed input order and zero/one-face inputs in all three batch modes.
-They check original region references, rendered face descriptors, IDs, relative
-coordinates, marker colors and shuffled result-to-region mapping. Synthetic
-images also verify context cropping and preservation of the original page.
-
-`tests/test_face_assignment_text_entities.py` checks exact caption-only and
-three-section fallback data; original caption-line association and conservative
-text-only matching; Unicode, multiline/legacy spans and repeated IDs; local/page
-overlap; page-only and off-page-only candidates; cluster membership, aliases,
-whole-cluster on-page exclusion and unclustered homonyms. Real request preparation
-in both assignment engines and all batch modes checks crops, face descriptors,
-per-image correspondence, empty OCR/stages, null decisions and unchanged source
-annotations. Review regressions cover preservation of previously named identities
-and authority IDs on null, empty, spaces-only, control-whitespace and Unicode-
-whitespace normalized-name predictions in every execution mode. Mixed batch
-outcomes also verify nonblank names still update exactly as returned, including
-surrounding whitespace. Captions sharing one OCR line are separated
-by exact character spans (including legacy mentions); missing, paraphrased or
-ambiguous titles with usable references remain fallback evidence. Empty, foreign,
-stale and untranscribed references try conservative title/evidence matching while
-preserving repeated-title ambiguity. Direct page preparation and processing tests
-cover later-page source indices with/without the document in both engines and
-all batch modes, for caption and surrounding evidence, mixed legacy mappings,
-unknown indices and conflicting standalone provenance. Noncontiguous caption
-references are reconstructed in OCR reading order with original offsets, including
-legacy/multiline names, shared lines, dehyphenation and repeated-title ambiguity.
-The historical external JSON/Jinja migration fragment, retained only as a
-test fixture under `tests/resources/face_assignment/`, is rendered through the
-shared prompter with populated and empty sections and unchanged
-Pydantic provider schemas. No model, database or GPU inference is required.
+`tests/test_face_assignment_text_entities.py` covers sorting and request/result correspondence across single and batch modes; image crops and coordinates; caption-first evidence and surrounding/page/document fallbacks; Unicode, multiline/legacy provenance, homonyms and repeated IDs. Regressions ensure ambiguous or blank predictions do not erase protected identities, and that face/text association remains source-grounded. The historical face prompt fragment is retained as a test fixture, not a production prompt.
 
 ```bash
-python -m pytest -q tests/test_face_assignment_text_entities.py tests/test_llm_prompts.py tests/test_logging.py tests/test_documentation.py
-python -m pytest -q --runtime-mode=full
-python -m pip check
+python -m pytest -q tests/test_face_assignment_text_entities.py
 ```
-
 
 ## Document-wide entity matching
 
-`tests/test_entity_matching.py` uses real synthetic two-page ALTO/PAGE layouts,
-source spans, prebuilt clusters and face metadata, with mocked app/LLM operations.
-It covers text-only, face-only, mixed and empty inputs; caption reconciliation and
-homonyms; aliases and hydrated details; explicit strict decisions; zero, single,
-multiple, malformed and non-person candidates; protected/conflicting IDs; metadata
-preservation and nonblank unique local tags; repeat processing, search-index lag,
-partial failures, uncertain-create receipts and replay after propagation failure.
-`DocumentParser` tests retain the existing engine key and optional `[DB_API]` with
-no step-5 stage. XML checks verify existing output remains writable while full
-text persistence remains step 7. The configured
-`resources/prompts/entity_matching.json` example is rendered and validated against
-the shared generated response schema.
+`tests/test_entity_matching.py` covers text-only, face-only and mixed identities; hydrated app candidates; strict select/create/unresolved decisions; caption reconciliation; protected IDs, metadata and source preservation; retries and uncertain-creation receipts.
+
+`tests/test_entity_matching_failures.py` covers recoverable per-unit app/LLM failures, safe diagnostic reasons, continuing later units, interruption propagation and final face prompt/output preservation. Explicit source descriptions remain **LLM evidence**, not deterministic Python equality checks.
 
 ```bash
-python -m pytest -q tests/test_entity_matching.py tests/test_text_entity_clustering.py tests/test_text_entity_detection.py tests/test_face_assignment_text_entities.py tests/test_llm_prompts.py tests/test_logging.py tests/test_documentation.py
-python -m pytest -q --runtime-mode=full
-python -m pip check
-python -m compileall -q people_gator processing_api user_scripts
+python -m pytest -q tests/test_entity_matching.py tests/test_entity_matching_failures.py
 ```
 
-`tests/test_entity_matching_failures.py` covers a bad decision at unit 12 with a
-single candidate, safe distinct validation reasons, preserved protected/earlier
-IDs and successful later units. It exercises search/details/create exceptions and
-invalid payloads, exhausted LLM requests/responses, Pydantic payload privacy,
-uncertain-create receipts and retry skips, safe HTTP status handling, summary
-counts and interrupt propagation. A focused regression forces face-interaction
-storage errors after successful and failed LLM calls and requires the original
-storage exception to propagate without processing later units. Real `parse_folder.main()`/`DocumentParser`
-execution with a synthetic document and mocked provider/app operations verifies
-failed face interactions survive to final per-face JSON alongside PAGE XML,
-original-ALTO enrichment and rendered images. PAGE fixtures use PAGE output due
-to the documented unrelated source-less face ALTO namespace limitation.
-
-```bash
-python -m pytest -q tests/test_entity_matching_failures.py tests/test_entity_matching.py tests/test_face_prompts.py tests/test_logging.py tests/test_documentation.py
-```
-
-No live app/model, private OCR or GPU is needed. Mocked decisions prove structural,
-reference and propagation checks, not semantic identity accuracy for a real corpus.
-Regression cases keep description content as LLM input: explicit select/create/
-unresolved outcomes are honored with equal, different, multiline or absent app
-descriptions, without deterministic quotation rules. Equivalent duplicate app
-records can be selected without database merging. Schema/reference checks still
-reject malformed actions, invalid indices/names/types and unsupported legacy
-`evidence` response fields before any unintended creation.
+Mocked decisions establish correctness of linking structure and error isolation, not identity accuracy or app database deduplication.
 
 ## Linked text-mention app export
 
-`tests/test_text_mention_export.py` uses synthetic multi-page documents and a
-mocked shared connector. It checks one request per occurrence (including repeated
-names and identities across pages), exact Unicode/whitespace/context mapping,
-registered page source UUIDs, missing identities/invalid IDs/blank names, unchanged
-source spans and no entity creation. Text-only, mixed, face-only and empty pages
-retain face/image/layout operations and document/page lookup/creation sequencing.
-
-Service cases check HTTP 201, supported payload fields, automatic links, optional
-response models, non-success status, invalid JSON/shape/IDs and connector errors.
-Export isolates failed mentions so later occurrences and artifacts continue.
-Parser entry-point and repeated-export regressions retain every occurrence and
-the existing face-only annotation deletion behavior. No live database, LLM or
-GPU is needed; tests skip explicitly in client mode. Run:
+`tests/test_text_mention_export.py` verifies one request per eligible occurrence, source IDs, exact OCR/name/context mapping, skipped invalid links, partial failures, face-only/text-only documents and preserved document state. Connector tests cover HTTP/response shape and errors; repeated export regressions preserve the known possibility of duplicates.
 
 ```bash
-python -m pytest -q tests/test_text_mention_export.py tests/test_logging.py tests/test_entity_matching.py tests/test_documentation.py
-python -m pytest -q --runtime-mode=full
-python -m pip check
+python -m pytest -q tests/test_text_mention_export.py
 ```
 
-These checks do not establish live app compatibility or duplicate-free reruns.
-Current API provenance, import and deletion limits are documented in
-[Output formats](OUTPUT_FORMATS.md#peoplegatorapp-text-mention-export).
+Live app compatibility, idempotency and import are not established by mocked tests. See [PeopleGatorApp text-mention export](OUTPUT_FORMATS.md#peoplegatorapp-text-mention-export).
 
 ## Configured prompt resources
 
-`tests/test_prompt_resources.py` validates all five populated JSON resources and
-`resources/config.example.ini`. It checks shared-engine loading and Jinja input
-placeholders and renders the detection prompt with its generated response model. Factory/CLI regressions select repository and alternate external prompts
-only through INI paths, exercise relative/absolute paths from a different working
-directory without a resources tree, reject missing/invalid configured paths,
-and retain section insertion order. The parse-folder CLI uses synthetic OCR and
-mocked Responses; no model, app service or GPU is needed.
+`tests/test_prompt_resources.py` validates the five repository prompt JSON files and `resources/config.example.ini`, including Jinja inputs and schema compatibility. It exercises external prompt selection and relative/absolute paths without implicit resource discovery, plus representative detector, clustering, assignment and matching contexts.
 
 ```bash
-python -m pytest -q tests/test_prompt_resources.py tests/test_llm_prompts.py tests/test_text_entity_detection.py tests/test_text_entity_clustering.py tests/test_face_assignment_text_entities.py tests/test_entity_matching.py tests/test_detect_text_entities_cli.py tests/test_documentation.py
-python -m pytest -q --runtime-mode=full
+python -m pytest -q tests/test_prompt_resources.py tests/test_llm_prompts.py
 ```
 
-All five prompt resources are populated and audited against the current engine
-contracts; no implicit runtime discovery or fallback default exists. The
-historical incomplete face migration fragment remains a separate test fixture.
-The shipped face templates render caption entities or the three fallback lists
-and consume all supplied keys without missing/unused warnings.
-
-Resource regressions require exact Jinja variable sets, render Unicode and nested
-OCR provenance, and check both face branches with absent captions, empty
-collections, overlapping local/page records and off-page provisional clusters or
-unclustered mentions. Real single/batch request preparation checks the appended
-image count/order and generated schemas in every execution mode. The horizontal
-center ordering cases now render the shipped batch resource, preserving IDs,
-coordinates and colors. Shared missing/unused diagnostics remain covered for
-replacement prompts.
-
-Detection tests run the shipped template through mocked Responses and source
-mapping, retaining `info` as a mention description and accepting empty results.
-Clustering tests preserve the pre-serialized JSON string, request-local partition
-indices and original member references. Matching tests render structured source
-evidence and hydrated candidates through typed select/create/unresolved outcomes,
-including equivalent duplicate records and empty optional fields. These tests
-verify instructions, request/response shapes and consumers; mocked outputs do
-not establish model extraction, summary or identification accuracy.
-
+Prompt tests validate wiring, schemas and evidence boundaries, not factual quality of generated answers.
 
 ## Face prompt/response diagnostics
 
-`tests/test_face_prompts.py` uses mocked Responses and synthetic multi-page faces
-to verify independent metadata lists, role-marked rendered text, untouched raw
-responses, malformed/schema/transport/status failures and retries, and unchanged
-return/exception behavior. Public-interface regressions exercise caller-owned
-collections, repeated/omitted calls, preservation of pre-existing records, empty
-parallel input, ordered mixed success/failure groups and raising assignment
-calls. Single assignment and all three batch modes retain
-request-to-face association, ordering and independent record dictionaries. A
-POSIX process-pool smoke test checks worker records reach the parent document.
-Matching tests cover a shared multi-face unit, text-only and protected/unrelated
-units, earlier records and failures. Export tests check every face, empty lists,
-Unicode, repeated/missing/unsafe IDs, stable collision-safe names, CLI/INI
-precedence and disabled/resumed output. XML comparisons ignore writer timestamps;
-face mappings and complete checkpoint round-trips preserve existing contracts.
-Legacy-checkpoint tests restore missing face prompt lists at the validated loading
-boundary, preserve existing lists and aliases, exercise null metadata and export,
-and verify that low-level Pickle round-trips leave the stored graph untouched.
+`tests/test_face_prompts.py` verifies independent per-face interaction lists, exact rendered role text and raw responses (including failures/retries), single/batch and multi-face matching association, ordered parallel results, and optional JSON export for every face. It covers collision-safe filenames, CLI/INI precedence, disabled/resumed output and legacy checkpoint normalization without changing XML/app contracts.
 
 ```bash
-python -m pytest -q tests/test_face_prompts.py tests/test_llm_responses.py tests/test_llm_prompts.py tests/test_face_assignment_text_entities.py tests/test_entity_matching.py tests/test_checkpoints.py tests/test_logging.py tests/test_documentation.py
-python -m pytest -q --runtime-mode=full
+python -m pytest -q tests/test_face_prompts.py tests/test_checkpoints.py
 ```
 
-No live LLM, app service or GPU inference is needed. The real pool smoke test
-requires POSIX `fork`; other platforms retain deterministic inline-pool coverage.
+A real process-pool regression requires POSIX `fork`; other systems use deterministic inline-pool checks.
+
+## Processing checkpoints
+
+`tests/test_checkpoints.py` tests complete Pickle/document-graph fidelity, ALTO/PAGE and inherited OCR metadata, resource/input integrity, trusted loading, exact and legacy restore behavior, CLI precedence, stage-by-stage resume and app replay fencing. It also tests interruption-safe publication, JSON diagnostics and key-based credential redaction without filtering legitimate document data.
+
+```bash
+python -m pytest -q tests/test_checkpoints.py
+```
+
+Run with processing extras; tests mock LLM/app operations. The supported checkpoint format, privacy requirements and conservative recovery limitations are defined in [Processing checkpoints and recovery](CHECKPOINTS.md).
