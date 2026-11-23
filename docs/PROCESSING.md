@@ -268,35 +268,9 @@ These parameters are needed for the authenticated connection; the code does not 
 
 ### Linked text-mention export
 
-`export_document()` (also used by `export_to_app` / `--export-to-app`) sends
-every eligible occurrence in each page's `text_entities` after registering the
-app page. It works with text-only, mixed and face-only documents; no new engine
-or configuration is required. It does not create or resolve person entities:
-run `ENTITY_MATCHING` first or supply previously linked mentions.
+After `ENTITY_MATCHING` (or with already-linked mentions), `export_document()` sends each eligible text occurrence through `DatabaseApiService.create_text_mention()` when app export is enabled. This uses the existing authenticated connector and page registration; it adds no engine or configuration. Unlinked or invalid occurrences are skipped, and individual failed sends do not prevent later occurrences or page/face exports. Reruns can create duplicates, because this interface does not supply occurrence IDs or delete existing text mentions.
 
-`DatabaseApiService.create_text_mention()` posts one occurrence through the shared
-authenticated connector to `/api/v1/text-mentions`, expecting HTTP 201. Fields
-are the original `mention.name` as `name`, `mention.text` as `context` (None for
-missing/empty context), the resolved `page_identity.identity.peoplegator_id` as
-`entity_id`, and the registered `db_page['source_id']` as `source_id`, never an
-archive page ID. The new row uses `entity_link_state=automatic`, matching face
-export semantics; the in-memory model cannot certify manual verification.
-
-Missing identity wrappers/IDs, non-UUID entity IDs and missing/non-string/blank
-recorded names are skipped with a warning count. Non-success HTTP status,
-malformed response fields or optional response-model failure return None;
-invalid JSON and connector errors propagate from the service, following its
-existing conventions. Export catches each mention failure, logs only counts or
-exception types and continues with other mentions, faces and page artifacts.
-
-Repeated names remain distinct occurrences. Re-export can append duplicate rows,
-including with `drop_existing_annotations=True`: that existing option deletes
-faces only and does not replace stored text mentions. The current app create
-schema has no external occurrence ID or OCR-offset/source-span fields, so this
-export performs no deduplication or reconciliation. Original mention data and
-source spans remain unchanged in memory. Unlinked mention persistence, text
-import, cluster persistence and ALTO/PAGE text serialization remain separate
-work under #33. See [output limitations](OUTPUT_FORMATS.md#peoplegatorapp-text-mention-export).
+The authoritative [app payload, eligibility and retry limitations](OUTPUT_FORMATS.md#peoplegatorapp-text-mention-export) are documented with other output contracts.
 
 ## Processing script
 
@@ -334,45 +308,9 @@ Supported keys are `INPUT_IMAGE_PATH`, `INPUT_ALTO_PATH`, `INPUT_XML_PATH`, `INP
 
 The script can therefore run with just `--config ./config.ini` when the remaining processing paths and options are defined in that file.
 
-`OUTPUT_FACE_PROMPTS_PATH = ./output/face-prompts` enables separate face diagnostics
-at the final output stage. `--output-face-prompts-path DIR` overrides it; an empty
-CLI value disables it. The directory resolves from the working directory and is
-created automatically. Each face receives a file, including faces with no LLM
-attempts. See [the JSON contract and filenames](OUTPUT_FORMATS.md#face-llm-diagnostics).
+`OUTPUT_FACE_PROMPTS_PATH = ./output/face-prompts` enables one final JSON diagnostic file per face; the CLI override may relocate or disable it. Face-associated LLM requests (including failed application-level attempts and retries) retain rendered text and raw responses in metadata; unassociated text-only requests do not. The shared prompter accepts an optional caller-owned `interactions` list and does not keep mutable capture state. `LLMPrompter.process()` and `__call__()` append attempt dictionaries directly; `process_parallel()` appends one attempt list per input request in input order. Existing entries are preserved, and recorded attempts remain available when a request fails or raises. See [Face LLM diagnostics](OUTPUT_FORMATS.md#face-llm-diagnostics) for the JSON schema, naming, retention and checkpoint behavior.
 
-Face metadata retains chronological `prompts` records for single assignment,
-every batch mode, and entity-matching decisions involving that face. Records
-contain the engine method, actual rendered text with `[system]`/`[user]` roles,
-and raw response text before parsing/validation. Image payloads and configured
-credentials are excluded. Every observable application request attempt is retained,
-including malformed responses and retries; no response is represented by `null`.
-Provider SDK internal retries are not separately observable. Batch records are
-copied to every included face; text-only decisions have no face association.
-Face-related callers pass a local `interactions` output list to
-`LLMPrompter.process()` (also available through `__call__`) or
-`process_parallel()`. Single requests append attempt dictionaries directly;
-parallel calls append one attempt list per input request in input order. Both
-interfaces preserve existing collection entries and their normal return values.
-Callers append engine-labeled records to the participating faces in `finally`
-blocks, retaining attempts when a request raises. Text-only callers omit the
-collection. The prompter holds no mutable interaction state.
-Collection does not change the existing request, result or retry behavior.
-
-`PROCESSING_CHECKPOINTS = ./processing-checkpoints` is an optional additional
-`[PARSE_FOLDER]` key. The CLI value takes precedence, including an empty string;
-when both are absent/empty no checkpoints are created. Like other document paths,
-the directory resolves from the process working directory. No checkpoint section
-or engine is added. See [checkpoint configuration and recovery](CHECKPOINTS.md)
-for the versioned JSON metadata + Pickle document contract, inherited-model audit, required
-current credentials, compatible path relocation and conservative app replay guards.
-JSON configuration snapshots redact recognized credential options by key only;
-checkpointing does not scan values or document content for credential strings.
-The authoritative Pickle snapshot retains complete document content.
-PeopleGator software-version differences warn with both saved/current versions and
-attempt recovery; exact Python/dependency versions or source hashes are not required.
-Engine checkpoints precede app/XML/render and face-prompt exports. Keep the original run ledger
-and inputs accessible; uncertain app creates and repeated app exports require
-manual reconciliation. Local output can be retried from the last engine snapshot.
+`PROCESSING_CHECKPOINTS = ./processing-checkpoints` is an optional `[PARSE_FOLDER]` setting; the CLI override takes precedence, including an empty string to disable snapshots. Like other document paths, the directory resolves from the working directory. Consult [Processing checkpoints](CHECKPOINTS.md) for publication, security, trusted restoration, relocation and app replay safeguards. Engine checkpoints precede final app and file exports.
 
 ### Example
 

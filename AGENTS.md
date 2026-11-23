@@ -1,24 +1,17 @@
 # Agent instructions
 
-Before changing code, read [README.md](README.md), the applicable guide in `docs/`, the complete GitHub issue, affected callers and existing tests. Base new work on the latest `origin/develop` and open pull requests against protected `develop`.
+Before changing code or documentation, read [README.md](README.md), the applicable guide in `docs/`, the complete GitHub issue, affected callers and existing tests. Base new work on the latest `origin/develop` and open pull requests against protected `develop`.
 
 ## Preparing issues
 
-For a new feature, bug or maintenance request, follow [Creating GitHub issues](docs/ISSUE_WORKFLOW.md). Turn the user's plain-language description into a clear, testable issue by inspecting related issues/PRs, docs and affected source code. Ask focused questions for material missing decisions; otherwise draft the full issue with scope, acceptance criteria and a validation plan. Reuse an existing relevant issue when possible. Publish a new issue after the user approves the draft, or immediately when explicitly instructed to create it.
+For a new feature, bug or maintenance request, follow [Creating GitHub issues](docs/ISSUE_WORKFLOW.md). Inspect related issues/PRs, documentation, affected source and tests before writing requirements. Ask the requester about material decisions that are not established; **do not guess behavior, defaults or contracts**. If explicitly asked to publish an issue with unresolved material decisions, use a `[Draft]` title and list the open questions rather than presenting it as implementation-ready. Otherwise resolve those decisions first. Reuse an existing relevant issue where possible, and publish a ready issue after approval or when explicitly instructed.
 
 ## Isolated implementation workspace (Codex CLI)
 
-For a request consisting only of **`Implement LIBCAS/PeopleGator issue #N`**, carry out the entire [temporary-clone workflow](docs/AGENT_TEMP_CLONES.md) automatically. The user must not need to supply workspace, branch or cleanup instructions. This rule applies to implementation and PR revisions, not read-only reviews or preparing issues.
+For **`Implement LIBCAS/PeopleGator issue #N`**, automatically follow the [agent-owned temporary-clone workflow](docs/AGENT_TEMP_CLONES.md); the requester does not need to provide workspace instructions. The same policy applies to PR revisions, not read-only reviews or issue preparation.
 
-1. Treat the checkout where Codex was started as **read-only**. Read its instructions, verify the official `LIBCAS/PeopleGator` remote and the issue/PR, and do not switch branches or modify files there.
-2. Create a **unique, agent-owned OS temporary directory** (for example with Python `tempfile.mkdtemp()`) and clone the **remote repository**, never the potentially dirty local checkout. Fetch the latest `origin/develop`. For new implementation, create `issue/<number>-short-description` from it; for PR updates, check out the existing remote issue branch. Do not use Git worktrees.
-3. Perform **all edits, dependency installs, tests, Git operations and PR preparation within the temporary clone**. Set the working directory explicitly for each tool invocation; a shell `cd` may not persist. Never touch another agent's clone. Keep the existing development/PR workflow below.
-4. After a successful push and PR creation/update, verify a clean clone, no unpushed commits, the correct remote branch/PR target, and the exact agent-owned directory before deleting **only that temporary clone**. If any work is uncommitted/unpushed or the handoff fails, preserve it and report its path and the blocker. For review changes, use a fresh clone of the existing remote issue branch.
-5. If the sandbox prevents modifying the temporary clone or Git metadata, or blocks network operations, request **narrowly scoped approval** or report the blocker. Do not fall back to editing the primary checkout or disabling the sandbox globally.
+**Never modify the original checkout or another agent's workspace.** Verify the official remote, create a unique temporary clone of it, and use the latest `origin/develop` for new implementation or the existing remote PR branch for revisions. Perform all edits, installs, tests and Git operations inside that clone; do not use worktrees or fall back to the original checkout on permission failure. After pushing and handing off a PR against `develop`, remove **only** the agent-owned clone, and only after confirming clean, pushed state and a safe path. Otherwise preserve it and report the blocker. The linked guide contains the detailed portable setup, checks and cleanup gates.
 
-See [Temporary clones for coding agents](docs/AGENT_TEMP_CLONES.md) for portable setup, verification, review and cleanup instructions.
-
-## Read before editing
 
 - [Architecture](docs/ARCHITECTURE.md): module ownership and end-to-end job flow.
 - [Processing](docs/PROCESSING.md): input, engine order and person-occurrence lifecycle.
@@ -28,10 +21,19 @@ See [Temporary clones for coding agents](docs/AGENT_TEMP_CLONES.md) for portable
 
 ## Before implementation
 
-1. Read the **entire issue, comments, linked issues/PRs and dependencies**. Check that the goal, scope and acceptance criteria are clear. Resolve material questions with the requester and update the issue before coding; a `[Draft]` issue with open decisions needs refinement first.
-2. Inspect affected code, callers, configuration, output formats and available tests. Distinguish current behavior from planned functionality. Follow established interfaces, especially ALTO/PAGE XML and PeopleGatorApp identity contracts.
-3. Make a short implementation plan mapping **each acceptance criterion** to the intended change and a way to verify it. Keep the implementation inside the approved scope and raise newly discovered requirements separately.
+1. Read the **entire issue, comments, linked issues/PRs and dependencies**. An issue without a `[Draft]` prefix is not proof that every decision was made. If behavior, scope, defaults, validation/error handling, compatibility, persisted data or a public/API contract is materially unclear, **stop the affected work, ask the requester, and update the issue and plan with the decision before implementing it**. Do not invent a plausible requirement. Do not ask about details already settled by the issue, existing code, documentation or conventions.
+2. Inspect affected code, existing model methods and utilities, callers, configuration, output formats and available tests. Distinguish current behavior from planned functionality. Follow established interfaces, especially ALTO/PAGE XML and PeopleGatorApp identity contracts.
+3. Make a short implementation plan mapping **each acceptance criterion** to the smallest necessary change and a way to verify it. Keep implementation inside the approved scope and raise newly discovered requirements separately.
 4. Check which development dependencies and tests can actually run. The repository is establishing packaging and a test suite; record any environment blockers rather than assuming checks are available.
+
+## Implementation style and scope
+
+- Prefer the **simplest direct implementation that humans can readily understand**; do not optimize for line count or add abstractions for hypothetical future needs.
+- Before adding a helper, wrapper, model or module, check whether an existing model method, utility or engine already owns the responsibility. Share logic only when its semantics truly agree; keep engine-specific decisions in their engines.
+- Prefer explicit data flow and initialized object invariants. Avoid repeated fallback checks, temporary state, extra context managers, redundant validation and compatibility shims **unless a concrete supported scenario requires them**. Necessary defensive handling and compatibility guarantees must be retained.
+- Make focused edits: no unrelated refactoring, formatting churn, new configuration/dependencies, speculative edge cases or contract changes without approval. Record adjacent findings separately rather than expanding the issue.
+- Remove superseded code, helpers and redundant tests/fixtures when replacing an implementation, while retaining meaningful regression coverage. Keep new tests and documentation proportional to the approved change.
+- Review the final diff and justify any nontrivial new abstraction or layer; explain what behavior and contracts are preserved and what was actually verified.
 
 ## GitHub development workflow
 
@@ -48,4 +50,4 @@ All implementation work follows: **ready issue → branch → implementation and
 
 ## Handoff
 
-Provide the issue and PR links, branch/target, changed behavior/files, **acceptance criteria completed or outstanding**, tests actually run and their results, checks not run (with reasons), documentation changes, temporary-clone cleanup status (or preserved recovery path) and remaining risks/decisions. Link newly discovered work to a separate GitHub issue. Opening a PR requests review; it does not authorize merging.
+Provide the issue and PR links, branch/target, changed behavior/files, **acceptance criteria completed or outstanding**, tests actually run and their results, checks not run (with reasons), documentation changes, justification for any new abstraction, temporary-clone cleanup status (or preserved recovery path) and remaining risks/decisions. Link newly discovered work to a separate GitHub issue. Opening a PR requests review; it does not authorize merging.

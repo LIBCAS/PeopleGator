@@ -6,10 +6,10 @@ PeopleGator is a **Python document-processing tool** for detecting faces on scan
 
 - **Face detection:** detect faces in graphical regions of digitized pages using a configurable YOLO model, recording face coordinates, confidence and facial landmarks.
 - **Person identification:** use page imagery, nearby OCR text and available captions to propose person names with single-face or batch LLM processing.
-- **Text entity clustering:** group source-mapped OCR mentions across a document using fuzzy candidates and externally prompted LLM disambiguation, before app linking. See [configuration and contracts](docs/PROCESSING.md#document-text-entity-clustering-text_entity_clustering).
+- **Text entity detection and clustering:** extract source-mapped OCR mentions and group them across a document using LLM-assisted detection and disambiguation before app linking. See [configuration and contracts](docs/PROCESSING.md#document-text-entity-clustering-text_entity_clustering).
 - **Entity matching:** resolve proposed names against person records through the PeopleGatorApp API and associate detected faces with identities.
 - **Document annotation:** enrich ALTO XML or PAGE XML with face regions, identity references and processing metadata, and optionally generate annotated page previews.
-- **Database integration:** import face records from PeopleGatorApp and export processed document/page/face data using its HTTP API.
+- **Database integration:** import face records from PeopleGatorApp and export document/page/face data and linked text mentions through its HTTP API.
 - **Job processing:** provide a DocAPI-based processing API, worker and CLI client for submitting document jobs and retrieving results.
 - **Optional processing checkpoints:** save per-engine JSON metadata and a complete Pickle document and resume the unfinished pipeline; see [configuration and recovery](docs/CHECKPOINTS.md).
 
@@ -18,11 +18,13 @@ PeopleGator is a **Python document-processing tool** for detecting faces on scan
 ```text
 people_gator/
 ├── core/             # Document models, layouts, XML serialization, app API access
-├── engines/          # Face detection, LLM face assignment, entity matching
+├── engines/          # Face/text processing and entity matching
+├── text/             # OCR chunking and source mappings
 ├── enums/            # Enum definitions
 └── globals.py        # Project metadata and XML namespaces
 processing_api/       # DocAPI processing API, client and worker
-user_scripts/         # Local document-folder processing CLI
+user_scripts/         # Local processing and diagnostic CLIs
+resources/            # Example configuration and prompt templates
 docs/                 # Architecture, processing, output and testing guides
 AGENTS.md             # Instructions for AI-assisted development
 README.md             # Project overview and usage
@@ -32,35 +34,8 @@ The `people_gator/core/layout.py` and `people_gator/core/document_parser.py` mod
 
 ## Architecture overview
 
-The processing path combines client submission, managed worker execution, configurable document analysis and persistence of person occurrences:
+The [architecture guide](docs/ARCHITECTURE.md) explains the DocAPI client/worker flow, the `PeopleGatorDocument` processing pipeline, PeopleGatorApp integration, and the document models. The local CLI can process documents without DocAPI.
 
-```text
-                         PeopleGator Client
-                        (images + ALTO/PAGE)
-                                 |
-                           Processing API
-                              (DocAPI)
-                                 |
-                               Worker
-                                 |
-                   PeopleGator document processing
-                         (Face detection, 
-                        LLM name assignment, 
-                          Entity matching)
-                                 |
-                         PeopleGatorApp API
-                                 |
-                         Person/face database
-                                 |
-                        ALTO/PAGE XML results
-                           via API/client
-```
-
-The local CLI can run the processing pipeline directly. The DocAPI-based API, worker and client provide asynchronous job submission, input transfer and result retrieval. PeopleGatorApp stores processed faces and identities, making them available for subsequent documents and manual review.
-
-See [Architecture](docs/ARCHITECTURE.md) for module boundaries and data flow.
-
-## Documentation
 
 - [AGENTS.md](AGENTS.md) — instructions for Codex and other coding agents.
 - [Creating issues](docs/ISSUE_WORKFLOW.md) — turning a plain-language request into a reviewable GitHub issue.
@@ -69,7 +44,7 @@ See [Architecture](docs/ARCHITECTURE.md) for module boundaries and data flow.
 - [Example pipeline INI](resources/config.example.ini) and [prompt resources](resources/README.md) —
   explicit per-engine prompt paths, including the supplied face and clustering prompts.
 - [Output formats](docs/OUTPUT_FORMATS.md) — XML/app output and current gaps.
-- [Testing](docs/TESTING.md) — planned deterministic test strategy.
+- [Testing](docs/TESTING.md) — test suites, environment modes and validation commands.
 
 ## Related projects
 
