@@ -5,7 +5,7 @@ import logging
 import re
 
 from anno_page.enums.language import Language
-from people_gator.text.chunking import TextChunk, page_text, normalize_ocr
+from people_gator.text.chunking import page_text, normalize_ocr, resolve_mappings, mapping_source_spans
 
 from shapely.geometry import Polygon
 
@@ -184,10 +184,10 @@ def caption_mentions(page, source_region, caption, occurrences):
                      and line.transcription.strip()]
     located, caption_spans = False, ()
     if caption and _comparison(caption):
-        text, mappings, _ = page_text(page, 0, lines=caption_lines or None)
-        chunk = TextChunk(0, text, 0, 0, len(text), tuple(mappings))
+        page_index = next((span.source.page_index for _, sources in occurrences for span, _ in sources), None)
+        text, mappings, _ = page_text(page, page_index, lines=caption_lines or None)
         normalized, offsets = normalize_ocr(text, casefold=False)
-        matches = [chunk.source_spans(offsets[m.start()][0], offsets[m.end() - 1][1])
+        matches = [mapping_source_spans(resolve_mappings(mappings, offsets[m.start()][0], offsets[m.end() - 1][1]))
                    for m in re.finditer(r'(?<!\w)' + re.escape(_comparison(caption)) + r'(?!\w)', normalized)]
         located = bool(matches)
         caption_spans = matches[0] if len(matches) == 1 else ()

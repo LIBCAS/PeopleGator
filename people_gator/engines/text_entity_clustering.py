@@ -183,17 +183,18 @@ class LLMTextEntityClusteringEngine(DocumentProcessingEngine, LLMBasedEngine):
                     'description': m.description, 'context': m.text}
                    for index, m in enumerate(mentions, start=1)]
         try:
-            try:
-                result = self.llm_prompter({'entities': json.dumps(records, ensure_ascii=False)},
-                                           response_model=TextEntityClusteringResult)
-            except (ValidationError, LLMResponseError):
-                raise  # Content failures use the same direct singleton fallback below.
-            except Exception as exc:
-                self.logger.error('Text clustering request failed (%s)', type(exc).__name__)
-                raise RuntimeError('Text clustering failed; check LLM service and request limits') from None
-            if result is None:
-                self.logger.error('Text clustering request exhausted without a result')
-                raise RuntimeError('Text clustering failed; check LLM service and request limits')
+            result = self.llm_prompter({'entities': json.dumps(records, ensure_ascii=False)},
+                                       response_model=TextEntityClusteringResult)
+        except (ValidationError, LLMResponseError):
+            self.logger.warning('Rejected text clustering partition; retaining %d singletons', len(mentions))
+            return [self._singleton(m) for m in mentions]
+        except Exception as exc:
+            self.logger.error('Text clustering request failed (%s)', type(exc).__name__)
+            raise RuntimeError('Text clustering failed; check LLM service and request limits') from None
+        if result is None:
+            self.logger.error('Text clustering request exhausted without a result')
+            raise RuntimeError('Text clustering failed; check LLM service and request limits')
+        try:
             result = TextEntityClusteringResult.model_validate(result)
             indices = [i for c in result.clusters for i in c.entity_indices]
             if sorted(indices) != list(range(1, len(mentions) + 1)):

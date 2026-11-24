@@ -62,6 +62,19 @@ def test_canonical_page_text_filters_original_lines_in_reading_order():
     assert all(m.source.page_index == 7 for m in mappings if m.source)
 
 
+@pytest.mark.parametrize('start,end,expected', [(0, 0, []), (1, 6, [(11, 14), (20, 21)]), (4, 5, [])])
+def test_direct_mapping_span_resolution_matches_chunk_contract(start, end, expected):
+    from people_gator.text.chunking import TextChunk, resolve_mappings, mapping_source_spans
+    a = SourceLine(None, 'repeated', 0, 'r', 0, 'l')
+    b = SourceLine(None, 'repeated', 0, 'r', 1, 'l')
+    mappings = (ChunkMapping(0, 2, a, 10, 12), ChunkMapping(2, 4, a, 12, 14),
+                ChunkMapping(4, 5), ChunkMapping(5, 7, b, 20, 22))
+    direct = mapping_source_spans(resolve_mappings(mappings, start, end))
+    assert direct == TextChunk(9, 'abcd\nef', None, 0, 7, mappings).source_spans(start, end)
+    assert [(span.start, span.end) for span in direct] == expected
+    assert all(span.source.page_index is None for span in direct)
+
+
 @pytest.mark.parametrize("method", ["LINES", "LINE_AWARE"])
 def test_public_contract_and_factory(method):
     chunker = text_chunker_factory({})

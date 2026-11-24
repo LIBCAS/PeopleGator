@@ -878,6 +878,27 @@ class PeopleGatorTextEntityMention:
             resolved.append((span, line))
         return resolved
 
+    def to_evidence_record(self, page, page_index, sources, provenance, cluster=None):
+        """Serialize original mention data and an optional cluster without resolving it again.
+
+        Args:
+            page: Original source page.
+            page_index: Known source index, or None for unknown standalone provenance.
+            sources: Already-resolved source span/line pairs.
+            provenance: Evidence label selected by the calling engine.
+            cluster: Optional owning cluster whose provisional metadata is included.
+
+        Returns:
+            A fresh record, including independent source and optional cluster dictionaries.
+        """
+        record = dict(provenance=provenance, page_index=page_index, page_id=page.id,
+                      name=self.name, context=self.text, proposed_name=self.proposed_name,
+                      description=self.description, source_spans=[span.to_dict() for span, _ in sources])
+        if cluster is not None:
+            record['cluster'] = dict(name=cluster.name, short_description=cluster.short_description,
+                                     description=cluster.description, provisional=True)
+        return record
+
     @property
     def identity_name(self):
         """Return the associated person name."""
@@ -940,7 +961,7 @@ class PeopleGatorPageLayout(AnnoPagePageLayout):
             The known/inferred index and ordered mention/source-pair lists.
             Conflicting mapped indices stay unresolved; legacy lines retain geometry.
         """
-        mentions = list({id(m): m for m in getattr(self, 'text_entities', ())}.values())
+        mentions = list({id(m): m for m in self.text_entities}.values())
         mapped = {}
         if page_index is None:
             indices = set()
@@ -1159,7 +1180,7 @@ class PeopleGatorDocument:
         """Locate original mentions in page order; repeated references use their first page."""
         pages = {}
         for index, page in enumerate(self.page_layouts):
-            for mention in getattr(page, 'text_entities', ()):
+            for mention in page.text_entities:
                 pages.setdefault(id(mention), (index, page))
         return pages
 

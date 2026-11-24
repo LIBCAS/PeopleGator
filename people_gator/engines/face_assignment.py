@@ -4,6 +4,7 @@ import numpy as np
 
 from pydantic import BaseModel, ConfigDict
 from collections import defaultdict
+from copy import deepcopy
 
 from shapely.geometry import Polygon, box
 
@@ -16,28 +17,8 @@ from people_gator.enums import ProcessingMode
 logger = logging.getLogger(__name__)
 
 
-def _mention_record(page, page_index, mention, sources, locality, cluster=None):
-    """Serialize already-resolved source evidence for a face prompt.
-
-    Args:
-        page: Original source page.
-        page_index: Known original index or None.
-        mention: Original mention.
-        sources: Resolved span/line pairs.
-        locality: Caption, surrounding, page or document label.
-        cluster: Optional first owning cluster.
-    """
-    record = dict(provenance=locality, page_index=page_index, page_id=page.id,
-                  name=mention.name, context=mention.text, proposed_name=mention.proposed_name,
-                  description=mention.description, source_spans=[span.to_dict() for span, _ in sources])
-    if cluster is not None:
-        record['cluster'] = dict(name=cluster.name, short_description=cluster.short_description,
-                                 description=cluster.description, provisional=True)
-    return record
-
-
 def select_entity_context(page, source_region, context_bbox, caption_text, document=None):
-    """Build caption-first or surrounding/page/off-page evidence for face requests.
+    """Build evidence for one selection using the same preparation as face batches.
 
     Args:
         page: Original page containing the face.
@@ -46,24 +27,24 @@ def select_entity_context(page, source_region, context_bbox, caption_text, docum
         caption_text: Assigned title or None.
         document: Original document, or None for standalone page processing.
     """
-    page_index = next(i for i, p in enumerate(document.page_layouts) if p is page) if document is not None else None
-    page_index, occurrences = page.resolve_text_entities(page_index)
-    membership = document.text_entity_membership() if document is not None else {}
-    captions = caption_mentions(page, source_region, caption_text, occurrences)
-    result = {key: [] for key in ('caption_entities', 'surrounding_entities', 'page_entities', 'document_entities')}
-    result['caption_entities'] = [_mention_record(page, page_index, m, sources, 'caption', membership.get(id(m)))
-                                  for m, sources in captions]
-    if captions:
-        return result
-    crop = box(*context_bbox)
-    for mention, sources in occurrences:
-        cluster = membership.get(id(mention))
-        result['page_entities'].append(_mention_record(page, page_index, mention, sources, 'page', cluster))
-        if any(Polygon(line.polygon).intersection(crop).area > 0 for _, line in sources):
-            result['surrounding_entities'].append(_mention_record(page, page_index, mention, sources, 'surrounding', cluster))
+    return select_entity_contexts(page, [(source_region, context_bbox, caption_text)], document)[0]
+
+
+def _off_page_entities(page, document, membership, occurrences):
+    """Group off-page evidence once, preserving encounter order and on-page exclusion.
+
+    Args:
+        page: Current page excluded from document evidence.
+        document: Original document, or None for standalone processing.
+        membership: First owning cluster keyed by mention identity.
+        occurrences: Current page's resolved original mentions.
+    """
+    if document is None:
+        return []
+    result = []
     on_page = {id(membership[id(m)]) for m, _ in occurrences if id(m) in membership}
     seen, groups = set(), {}
-    for pi, other_page in enumerate(document.page_layouts if document is not None else [page]):
+    for pi, other_page in enumerate(document.page_layouts):
         if other_page is page:
             continue
         _, other_occurrences = other_page.resolve_text_entities(pi)
@@ -74,20 +55,67 @@ def select_entity_context(page, source_region, context_bbox, caption_text, docum
             cluster = membership.get(id(mention))
             if cluster is not None and id(cluster) in on_page:
                 continue
-            record = _mention_record(other_page, pi, mention, sources, 'document')
+            record = mention.to_evidence_record(other_page, pi, sources, 'document')
             if cluster is None:
-                result['document_entities'].append(record)
+                result.append(record)
             else:
                 if id(cluster) not in groups:
                     group = dict(provenance='document', provisional=True, name=cluster.name,
                                  description=cluster.description, short_description=cluster.short_description,
                                  aliases=[], sources=[])
                     groups[id(cluster)] = group
-                    result['document_entities'].append(group)
+                    result.append(group)
                 groups[id(cluster)]['sources'].append(record)
     for group in groups.values():
         group['aliases'] = list(dict.fromkeys(record['name'] for record in group['sources']))
     return result
+
+
+def select_entity_contexts(page, selections, document=None):
+    """Prepare independent face payloads, reusing invariant sources within this call.
+
+    Args:
+        page: Original page containing the requests.
+        selections: Ordered (source region, crop bounds, caption text) tuples.
+        document: Original document, or None for standalone page processing.
+
+    Returns:
+        Ordered independent payloads. Caption-only requests do not resolve other
+        pages. Reuse ends when this function returns, before any model decisions.
+    """
+    if not selections:
+        return []
+    page_index = next(i for i, p in enumerate(document.page_layouts) if p is page) if document is not None else None
+    page_index, occurrences = page.resolve_text_entities(page_index)
+    membership = document.text_entity_membership() if document is not None else {}
+    captions_by_source, selected = {}, {}
+    document_entities = None
+    results = []
+    for source_region, context_bbox, caption_text in selections:
+        selection_key = (id(source_region), tuple(context_bbox), caption_text)
+        if selection_key in selected:
+            results.append(deepcopy(selected[selection_key]))
+            continue
+        caption_key = (id(source_region), caption_text)
+        if caption_key not in captions_by_source:
+            captions_by_source[caption_key] = caption_mentions(page, source_region, caption_text, occurrences)
+        captions = captions_by_source[caption_key]
+        result = {key: [] for key in ('caption_entities', 'surrounding_entities', 'page_entities', 'document_entities')}
+        result['caption_entities'] = [m.to_evidence_record(page, page_index, sources, 'caption', membership.get(id(m)))
+                                      for m, sources in captions]
+        if not captions:
+            crop = box(*context_bbox)
+            for mention, sources in occurrences:
+                cluster = membership.get(id(mention))
+                result['page_entities'].append(mention.to_evidence_record(page, page_index, sources, 'page', cluster))
+                if any(Polygon(line.polygon).intersection(crop).area > 0 for _, line in sources):
+                    result['surrounding_entities'].append(mention.to_evidence_record(page, page_index, sources, 'surrounding', cluster))
+            if document_entities is None:
+                document_entities = _off_page_entities(page, document, membership, occurrences)
+            result['document_entities'] = deepcopy(document_entities)
+        selected[selection_key] = result
+        results.append(result)
+    return results
 
 
 def _page_offsets(page, vertical, horizontal):
@@ -272,6 +300,7 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
             Request objects in face or source-region order.
         """
         face_data = []
+        selections = []
         faces = page_layout.faces
         if not faces:
             return face_data
@@ -287,9 +316,11 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
             caption_text = assigned_caption(source_region)
             face_data.append(FaceAssignmentData(
                 face_region=region, face_image=face_image, face_coordinates=face_coordinates,
-                context_image=context_image, context_text=context_text, caption_text=caption_text,
-                entity_context=select_entity_context(page_layout, source_region, context_bbox, caption_text, document)))
+                context_image=context_image, context_text=context_text, caption_text=caption_text))
+            selections.append((source_region, context_bbox, caption_text))
 
+        for item, context in zip(face_data, select_entity_contexts(page_layout, selections, document)):
+            item.entity_context = context
         return face_data
 
     def update_layout(self, page_layout, face_data: list[FaceAssignmentData]):
@@ -511,6 +542,7 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
             Request objects in face or source-region order.
         """
         face_data = []
+        selections = []
 
         source_regions_mapping = defaultdict(list)
         for region in page_layout.faces:
@@ -554,13 +586,14 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                 context_image=context_image,
                 faces=faces,
                 face_regions=sorted_face_regions,
-                result=None,
-                entity_context=select_entity_context(
-                    page_layout, source_region, context_bbox, caption_text, document)
+                result=None
             )
 
             face_data.append(face_item)
+            selections.append((source_region, context_bbox, caption_text))
 
+        for item, context in zip(face_data, select_entity_contexts(page_layout, selections, document)):
+            item.entity_context = context
         return face_data
 
     def update_layout(self, face_data: list[BatchFaceAssignmentData]):

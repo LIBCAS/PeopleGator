@@ -156,14 +156,8 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                 if id(mention) not in pages:
                     continue
                 index, page = pages[id(mention)]
-                record = dict(provenance='text', page_index=index, page_id=page.id,
-                              name=mention.name, context=mention.text, proposed_name=mention.proposed_name,
-                              description=mention.description,
-                              source_spans=[span.to_dict() for span, _ in mention.resolve_sources(page, index)])
-                owner = membership.get(id(mention))
-                if owner is not None:
-                    record['cluster'] = dict(name=owner.name, short_description=owner.short_description,
-                                             description=owner.description, provisional=True)
+                record = mention.to_evidence_record(page, index, mention.resolve_sources(page, index),
+                                                    'text', membership.get(id(mention)))
                 sources.append(record)
         return {'name': names[0] if names else '', 'aliases': names[1:],
                 'short_description': next((_text(c.short_description) for c in unit.clusters

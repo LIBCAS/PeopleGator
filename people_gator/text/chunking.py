@@ -89,15 +89,7 @@ class TextChunk:
         if (type(start) is not int or type(end) is not int
                 or not 0 <= start <= end <= len(self.text)):
             raise ValueError("Expected integer offsets 0 <= start <= end <= len(chunk.text)")
-        result = []
-        for item in self.mappings:
-            left, right = max(start, item.start), min(end, item.end)
-            if left >= right:
-                continue
-            line_start = None if item.source is None else item.line_start + left - item.start
-            line_end = None if item.source is None else line_start + right - left
-            result.append(ChunkMapping(left, right, item.source, line_start, line_end))
-        return tuple(result)
+        return resolve_mappings(self.mappings, start, end)
 
     def source_spans(self, start: int, end: int) -> tuple[SourceSpan, ...]:
         """Return normalized OCR keys for a substring, excluding separators.
@@ -106,15 +98,43 @@ class TextChunk:
             start: Inclusive chunk character offset.
             end: Exclusive chunk character offset.
         """
-        spans = []
-        for item in self.resolve(start, end):
-            if item.source is None:
-                continue
-            span = SourceSpan(item.source, item.line_start, item.line_end)
-            if spans and spans[-1].source == span.source and spans[-1].end == span.start:
-                span = SourceSpan(span.source, spans.pop().start, span.end)
-            spans.append(span)
-        return tuple(spans)
+        return mapping_source_spans(self.resolve(start, end))
+
+
+def resolve_mappings(mappings, start, end):
+    """Clip mapped intervals while retaining synthetic separators and OCR offsets.
+
+    Args:
+        mappings: Ordered mappings for the canonical text.
+        start: Validated inclusive text offset.
+        end: Validated exclusive text offset.
+    """
+    result = []
+    for item in mappings:
+        left, right = max(start, item.start), min(end, item.end)
+        if left >= right:
+            continue
+        line_start = None if item.source is None else item.line_start + left - item.start
+        line_end = None if item.source is None else line_start + right - left
+        result.append(ChunkMapping(left, right, item.source, line_start, line_end))
+    return tuple(result)
+
+
+def mapping_source_spans(mappings):
+    """Convert resolved mappings to OCR spans, merging contiguous same-line pieces.
+
+    Args:
+        mappings: Clipped source mappings, possibly including synthetic separators.
+    """
+    spans = []
+    for item in mappings:
+        if item.source is None:
+            continue
+        span = SourceSpan(item.source, item.line_start, item.line_end)
+        if spans and spans[-1].source == span.source and spans[-1].end == span.start:
+            span = SourceSpan(span.source, spans.pop().start, span.end)
+        spans.append(span)
+    return tuple(spans)
 
 
 @dataclass(frozen=True)
