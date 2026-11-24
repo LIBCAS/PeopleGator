@@ -11,17 +11,7 @@ from rapidfuzz.fuzz import partial_token_sort_ratio
 from people_gator.core.layout import PeopleGatorDocument, PeopleGatorTextEntityCluster
 from people_gator.engines.base import DocumentProcessingEngine
 from people_gator.engines.llm import LLMBasedEngine, LLMResponseError
-
-
-def _safe_text(value):
-    """Reject blank text and non-whitespace control characters.
-
-    Args:
-        value: Proposed name or optional description string.
-    """
-    if not value.strip() or any(unicodedata.category(c) in {'Cc', 'Cs'} and c not in '\n\r\t' for c in value):
-        raise ValueError('Expected nonblank text without control characters')
-    return value
+from people_gator.text.chunking import is_valid_text
 
 
 class TextEntityClusterResult(BaseModel):
@@ -41,7 +31,9 @@ class TextEntityClusterResult(BaseModel):
         Args:
             value: Name or nullable description.
         """
-        return _safe_text(value) if value is not None else None
+        if value is not None and not is_valid_text(value):
+            raise ValueError('Expected nonblank text without control characters')
+        return value
 
 
 class TextEntityClusteringResult(BaseModel):
@@ -174,27 +166,24 @@ class LLMTextEntityClusteringEngine(DocumentProcessingEngine, LLMBasedEngine):
                                             description=mention.description)
 
     @staticmethod
-    def _protected(document, mentions):
+    def _protected(document):
         """Validate and preserve existing groups; reject ambiguous prior membership.
 
         Args:
             document: Document with optional prior clusters.
-            mentions: Unique source objects in deterministic input order.
 
         Raises:
             ValueError: Existing groups contain foreign/duplicate members or app-ID conflicts.
         """
-        available = {id(m) for m in mentions}
-        covered = set()
+        try:
+            covered = document.validate_text_entity_clusters(document.text_entity_clusters)
+        except ValueError:
+            raise ValueError('Existing text clusters have empty, foreign or duplicate membership') from None
         for cluster in document.text_entity_clusters:
-            members = [id(m) for m in cluster.text_entities]
-            if not members or len(set(members)) != len(members) or any(m not in available or m in covered for m in members):
-                raise ValueError('Existing text clusters have empty, foreign or duplicate membership')
             identities = [cluster.identity] + [m.page_identity.identity for m in cluster.text_entities if m.page_identity]
             app_ids = {i.peoplegator_id for i in identities if i is not None and i.peoplegator_id is not None}
             if len(app_ids) > 1:
                 raise ValueError('Existing text cluster has conflicting app identities')
-            covered.update(members)
         return list(document.text_entity_clusters), covered
 
     def _resolve(self, mentions):
@@ -210,18 +199,17 @@ class LLMTextEntityClusteringEngine(DocumentProcessingEngine, LLMBasedEngine):
                     'description': m.description, 'context': m.text}
                    for index, m in enumerate(mentions, start=1)]
         try:
-            result = self.llm_prompter({'entities': json.dumps(records, ensure_ascii=False)},
-                                       response_model=TextEntityClusteringResult)
-        except (ValidationError, LLMResponseError):
-            # A prompter may surface typed-content validation directly.
-            result = {}
-        except Exception as exc:
-            self.logger.error('Text clustering request failed (%s)', type(exc).__name__)
-            raise RuntimeError('Text clustering failed; check LLM service and request limits') from None
-        if result is None:
-            self.logger.error('Text clustering request exhausted without a result')
-            raise RuntimeError('Text clustering failed; check LLM service and request limits')
-        try:
+            try:
+                result = self.llm_prompter({'entities': json.dumps(records, ensure_ascii=False)},
+                                           response_model=TextEntityClusteringResult)
+            except (ValidationError, LLMResponseError):
+                raise  # Content failures use the same direct singleton fallback below.
+            except Exception as exc:
+                self.logger.error('Text clustering request failed (%s)', type(exc).__name__)
+                raise RuntimeError('Text clustering failed; check LLM service and request limits') from None
+            if result is None:
+                self.logger.error('Text clustering request exhausted without a result')
+                raise RuntimeError('Text clustering failed; check LLM service and request limits')
             result = TextEntityClusteringResult.model_validate(result)
             indices = [i for c in result.clusters for i in c.entity_indices]
             if sorted(indices) != list(range(1, len(mentions) + 1)):
@@ -232,7 +220,8 @@ class LLMTextEntityClusteringEngine(DocumentProcessingEngine, LLMBasedEngine):
                     raise ValueError('Empty cluster')
                 members = [mentions[i - 1] for i in sorted(resolved.entity_indices)]
                 observed = {_normalized_name(n) for m in members for n in _names(m)}
-                if not _normalized_name(resolved.name) or _normalized_name(resolved.name) not in observed:
+                name_key = _normalized_name(resolved.name)
+                if not name_key or name_key not in observed:
                     raise ValueError('Unsupported cluster name')
                 clusters.append(PeopleGatorTextEntityCluster(
                     members, name=resolved.name,
@@ -256,7 +245,7 @@ class LLMTextEntityClusteringEngine(DocumentProcessingEngine, LLMBasedEngine):
         mentions = document.text_entities
         if len({id(m) for m in mentions}) != len(mentions):
             raise ValueError('A text mention object occurs more than once in the document')
-        staged, covered = self._protected(document, mentions)
+        staged, covered = self._protected(document)
         candidates = []
         for mention in mentions:
             if id(mention) in covered:

@@ -25,8 +25,12 @@ def line(text, x=0, y=0):
 
 
 def page(*lines):
-    return NS(id='repeated-page', regions=[NS(id='repeated-region', category='text', lines=list(lines))],
-              text_entities=[], reading_order={}, lines_iterator=lambda: iter(lines))
+    from people_gator.core.layout import PeopleGatorPageLayout
+    result = PeopleGatorPageLayout('repeated-page', (120, 120))
+    result.regions = [NS(id='repeated-region', category='text', lines=list(lines))]
+    result.reading_order = {}
+    result.lines_iterator = lambda: iter(lines)
+    return result
 
 
 def mention(page, pi, li=0, name=None, context=None, legacy=False, spans=None):
@@ -50,14 +54,52 @@ def source(title=None, caption_lines=None):
 
 
 def select(pages, src=None, clusters=(), bbox=(0, 0, 50, 50)):
-    from people_gator.engines.face_entity_context import FaceEntityContext, assigned_caption
+    from people_gator.engines.face_assignment import select_entity_context
+    from people_gator.core.utils import assigned_caption
+    from people_gator.core.layout import PeopleGatorDocument
     src = src or source()
-    doc = NS(page_layouts=pages, text_entity_clusters=list(clusters))
-    return FaceEntityContext(doc).select(pages[0], src, bbox, assigned_caption(src))
+    doc = PeopleGatorDocument(page_layouts=pages, text_entity_clusters=list(clusters))
+    return select_entity_context(pages[0], src, bbox, assigned_caption(src), doc)
 
 
 def names(records):
     return [record['name'] for record in records]
+
+
+def test_caption_association_returns_original_objects_and_resolved_spans():
+    from people_gator.core.utils import caption_mentions
+    p = page(line('Straße'))
+    original = mention(p, 0)
+    _, occurrences = p.resolve_text_entities(0)
+    associated = caption_mentions(p, source(), 'Straße', occurrences)
+    assert associated[0][1] is occurrences[0][1]
+    assert associated[0][0] is original
+    assert associated[0][1][0][0] is original.source_spans[0]
+    assert associated[0][1][0][1] is p.regions[0].lines[0]
+    assert caption_mentions(p, source(), 'STRASSE', occurrences) == []
+    from people_gator.engines.text_entity_detection import match_mention
+    assert match_mention('Straße', 'STRASSE', 'STRASSE') == (0, 6, 0, 6)
+
+
+@pytest.mark.parametrize('standalone', [False, True])
+def test_fallback_resolves_each_original_occurrence_once(monkeypatch, standalone):
+    from people_gator.core.layout import PeopleGatorDocument, PeopleGatorTextEntityCluster
+    from people_gator.engines.face_assignment import select_entity_context
+    p, q, r = page(line('Local')), page(line('Alias'), line('Homonym')), page(line('Other alias'))
+    a, b, c, d = mention(p, 4 if standalone else 0), mention(q, 1), mention(q, 1, 1), mention(r, 2)
+    cluster = PeopleGatorTextEntityCluster([b, d], name='Person')
+    doc = None if standalone else PeopleGatorDocument(page_layouts=[p, q, r], text_entity_clusters=[cluster])
+    spies = []
+    for m in [a, b, c, d]:
+        spy = Mock(wraps=m.resolve_sources)
+        monkeypatch.setattr(m, 'resolve_sources', spy)
+        spies.append(spy)
+    result = select_entity_context(p, source('No title match'), (0, 0, 50, 50), 'No title match', doc)
+    assert names(result['surrounding_entities']) == ['Local']
+    assert [spy.call_count for spy in spies] == ([1, 0, 0, 0] if standalone else [1, 1, 1, 1])
+    if not standalone:
+        assert names(result['document_entities']) == ['Person', 'Homonym']
+        assert [record['page_index'] for record in result['document_entities'][0]['sources']] == [1, 2]
 
 
 def test_caption_source_objects_override_same_names_and_titles():
@@ -177,6 +219,13 @@ def make_engine(tmp_path, mode='single'):
     return cls(config['engine'], 'cpu', str(tmp_path))
 
 
+def face_metadata():
+    from people_gator.core.layout import (PeopleGatorFaceMetadata, PeopleGatorIdentity,
+                                         PeopleGatorPageIdentity, Position)
+    identity = PeopleGatorPageIdentity('person', 'MODS_PERSON', PeopleGatorIdentity(None, None))
+    return PeopleGatorFaceMetadata('face', 'MODS_FACE', identity, *[Position(0, 0) for _ in range(5)])
+
+
 def engine_document():
     import numpy as np
     from people_gator.core.layout import PeopleGatorFaceRegionLayout
@@ -198,10 +247,13 @@ def engine_document():
         regions.append(region)
         for j in range(2):
             face = PeopleGatorFaceRegionLayout(id=f'f{index}{j}', polygon=np.array(polygon(index * 60 + j * 15, 20, 10, 10)), category='face',
-                                              source_region=region, face_metadata=NS(prompts=[], page_identity=NS(identity=NS(name=None))))
+                                              source_region=region, face_metadata=face_metadata())
             p.regions.append(face)
     image = np.zeros((120, 120, 3), dtype=np.uint8)
-    return NS(id='document', page_layouts=[p, q], text_entity_clusters=[], pages_iterator=lambda: iter([(image, p), (image, q)])), regions
+    from people_gator.core.layout import PeopleGatorDocument
+    doc = PeopleGatorDocument(id='document', page_layouts=[p, q])
+    doc.pages_iterator = lambda: iter([(image, p), (image, q)])
+    return doc, regions
 
 
 @pytest.mark.parametrize('mode', ['single', 'sequential', 'page_parallel', 'document_parallel'])
@@ -339,11 +391,12 @@ def batch_ordering_document(boxes):
         faces.append(PeopleGatorFaceRegionLayout(
             id=f'f{index}', category='face', source_region=src,
             polygon=np.array(polygon(left + 10, top + 10, right - left, bottom - top)),
-            face_metadata=NS(prompts=[], page_identity=NS(identity=NS(name=None)))))
+            face_metadata=face_metadata()))
     p.regions.extend(faces)
     image = np.zeros((120, 120, 3), dtype=np.uint8)
-    doc = NS(id='document', page_layouts=[p], text_entity_clusters=[],
-             pages_iterator=lambda: iter([(image, p)]))
+    from people_gator.core.layout import PeopleGatorDocument
+    doc = PeopleGatorDocument(id='document', page_layouts=[p])
+    doc.pages_iterator = lambda: iter([(image, p)])
     return doc, image, faces
 
 
@@ -434,7 +487,7 @@ def test_missing_transcription_is_not_joined_or_rewritten(tmp_path, mode):
 @pytest.mark.parametrize('key', ['czech', 'english', 'other', 'empty'])
 def test_caption_language_dictionaries_shared_between_engines(key):
     from anno_page.enums.language import Language
-    from people_gator.engines.face_entity_context import assigned_caption
+    from people_gator.core.utils import assigned_caption
     values = {'czech': {Language.ENGLISH: 'English', Language.CZECH: 'Česky'},
               'english': {Language.ENGLISH: 'English'}, 'other': {None: 'Other'}, 'empty': {}}
     assert assigned_caption(source(values[key])) == {'czech': 'Česky', 'english': 'English', 'other': 'Other', 'empty': None}[key]
@@ -545,7 +598,7 @@ def test_real_document_parser_detection_clustering_then_face_context(tmp_path, m
         src = AnnoPageRegionLayout('photo', np.array(polygon(0, 0, 60, 60)), category='image',
                                    graphical_metadata=GraphicalObjectMetadata('tag', 'mods', title='Čapek 😀'))
         face = PeopleGatorFaceRegionLayout('face', np.array(polygon(10, 20, 10, 10)), category='face',
-                                          source_region=src, face_metadata=NS(prompts=[], page_identity=NS(identity=NS(name=None))))
+                                          source_region=src, face_metadata=face_metadata())
         p.regions.extend([src, face])
     original_regions = [region for p in doc.page_layouts for region in p.regions]
     ocr = [(ln, ln.transcription) for p in doc.page_layouts for ln in p.lines_iterator()]
@@ -586,13 +639,13 @@ def test_real_document_parser_detection_clustering_then_face_context(tmp_path, m
 
 
 def test_text_only_metadata_evidence_fallback_and_page_only_caller():
-    from people_gator.engines.face_entity_context import FaceEntityContext
+    from people_gator.engines.face_assignment import select_entity_context
     p = page(line('Karel\nČapek'))
     mention(p, 0)
     # Metadata may add wording absent from OCR; use complete source evidence,
     # never a canonical proposal, while retaining the original source spelling.
     src = source('Portrait of Karel Čapek.')
-    record = FaceEntityContext().select(p, src, (0, 0, 50, 50), src.graphical_metadata.title)['caption_entities'][0]
+    record = select_entity_context(p, src, (0, 0, 50, 50), src.graphical_metadata.title)['caption_entities'][0]
     assert record['name'] == 'Karel\nČapek' and record['page_index'] == 0
 
 
@@ -805,32 +858,32 @@ def test_noncontiguous_caption_reconstruction_keeps_repeated_title_ambiguous():
 
 
 def test_standalone_page_infers_index_for_legacy_mentions_from_mapped_mentions():
-    from people_gator.engines.face_entity_context import FaceEntityContext
+    from people_gator.engines.face_assignment import select_entity_context
     p = page(line('Alice Smith'), line('Bob Jones'))
     mapped = mention(p, 7)
     legacy = mention(p, 7, 1, legacy=True)
-    result = FaceEntityContext().select(p, source(), (0, 0, 50, 50), None)
+    result = select_entity_context(p, source(), (0, 0, 50, 50), None)
     assert names(result['surrounding_entities']) == [mapped.name, legacy.name]
     assert [record['page_index'] for record in result['surrounding_entities']] == [7, 7]
     assert result['surrounding_entities'][1]['source_spans'][0]['page_index'] == 7
 
 
 def test_standalone_legacy_only_page_reports_unknown_index_without_fabricating_zero():
-    from people_gator.engines.face_entity_context import FaceEntityContext
+    from people_gator.engines.face_assignment import select_entity_context
     p = page(line('Alice Smith'))
     mention(p, 9, legacy=True)
-    record = FaceEntityContext().select(p, source(), (0, 0, 50, 50), None)['surrounding_entities'][0]
+    record = select_entity_context(p, source(), (0, 0, 50, 50), None)['surrounding_entities'][0]
     assert record['page_index'] is None
     assert record['source_spans'][0]['page_index'] is None
     assert record['source_spans'][0]['line_index'] == 0
 
 
 def test_standalone_conflicting_page_indices_remain_page_evidence():
-    from people_gator.engines.face_entity_context import FaceEntityContext
+    from people_gator.engines.face_assignment import select_entity_context
     p = page(line('Alice Smith'), line('Bob Jones'))
     mention(p, 1)
     mention(p, 2, 1)
-    result = FaceEntityContext().select(p, source(), (0, 0, 50, 50), None)
+    result = select_entity_context(p, source(), (0, 0, 50, 50), None)
     assert result['surrounding_entities'] == []
     assert names(result['page_entities']) == ['Alice Smith', 'Bob Jones']
     assert all(record['page_index'] is None and record['source_spans'] == [] for record in result['page_entities'])

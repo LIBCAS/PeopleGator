@@ -261,6 +261,20 @@ def test_linked_manual_and_existing_cluster_protection(engine):
     assert_partition(doc)
 
 
+def test_repeated_cluster_reference_is_rejected_without_replacing_prior_groups(engine):
+    from people_gator.core.layout import PeopleGatorTextEntityCluster
+    m = mention()
+    doc = document([m])
+    existing = PeopleGatorTextEntityCluster([m])
+    original = doc.text_entity_clusters = [existing, existing]
+    e = engine()
+    e.llm_prompter = Mock()
+    with pytest.raises(ValueError, match='duplicate membership'):
+        e.process_document(doc)
+    assert doc.text_entity_clusters is original
+    e.llm_prompter.assert_not_called()
+
+
 @pytest.mark.parametrize('case', ['duplicate', 'foreign', 'empty', 'overlap', 'conflict', 'cluster-conflict', 'repeated-input'])
 def test_ambiguous_existing_clusters_rejected_without_mutation(engine, case):
     from people_gator.core.layout import PeopleGatorIdentity, PeopleGatorPageIdentity, PeopleGatorTextEntityCluster

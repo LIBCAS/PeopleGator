@@ -947,7 +947,7 @@ invalid membership fails before any app request.
 
 Stable cluster order precedes independent faces in page/region order. Explicitly
 shared `PeopleGatorIdentity` objects resolve together. A named face can also join
-one unique relevant caption cluster when the existing `FaceEntityContext` selector
+one unique relevant caption cluster when the shared caption-association operation
 confirms original caption character spans and the face's exact normalized name
 matches a supplied cluster name/alias. This uses source membership, never a search
 score, fuzzy name similarity or same-page occurrence. Missing/ambiguous caption

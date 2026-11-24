@@ -9,8 +9,9 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, mo
 
 from people_gator.engines import DocumentProcessingEngine, LLMBasedEngine
 from people_gator.engines.llm import LLMRequestError, LLMResponseError
-from people_gator.engines.face_entity_context import FaceEntityContext, assigned_caption
-from people_gator.core.layout import PeopleGatorDocument, PeopleGatorIdentity, PeopleGatorFaceRegionLayout
+from people_gator.core.utils import assigned_caption, caption_mentions
+from people_gator.text.chunking import is_valid_text
+from people_gator.core.layout import PeopleGatorDocument, PeopleGatorIdentity
 
 
 logger = logging.getLogger(__name__)
@@ -22,10 +23,7 @@ def _text(value):
     Args:
         value: Optional name, description or context.
     """
-    if not isinstance(value, str) or any(unicodedata.category(c) in {'Cc', 'Cs'}
-                                         and c not in '\n\r\t' for c in value):
-        return ''
-    return value.strip()
+    return value.strip() if is_valid_text(value) else ''
 
 
 def _strings(values):
@@ -110,37 +108,6 @@ class _LinkUnit:
         values.extend(f.face_metadata.page_identity.identity for _, f in self.faces)
         return list({id(i): i for i in values if i is not None}.values())
 
-    def targets(self):
-        """Return original objects used to recognize uncertain writes on retries."""
-        return [*self.clusters, *(i for i in self.identities())]
-
-    def evidence(self, context):
-        """Collect source names, facts, captions and original mention provenance.
-
-        Args:
-            context: Shared read-only source-mapping selector.
-        """
-        names = [c.name for c in self.clusters]
-        names.extend(i.name for i in self.identities())
-        names.extend(n for c in self.clusters for m in c.text_entities for n in (m.proposed_name, m.name))
-        names = _strings(names)
-        descriptions = _strings([d for c in self.clusters for d in (c.short_description, c.description)] +
-                                [m.description for c in self.clusters for m in c.text_entities])
-        sources = []
-        for c in self.clusters:
-            for m in c.text_entities:
-                page = next((p for p in context.document.page_layouts
-                             if any(member is m for member in getattr(p, 'text_entities', ()))), None)
-                if page is not None:
-                    sources.append(context._record(page, context._page_index(page), m, 'text'))
-        captions = _strings([assigned_caption(f.source_region) for _, f in self.faces])
-        return {'name': names[0] if names else '', 'aliases': names[1:],
-                'short_description': next((_text(c.short_description) for c in self.clusters
-                                           if _text(c.short_description)), ''),
-                'description': next((_text(c.description) for c in self.clusters if _text(c.description)),
-                                    '\n'.join(_strings(m.description for c in self.clusters for m in c.text_entities))),
-                'descriptions': descriptions, 'sources': sources, 'captions': captions}
-
 
 class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
     """Resolve document identities without treating retrieval as identity proof."""
@@ -158,25 +125,68 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
         self.db_api_service = db_api_service
         self.llm_prompter.raise_on_failure = True
 
-    def _units(self, document, context):
+    @staticmethod
+    def _names(unit, identities):
+        """Select ordered matching names without constructing source/prompt evidence.
+
+        Args:
+            unit: Original cluster/face reference group.
+            identities: Current distinct identities; never cached across propagation.
+        """
+        names = [c.name for c in unit.clusters]
+        names.extend(i.name for i in identities)
+        names.extend(n for c in unit.clusters for m in c.text_entities for n in (m.proposed_name, m.name))
+        return _strings(names)
+
+    def _evidence(self, unit, identities, pages, membership):
+        """Construct matching-specific source payloads from original model references.
+
+        Args:
+            unit: Original cluster/face reference group.
+            identities: Current identities, read before this unit is processed.
+            pages: First source page/index keyed by original mention identity.
+            membership: First owning text cluster keyed by original mention identity.
+        """
+        names = self._names(unit, identities)
+        descriptions = _strings([d for c in unit.clusters for d in (c.short_description, c.description)] +
+                                [m.description for c in unit.clusters for m in c.text_entities])
+        sources = []
+        for cluster in unit.clusters:
+            for mention in cluster.text_entities:
+                if id(mention) not in pages:
+                    continue
+                index, page = pages[id(mention)]
+                record = dict(provenance='text', page_index=index, page_id=page.id,
+                              name=mention.name, context=mention.text, proposed_name=mention.proposed_name,
+                              description=mention.description,
+                              source_spans=[span.to_dict() for span, _ in mention.resolve_sources(page, index)])
+                owner = membership.get(id(mention))
+                if owner is not None:
+                    record['cluster'] = dict(name=owner.name, short_description=owner.short_description,
+                                             description=owner.description, provisional=True)
+                sources.append(record)
+        return {'name': names[0] if names else '', 'aliases': names[1:],
+                'short_description': next((_text(c.short_description) for c in unit.clusters
+                                           if _text(c.short_description)), ''),
+                'description': next((_text(c.description) for c in unit.clusters if _text(c.description)),
+                                    '\n'.join(_strings(m.description for c in unit.clusters for m in c.text_entities))),
+                'descriptions': descriptions, 'sources': sources,
+                'captions': _strings(assigned_caption(f.source_region) for _, f in unit.faces)}
+
+    def _units(self, document):
         """Gather clusters once, group shared objects and reconcile unique captions.
 
         Args:
             document: Original document whose clustering must remain unchanged.
-            context: Source-mapped caption selector for this document.
         """
         clusters = list(dict.fromkeys(document.text_entity_clusters))
-        available = {id(m) for page in document.page_layouts for m in getattr(page, 'text_entities', ())}
-        assigned = set()
-        for cluster in clusters:
-            members = [id(m) for m in cluster.text_entities]
-            if (not members or len(set(members)) != len(members)
-                    or assigned.intersection(members) or set(members) - available):
-                raise ValueError('Entity matching requires nonempty, disjoint original cluster members')
-            assigned.update(members)
+        try:
+            document.validate_text_entity_clusters(clusters)
+        except ValueError:
+            raise ValueError('Entity matching requires nonempty, disjoint original cluster members') from None
         units = [_LinkUnit(order=i, clusters=[c]) for i, c in enumerate(clusters)]
         for page in document.page_layouts:
-            for face in (r for r in page.regions if isinstance(r, PeopleGatorFaceRegionLayout)):
+            for face in page.faces:
                 metadata = face.face_metadata
                 identity = getattr(getattr(metadata, 'page_identity', None), 'identity', None)
                 if identity is not None and _text(identity.name):
@@ -198,24 +208,22 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
         # A named face may join one relevant caption cluster. Page co-occurrence
         # and non-caption/background entities never establish this relationship.
         membership = {id(m): u for u in units for c in u.clusters for m in c.text_entities}
+        page_sources = {}
         for unit in list(units) if membership else ():
             if unit.clusters or not unit.faces:
                 continue
             supported = set()
             for page, face in unit.faces:
                 caption = assigned_caption(face.source_region)
-                records = context.select(page, face.source_region, (0, 0, 0, 0), caption)['caption_entities']
-                name = face.face_metadata.page_identity.identity.name
+                if id(page) not in page_sources:
+                    index = next(i for i, p in enumerate(document.page_layouts) if p is page)
+                    page_sources[id(page)] = page.resolve_text_entities(index)[1]
+                name_keys = _name_keys([face.face_metadata.page_identity.identity.name])
                 relevant = set()
-                for mention in getattr(page, 'text_entities', ()):
+                for mention, sources in caption_mentions(page, face.source_region, caption, page_sources[id(page)]):
                     target = membership.get(id(mention))
-                    if target is None:
-                        continue
-                    record = context._record(page, context._page_index(page), mention, 'caption')
-                    if record['source_spans'] and record in records:
-                        names = target.evidence(context)
-                        if _name_keys([name]) & _name_keys([names['name'], *names['aliases']]):
-                            relevant.add(target)
+                    if target is not None and sources and name_keys & _name_keys(self._names(target, target.identities())):
+                        relevant.add(target)
                 if len(relevant) == 1:
                     supported.update(relevant)
             if len(supported) == 1:
@@ -247,15 +255,17 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
         if self.db_api_service is None:
             logger.warning('Database API service is not initialized. Skipping entity matching.')
             return document
-        context = FaceEntityContext(document)
-        units = self._units(document, context)
+        units = self._units(document)
+        pages = document.text_entity_pages()
+        membership = document.text_entity_membership()
         cache = {}
         known = []
         for unit in units:
-            source = unit.evidence(context)
-            for identity in unit.identities():
-                if identity.peoplegator_id is not None:
-                    known.append((source, identity.peoplegator_id))
+            identities = unit.identities()
+            resolved = [i.peoplegator_id for i in identities if i.peoplegator_id is not None]
+            if resolved:
+                source = self._evidence(unit, identities, pages, membership)
+                known.extend((source, entity_id) for entity_id in resolved)
         logger.info('Entity matching: %d document identity units', len(units))
         linked = failed = skipped = 0
         for position, unit in enumerate(units):
@@ -273,7 +283,7 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                 self._apply(document, unit, next(iter(protected)))
                 linked += 1
                 continue
-            source = unit.evidence(context)
+            source = self._evidence(unit, identities, pages, membership)
             name = source['name']
             if (not name or not any(c.isalpha() for c in name)
                     or name.casefold() in {'none', 'null', 'unknown', 'unnamed', 'unidentified', 'person'}):
@@ -281,7 +291,7 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                 skipped += 1
                 continue
             pending = document.entity_linking_journal
-            targets = unit.targets()
+            targets = [*unit.clusters, *identities]
             receipts = [r for r in pending if any(a is b for a in targets for b in r['targets'])]
             names = _name_keys([name, *source['aliases']])
             if any(record['state'] == 'uncertain' and (record in receipts or
@@ -304,7 +314,7 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                 operation = 'LLM decision'
                 interactions = [] if unit.faces else None
                 decision = self.match_entity(name, source, candidates, interactions=interactions)
-                if decision.action == 'unresolved' or not decision.source_is_person:
+                if decision.action == 'unresolved':
                     logger.debug('Entity unit %d: unresolved', position)
                     skipped += 1
                     continue
@@ -353,7 +363,7 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                 if interactions is not None:
                     for _, face in unit.faces:
                         metadata = face.face_metadata
-                        metadata.prompts.extend(dict(engine="ENTITY_MATCHING", **record) for record in interactions)
+                        metadata.record_interactions("ENTITY_MATCHING", interactions)
             # Propagation is outside the recoverable request boundary: broken
             # document state must still fail fast. Successful create receipts can
             # replay on retry without repeating the POST.
@@ -428,7 +438,7 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
             A validated explicit decision; invalid decisions raise safely.
         """
         source = caption if isinstance(caption, dict) else {'captions': [caption] if caption else []}
-        entities = self.prepare_entities(db_entities)
+        entities = [dict(entity, item_id=index) for index, entity in enumerate(db_entities)]
         result = self.llm_prompter(data={'name': name, 'context': source, 'entities': entities},
                                    response_model=EntityMatchingResult, interactions=interactions)
         try:
@@ -454,15 +464,6 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
         elif result.name != name:
             raise _MatchingValidationError('invalid create proposal: source name mismatch')
         return result
-
-    @staticmethod
-    def prepare_entities(db_entities):
-        """Return candidate copies with trusted zero-based request indices.
-
-        Args:
-            db_entities: Hydrated app records; retrieval scores are excluded.
-        """
-        return [dict(entity, item_id=index) for index, entity in enumerate(db_entities)]
 
     @staticmethod
     def _apply(document, unit, entity_id):

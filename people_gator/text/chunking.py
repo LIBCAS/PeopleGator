@@ -9,8 +9,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from bisect import bisect_right
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import re
+import unicodedata
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -40,6 +41,10 @@ class SourceSpan:
     source: SourceLine
     start: int
     end: int
+
+    def to_dict(self):
+        """Return the flat OCR address and half-open offsets used in evidence."""
+        return dict(asdict(self.source), start=self.start, end=self.end)
 
 
 @dataclass(frozen=True)
@@ -131,19 +136,6 @@ class TextChunker(ABC):
         """
 
 
-def _budget_options(max_chars, overlap_chars):
-    """Validate direct constructor budgets without coercion.
-
-    Args:
-        max_chars: Positive integer character limit.
-        overlap_chars: Nonnegative integer smaller than the limit.
-    """
-    if type(max_chars) is not int or max_chars <= 0:
-        raise ValueError("MAX_CHARS must be a positive integer")
-    if type(overlap_chars) is not int or not 0 <= overlap_chars < max_chars:
-        raise ValueError("OVERLAP_CHARS must be an integer with 0 <= OVERLAP_CHARS < MAX_CHARS")
-
-
 class LineAwareTextChunker(TextChunker):
     """Greedy page-local windows, preferring complete line ends when possible."""
 
@@ -154,7 +146,10 @@ class LineAwareTextChunker(TextChunker):
             max_chars: Maximum chunk length; defaults to 4096.
             overlap_chars: Exact canonical-text overlap; defaults to zero.
         """
-        _budget_options(max_chars, overlap_chars)
+        if type(max_chars) is not int or max_chars <= 0:
+            raise ValueError("MAX_CHARS must be a positive integer")
+        if type(overlap_chars) is not int or not 0 <= overlap_chars < max_chars:
+            raise ValueError("OVERLAP_CHARS must be an integer with 0 <= OVERLAP_CHARS < MAX_CHARS")
         self.max_chars = max_chars
         self.overlap_chars = overlap_chars
 
@@ -166,7 +161,7 @@ class LineAwareTextChunker(TextChunker):
         """
         chunks = []
         for page_index, page in enumerate(document.page_layouts):
-            text, mappings, line_ends = _page_text(page, page_index)
+            text, mappings, line_ends = page_text(page, page_index)
             mapping_ends = [item.end for item in mappings]
             start, previous_end = 0, 0
             while start < len(text):
@@ -196,13 +191,15 @@ class LineAwareTextChunker(TextChunker):
         return TextChunkCollection(tuple(chunks))
 
 
-def _page_text(page, page_index):
+def page_text(page, page_index, lines=None):
     """Build canonical text and mappings in stable OCR reading order.
 
     Args:
         page: Layout with regions and optional reading_order mapping.
         page_index: Position in the original document page list.
+        lines: Optional original line references to retain in OCR reading order.
     """
+    line_ids = None if lines is None else {id(line) for line in lines}
     regions = list(enumerate(page.regions))
     order = page.reading_order or {}
     # Support the upstream object-key convention and XML reader's ID keys.
@@ -213,6 +210,8 @@ def _page_text(page, page_index):
         if region.category not in {None, "text"}:
             continue
         for line_index, line in enumerate(region.lines):
+            if line_ids is not None and id(line) not in line_ids:
+                continue
             value = line.transcription
             if not isinstance(value, str) or not value:
                 continue
@@ -276,3 +275,36 @@ def text_chunker_factory(config: Mapping) -> TextChunker:
             raise ValueError(f"{key} must be an integer")
         budgets.append(value)
     return LineAwareTextChunker(*budgets)
+
+
+def normalize_ocr(text, *, casefold=False):
+    """Normalize whitespace/case and line hyphenation with character addresses.
+
+    Args:
+        text: Original evidence or OCR text.
+        casefold: Expand Unicode casefolds when True; captions keep case by default.
+    """
+    chars, offsets = [], []
+    removed = set()
+    for match in re.finditer(r'[-\u00ad]\s*\n\s*', text):
+        removed.update(range(match.start(), match.end()))
+    for index, char in enumerate(text):
+        if index in removed:
+            continue
+        for value in (' ' if char.isspace() else (char.casefold() if casefold else char)):
+            if value == ' ' and chars and chars[-1] == ' ':
+                offsets[-1] = (offsets[-1][0], index + 1)
+            else:
+                chars.append(value)
+                offsets.append((index, index + 1))
+    return ''.join(chars), offsets
+
+
+def is_valid_text(value):
+    """Test nonblank text for controls, without rewriting valid source strings.
+
+    Args:
+        value: Optional source or response value.
+    """
+    return (isinstance(value, str) and bool(value.strip())
+            and not any(unicodedata.category(c) in {'Cc', 'Cs'} and c not in '\n\r\t' for c in value))
