@@ -143,6 +143,54 @@ def test_all_inheritors_use_shared_validation():
         assert 'load_prompt_template' not in cls.__dict__
 
 
+@pytest.mark.parametrize('method,options', [
+    ('TEXT_ENTITY_DETECTION', {'MENTION_MATCH_SCORE_CUTOFF': 'bad-cutoff'}),
+    ('TEXT_ENTITY_DETECTION', {'CHUNKING_MAX_CHARS': '0'}),
+    ('TEXT_ENTITY_CLUSTERING', {'NAME_WEIGHT': 'bad-weight'}),
+])
+@pytest.mark.parametrize('base_error', ['prompt', 'schema'])
+def test_shared_configuration_errors_precede_specialized_options(tmp_path, monkeypatch, method, options, base_error):
+    from people_gator.core.document_parser import engine_factory
+    from people_gator.engines import llm
+    (tmp_path / 'prompt.json').write_text(json.dumps({'user': '{{ text }}'}))
+    config = ConfigParser()
+    config.read_dict({'ENGINE_1': {'METHOD': method, 'PROMPT_TEMPLATE_PATH': 'prompt.json', **options}})
+    if base_error == 'prompt':
+        config['ENGINE_1']['PROMPT_TEMPLATE_PATH'] = ''
+        error = llm.LLMPromptConfigurationError
+    else:
+        config['ENGINE_1']['JSON_SCHEMA_PATH'] = 'missing-schema.json'
+        error = FileNotFoundError
+    prompter = Mock()
+    monkeypatch.setattr(llm, 'LLMPrompter', prompter)
+    with pytest.raises(error):
+        engine_factory(config['ENGINE_1'], config_path=str(tmp_path), device='cpu')
+    prompter.assert_not_called()
+
+
+@pytest.mark.parametrize('method', ['TEXT_ENTITY_DETECTION', 'TEXT_ENTITY_CLUSTERING'])
+def test_text_engines_retain_inherited_configuration(tmp_path, method):
+    from people_gator.core.document_parser import engine_factory
+    (tmp_path / 'prompt.json').write_text(json.dumps({'user': '{{ text }}'}))
+    (tmp_path / 'schema.json').write_text('{"type": "object"}')
+    config = ConfigParser()
+    config.read_dict({'ENGINE_1': {
+        'METHOD': method, 'PROMPT_TEMPLATE_PATH': 'prompt.json', 'JSON_SCHEMA_PATH': 'schema.json',
+        'API_URL': 'https://example.invalid/v1', 'API_KEY': 'test-key', 'MODEL_NAME': 'mock',
+        'REASONING_EFFORT': 'high', 'MAX_OUTPUT_TOKENS': '2345'}})
+    section = config['ENGINE_1']
+    engine = engine_factory(section, config_path=str(tmp_path), device='cpu')
+    assert engine.config is section and engine.device == 'cpu' and engine.config_path == str(tmp_path)
+    assert engine.logger.name == type(engine).__module__
+    prompter = engine.llm_prompter
+    assert (prompter.api_url, prompter.api_key, prompter.model_name) == (
+        'https://example.invalid/v1', 'test-key', 'mock')
+    assert prompter.reasoning_effort == 'high' and prompter.max_output_tokens == 2345
+    assert prompter.prompt_template_user.render(text='OCR') == 'OCR'
+    assert engine.json_schema == prompter.json_schema == {'type': 'object'}
+    assert prompter.raise_on_failure is (method == 'TEXT_ENTITY_CLUSTERING')
+
+
 class InlinePool:
     """Run prepared parallel requests locally while preserving the pool call shape."""
 

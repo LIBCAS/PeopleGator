@@ -126,7 +126,7 @@ def test_overlap_distinct_positions_and_repeated_runs():
 
 
 @pytest.mark.parametrize('options', [
-    {'MENTION_MATCH_SCORE_CUTOFF': x} for x in ('no', 'nan', 'inf', '-1', '101')
+    {'MENTION_MATCH_SCORE_CUTOFF': x} for x in ('no', 'True', 'nan', 'inf', '-inf', '-1', '101')
 ] + [{'CHUNKING_MAX_CHARS': '0'}, {'CHUNKING_BAD': '1'}, {'CHUNKING_METHOD': 'BAD'}])
 def test_invalid_config(options):
     with pytest.raises(ValueError):
@@ -138,6 +138,12 @@ def test_config_defaults_lowercase_and_isolation():
     assert (detector.chunker.max_chars, detector.chunker.overlap_chars) == (17, 0)
     assert detector.model_name == 'mock'
     assert engine().match_cutoff == 80
+
+
+@pytest.mark.parametrize('cutoff', ['0', '100', ' 87.5 '])
+def test_supported_numeric_config_values(cutoff):
+    detector = engine(mention_match_score_cutoff=cutoff)
+    assert detector.match_cutoff == float(cutoff)
 
 
 @pytest.mark.parametrize('response', [[], {'entities': []}, {'entities': [None, {'type': 'place'}]}])

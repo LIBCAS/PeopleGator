@@ -1,7 +1,6 @@
 """Extract person-like beings while retaining exact OCR occurrence addresses."""
 
 import logging
-import math
 import re
 from difflib import SequenceMatcher
 from typing import Literal
@@ -195,17 +194,13 @@ class LLMTextEntityDetectionEngine(DocumentProcessingEngine, LLMBasedEngine):
             device: Existing engine device setting; inference is remote.
             config_path: Base directory for configured LLM resource paths.
         """
-        self.chunker = text_chunker_factory({key.upper().removeprefix('CHUNKING_'): value
-                                            for key, value in config.items()
-                                            if key.upper().startswith('CHUNKING_')})
-        raw = config.get('mention_match_score_cutoff', '80')
-        try:
-            self.match_cutoff = float(raw)
-        except (ValueError, TypeError):
-            raise ValueError('MENTION_MATCH_SCORE_CUTOFF must be numeric in 0–100') from None
-        if isinstance(raw, bool) or not math.isfinite(self.match_cutoff) or not 0 <= self.match_cutoff <= 100:
-            raise ValueError('MENTION_MATCH_SCORE_CUTOFF must be numeric in 0–100')
         super().__init__(config, device, config_path)
+        self.chunker = text_chunker_factory({key.upper().removeprefix('CHUNKING_'): value
+                                            for key, value in self.config.items()
+                                            if key.upper().startswith('CHUNKING_')})
+        self.match_cutoff = self.config.getfloat('mention_match_score_cutoff', 80.0)
+        if not 0 <= self.match_cutoff <= 100:
+            raise ValueError('MENTION_MATCH_SCORE_CUTOFF must be numeric in 0–100')
 
     def process_document(self, document: PeopleGatorDocument) -> PeopleGatorDocument:
         """Process all chunks before appending any new mentions.

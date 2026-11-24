@@ -62,24 +62,6 @@ def _names(mention):
     return canonical, mention.name
 
 
-def _number(config, key, default):
-    """Read a finite, nonnegative numeric option, rejecting booleans.
-
-    Args:
-        config: Engine INI section.
-        key: Lowercase option name.
-        default: Algorithmic default.
-    """
-    raw = config.get(key, str(default))
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        raise ValueError(f'{key.upper()} must be finite and nonnegative') from None
-    if isinstance(raw, bool) or not math.isfinite(value) or value < 0:
-        raise ValueError(f'{key.upper()} must be finite and nonnegative')
-    return value
-
-
 class LLMTextEntityClusteringEngine(DocumentProcessingEngine, LLMBasedEngine):
     """Stage a complete partition, protecting existing clusters and assignments."""
 
@@ -91,17 +73,19 @@ class LLMTextEntityClusteringEngine(DocumentProcessingEngine, LLMBasedEngine):
             device: Standard engine device; clustering requires no GPU.
             config_path: Base directory for externally supplied prompt resources.
         """
-        self.threshold = _number(config, 'cluster_threshold', 92)
-        if self.threshold > 100:
+        super().__init__(config, device, config_path)
+        self.threshold = self.config.getfloat('cluster_threshold', 92.0)
+        if not 0 <= self.threshold <= 100:
             raise ValueError('CLUSTER_THRESHOLD must be in 0–100')
-        self.name_weight = _number(config, 'name_weight', .7)
-        self.mention_weight = _number(config, 'mention_weight', .3)
-        if self.name_weight + self.mention_weight <= 0 or not math.isfinite(self.name_weight + self.mention_weight):
-            raise ValueError('NAME_WEIGHT and MENTION_WEIGHT must have a finite positive sum')
-        self.aggregation = config.get('similarity_aggregation', 'max')
+        self.name_weight = self.config.getfloat('name_weight', 0.7)
+        self.mention_weight = self.config.getfloat('mention_weight', 0.3)
+        total_weight = self.name_weight + self.mention_weight
+        if (self.name_weight < 0 or self.mention_weight < 0
+                or not math.isfinite(total_weight) or total_weight <= 0):
+            raise ValueError('NAME_WEIGHT and MENTION_WEIGHT must be nonnegative with a finite positive sum')
+        self.aggregation = self.config.get('similarity_aggregation', 'max')
         if self.aggregation not in {'max', 'mean', 'min'}:
             raise ValueError('SIMILARITY_AGGREGATION must be max, mean or min')
-        super().__init__(config, device, config_path)
         self.llm_prompter.raise_on_failure = True
 
     def similarity(self, first, second):
