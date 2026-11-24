@@ -1,7 +1,6 @@
 """Extract person-like beings while retaining exact OCR occurrence addresses."""
 
 import logging
-import math
 import re
 from difflib import SequenceMatcher
 from typing import Literal
@@ -11,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, PrivateAttr, ValidationError, field_
 from people_gator.engines import DocumentProcessingEngine, LLMBasedEngine
 from people_gator.core.layout import PeopleGatorDocument, PeopleGatorTextEntityMention
 from people_gator.text import text_chunker_factory
+from people_gator.text.chunking import normalize_ocr
 
 logger = logging.getLogger(__name__)
 
@@ -120,27 +120,6 @@ def _occurrences(text, needle):
             for m in re.finditer('(?=' + re.escape(needle) + ')', text)] if needle else []
 
 
-def _normalize(text):
-    """Normalize whitespace/case and line hyphenation with character addresses.
-
-    Args:
-        text: Original evidence or OCR text.
-    """
-    chars, offsets = [], []
-    removed = set()
-    for match in re.finditer(r'[-\u00ad]\s*\n\s*', text):
-        removed.update(range(match.start(), match.end()))
-    for index, char in enumerate(text):
-        if index in removed:
-            continue
-        for value in (' ' if char.isspace() else char.casefold()):
-            if value == ' ' and chars and chars[-1] == ' ':
-                offsets[-1] = (offsets[-1][0], index + 1)
-            else:
-                chars.append(value)
-                offsets.append((index, index + 1))
-    return ''.join(chars), offsets
-
 
 def _locate(text, evidence, cutoff):
     """Find exact, normalized, then bounded fuzzy evidence, rejecting ties.
@@ -153,8 +132,8 @@ def _locate(text, evidence, cutoff):
     exact = _occurrences(text, evidence)
     if exact:
         return exact
-    normalized, offsets = _normalize(text)
-    wanted, _ = _normalize(evidence)
+    normalized, offsets = normalize_ocr(text, casefold=True)
+    wanted, _ = normalize_ocr(evidence, casefold=True)
     if not wanted.strip():
         return []
     matches = _occurrences(normalized, wanted)
@@ -215,17 +194,13 @@ class LLMTextEntityDetectionEngine(DocumentProcessingEngine, LLMBasedEngine):
             device: Existing engine device setting; inference is remote.
             config_path: Base directory for configured LLM resource paths.
         """
-        self.chunker = text_chunker_factory({key.upper().removeprefix('CHUNKING_'): value
-                                            for key, value in config.items()
-                                            if key.upper().startswith('CHUNKING_')})
-        raw = config.get('mention_match_score_cutoff', '80')
-        try:
-            self.match_cutoff = float(raw)
-        except (ValueError, TypeError):
-            raise ValueError('MENTION_MATCH_SCORE_CUTOFF must be numeric in 0–100') from None
-        if isinstance(raw, bool) or not math.isfinite(self.match_cutoff) or not 0 <= self.match_cutoff <= 100:
-            raise ValueError('MENTION_MATCH_SCORE_CUTOFF must be numeric in 0–100')
         super().__init__(config, device, config_path)
+        self.chunker = text_chunker_factory({key.upper().removeprefix('CHUNKING_'): value
+                                            for key, value in self.config.items()
+                                            if key.upper().startswith('CHUNKING_')})
+        self.match_cutoff = self.config.getfloat('mention_match_score_cutoff', 80.0)
+        if not 0 <= self.match_cutoff <= 100:
+            raise ValueError('MENTION_MATCH_SCORE_CUTOFF must be numeric in 0–100')
 
     def process_document(self, document: PeopleGatorDocument) -> PeopleGatorDocument:
         """Process all chunks before appending any new mentions.
@@ -237,6 +212,13 @@ class LLMTextEntityDetectionEngine(DocumentProcessingEngine, LLMBasedEngine):
             RuntimeError: Request failure or invalid top-level extraction response.
         """
         staged = {}
+        existing_spans = {id(page): {m.source_spans for m in page.text_entities if m.source_spans}
+                          for page in document.page_layouts}
+        legacy_spans = {id(page): {} for page in document.page_layouts}
+        for page in document.page_layouts:
+            for mention in page.text_entities:
+                if mention.line is not None and mention.span is not None:
+                    legacy_spans[id(page)].setdefault(id(mention.line), []).append(mention.span)
         for chunk in self.chunker.chunk_document(document).chunks:
             if not chunk.text.strip():
                 continue
@@ -262,18 +244,15 @@ class LLMTextEntityDetectionEngine(DocumentProcessingEngine, LLMBasedEngine):
                         rejected += 1
                         continue
                     page = document.page_layouts[chunk.page_index]
-                    # Legacy manual single-line annotations have no source_spans.
-                    if any(existing.source_spans == spans or
-                           (len(spans) == 1 and existing.line is page.regions[spans[0].source.region_index].lines[spans[0].source.line_index]
-                            and existing.span == (spans[0].start, spans[0].end))
-                           for existing in page.text_entities):
+                    if spans in staged or spans in existing_spans[id(page)]:
                         continue
-                    if spans not in staged:
-                        line = page.regions[spans[0].source.region_index].lines[spans[0].source.line_index] if len(spans) == 1 else None
-                        staged[spans] = (page, PeopleGatorTextEntityMention(
-                            name=chunk.text[start:end], text=chunk.text[a:b], line=line,
-                            span=(spans[0].start, spans[0].end) if line is not None else None,
-                            source_spans=spans, proposed_name=entity.name, description=entity.info))
+                    line = page.regions[spans[0].source.region_index].lines[spans[0].source.line_index] if len(spans) == 1 else None
+                    span = (spans[0].start, spans[0].end) if line is not None else None
+                    if line is not None and span in legacy_spans[id(page)].get(id(line), ()):
+                        continue
+                    staged[spans] = (page, PeopleGatorTextEntityMention(
+                        name=chunk.text[start:end], text=chunk.text[a:b], line=line, span=span,
+                        source_spans=spans, proposed_name=entity.name, description=entity.info))
             logger.debug('Text detection page=%d chunk=%d entities=%d rejected=%d',
                          chunk.page_index, chunk.index, len(result.entities), rejected)
         for page, mention in staged.values():

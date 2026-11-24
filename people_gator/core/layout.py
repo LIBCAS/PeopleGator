@@ -13,7 +13,7 @@ from anno_page.core.metadata import BaseMetadata as AnnoPageBaseMetadata
 from anno_page.core.utils import find_or_create_tags_element, get_root_element, find_or_create_element
 from anno_page.enums import Language
 
-from people_gator.text import SourceSpan
+from people_gator.text import SourceLine, SourceSpan
 from people_gator import globals
 from people_gator.core.utils import load_image, find_source_region_by_bounding_box
 from people_gator.core.services import DateTimeService
@@ -327,6 +327,15 @@ class PeopleGatorFaceMetadata(AnnoPageBaseMetadata):
         self.nose_position: Position = nose_position
         self.left_mouth_corner_position: Position = left_mouth_corner_position
         self.right_mouth_corner_position: Position = right_mouth_corner_position
+
+    def record_interactions(self, engine, interactions):
+        """Append independent engine-labelled attempt dictionaries in chronological order.
+
+        Args:
+            engine: Calling engine's method name.
+            interactions: Caller-owned rendered prompt/raw response records.
+        """
+        self.prompts.extend(dict(engine=engine, **record) for record in interactions)
 
     def __repr__(self):
         """Return a diagnostic representation of the stored fields.
@@ -831,6 +840,65 @@ class PeopleGatorTextEntityMention:
         self.span: tuple[int, int] | None = span
         self.page_identity: PeopleGatorPageIdentity | None = page_identity
 
+    def resolve_sources(self, page, page_index):
+        """Resolve this occurrence to original source spans and OCR line objects.
+
+        Args:
+            page: Original page containing this mention.
+            page_index: Authoritative index, or None for unknown standalone provenance.
+
+        Returns:
+            Span/line pairs, or an empty list when any mapped address is invalid.
+            Legacy line references remain usable with an unknown page index.
+        """
+        if not self.source_spans:
+            if self.line is not None and self.span is not None:
+                for ri, region in enumerate(page.regions):
+                    for li, line in enumerate(region.lines):
+                        if line is self.line:
+                            start, end = self.span
+                            if isinstance(line.transcription, str) and 0 <= start < end <= len(line.transcription):
+                                source = SourceLine(page_index, page.id, ri, region.id, li, line.id)
+                                return [(SourceSpan(source, start, end), line)]
+            return []
+        if page_index is None:
+            return []
+        resolved = []
+        for span in self.source_spans:
+            source = span.source
+            if (source.page_index != page_index or source.page_id != page.id
+                    or not 0 <= source.region_index < len(page.regions)):
+                return []
+            region = page.regions[source.region_index]
+            if not 0 <= source.line_index < len(region.lines):
+                return []
+            line = region.lines[source.line_index]
+            if not isinstance(line.transcription, str) or not 0 <= span.start < span.end <= len(line.transcription):
+                return []
+            resolved.append((span, line))
+        return resolved
+
+    def to_evidence_record(self, page, page_index, sources, provenance, cluster=None):
+        """Serialize original mention data and an optional cluster without resolving it again.
+
+        Args:
+            page: Original source page.
+            page_index: Known source index, or None for unknown standalone provenance.
+            sources: Already-resolved source span/line pairs.
+            provenance: Evidence label selected by the calling engine.
+            cluster: Optional owning cluster whose provisional metadata is included.
+
+        Returns:
+            A fresh record, including independent source and optional cluster dictionaries.
+        """
+        record = dict(provenance=provenance, page_index=page_index, page_id=page.id,
+                      name=self.name, context=self.text, proposed_name=self.proposed_name,
+                      description=self.description, source_spans=[span.to_dict() for span, _ in sources])
+        if cluster is not None:
+            record['cluster'] = dict(name=cluster.name, short_description=cluster.short_description,
+                                     description=cluster.description, provisional=True)
+        return record
+
     @property
     def identity_name(self):
         """Return the associated person name."""
@@ -882,6 +950,38 @@ class PeopleGatorPageLayout(AnnoPagePageLayout):
     def faces(self):
         """Return the face regions in layout order."""
         return [region for region in self.regions if isinstance(region, PeopleGatorFaceRegionLayout)]
+
+    def resolve_text_entities(self, page_index=None):
+        """Resolve unique original occurrences once, inferring standalone provenance.
+
+        Args:
+            page_index: Document position, or None to infer it from valid mapped mentions.
+
+        Returns:
+            The known/inferred index and ordered mention/source-pair lists.
+            Conflicting mapped indices stay unresolved; legacy lines retain geometry.
+        """
+        mentions = list({id(m): m for m in self.text_entities}.values())
+        mapped = {}
+        if page_index is None:
+            indices = set()
+            for mention in mentions:
+                if mention.source_spans:
+                    index = mention.source_spans[0].source.page_index
+                    if type(index) is int and index >= 0:
+                        sources = mention.resolve_sources(self, index)
+                        mapped[id(mention)] = sources
+                        if sources:
+                            indices.add(index)
+            page_index = next(iter(indices)) if len(indices) == 1 else None
+        occurrences = []
+        for mention in mentions:
+            if id(mention) in mapped:
+                sources = mapped[id(mention)] if page_index is not None else []
+            else:
+                sources = mention.resolve_sources(self, page_index)
+            occurrences.append((mention, sources))
+        return page_index, occurrences
 
     def to_app_dict(self):
         """Return the app page-layout mapping with text regions and OCR lines."""
@@ -1067,6 +1167,44 @@ class PeopleGatorDocument:
         for page_layout in self.page_layouts:
             faces.extend(page_layout.faces)
         return faces
+
+    def text_entity_membership(self):
+        """Return first-cluster membership keyed by original mention object identity."""
+        membership = {}
+        for cluster in self.text_entity_clusters:
+            for mention in cluster.text_entities:
+                membership.setdefault(id(mention), cluster)
+        return membership
+
+    def text_entity_pages(self):
+        """Locate original mentions in page order; repeated references use their first page."""
+        pages = {}
+        for index, page in enumerate(self.page_layouts):
+            for mention in page.text_entities:
+                pages.setdefault(id(mention), (index, page))
+        return pages
+
+    def validate_text_entity_clusters(self, clusters):
+        """Validate nonempty, original, disjoint membership without choosing an identity.
+
+        Args:
+            clusters: Groups to validate; callers retain their own duplicate-cluster policy.
+
+        Returns:
+            Object-identity keys of the covered original mentions.
+
+        Raises:
+            ValueError: A group is empty or has foreign, repeated or overlapping members.
+        """
+        available = {id(m) for m in self.text_entities}
+        covered = set()
+        for cluster in clusters:
+            members = [id(m) for m in cluster.text_entities]
+            if (not members or len(set(members)) != len(members)
+                    or covered.intersection(members) or set(members) - available):
+                raise ValueError('Text clusters require nonempty, disjoint original members')
+            covered.update(members)
+        return covered
 
     def load_page_images(self):
         """Load all page images, caching them only when configured.

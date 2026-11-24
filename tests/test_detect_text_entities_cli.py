@@ -202,7 +202,9 @@ def test_bad_config(kind, tmp_path, capsys, monkeypatch, caplog):
     config = tmp_path / 'config.ini'
     if kind != 'missing':
         config.write_text('[secret credentials' if kind == 'malformed' else
-                          '[ENGINE_TEXT]\nMETHOD=TEXT_ENTITY_DETECTION\nCHUNKING_MAX_CHARS=invalid\n')
+                          '[ENGINE_TEXT]\nMETHOD=TEXT_ENTITY_DETECTION\nPROMPT_TEMPLATE_PATH=prompt.json\nCHUNKING_MAX_CHARS=invalid\n')
+    if kind == 'invalid-option':
+        (tmp_path / 'prompt.json').write_text(json.dumps({'user': '{{ text }}'}))
     if kind == 'unreadable':
         monkeypatch.setattr(Path, 'open', Mock(side_effect=PermissionError('secret credentials')))
     assert cli.main(['--config', str(config), '--input-xml-path', str(tmp_path)]) == 1

@@ -30,6 +30,51 @@ def page(*regions, id="p", reading_order=None):
               text_entities=["existing mention"])
 
 
+@pytest.mark.parametrize('casefold,expected', [(False, 'Straße Čapek'), (True, 'strasse čapek')])
+def test_shared_ocr_normalization_preserves_case_policy_and_expansion_offsets(casefold, expected):
+    from people_gator.text.chunking import normalize_ocr
+    text = 'Straße \tČa-\n pek'
+    normalized, offsets = normalize_ocr(text, casefold=casefold)
+    assert normalized == expected
+    prefix = [(i, i + 1) for i in range(6)]
+    if casefold:
+        prefix.insert(5, (4, 5))
+    assert offsets == prefix + [(6, 8), (8, 9), (9, 10), (13, 14), (14, 15), (15, 16)]
+    assert normalize_ocr('A\u00ad\n  B', casefold=casefold) == ('ab' if casefold else 'AB', [(0, 1), (5, 6)])
+
+
+@pytest.mark.parametrize('value,valid', [
+    (None, False), (4, False), ('', False), (' \t\n', False),
+    (' Čapek\n\t ', True), ('bad\x00text', False), ('bad\ud800text', False),
+])
+def test_shared_text_validity_does_not_rewrite_evidence(value, valid):
+    from people_gator.text.chunking import is_valid_text
+    assert is_valid_text(value) is valid
+
+
+def test_canonical_page_text_filters_original_lines_in_reading_order():
+    from people_gator.text.chunking import page_text
+    last, middle, first = region('Čapek', id='last'), region('article'), region('Karel', id='first')
+    p = page(last, middle, first, reading_order={'first': 0, 'r': 1, 'last': 2})
+    text, mappings, ends = page_text(p, 7, lines=[last.lines[0], first.lines[0], first.lines[0]])
+    assert text == 'Karel\nČapek' and ends == [5, 11]
+    assert [(m.source.region_index if m.source else None, m.start, m.end) for m in mappings] == [(2, 0, 5), (None, 5, 6), (0, 6, 11)]
+    assert all(m.source.page_index == 7 for m in mappings if m.source)
+
+
+@pytest.mark.parametrize('start,end,expected', [(0, 0, []), (1, 6, [(11, 14), (20, 21)]), (4, 5, [])])
+def test_direct_mapping_span_resolution_matches_chunk_contract(start, end, expected):
+    from people_gator.text.chunking import TextChunk, resolve_mappings, mapping_source_spans
+    a = SourceLine(None, 'repeated', 0, 'r', 0, 'l')
+    b = SourceLine(None, 'repeated', 0, 'r', 1, 'l')
+    mappings = (ChunkMapping(0, 2, a, 10, 12), ChunkMapping(2, 4, a, 12, 14),
+                ChunkMapping(4, 5), ChunkMapping(5, 7, b, 20, 22))
+    direct = mapping_source_spans(resolve_mappings(mappings, start, end))
+    assert direct == TextChunk(9, 'abcd\nef', None, 0, 7, mappings).source_spans(start, end)
+    assert [(span.start, span.end) for span in direct] == expected
+    assert all(span.source.page_index is None for span in direct)
+
+
 @pytest.mark.parametrize("method", ["LINES", "LINE_AWARE"])
 def test_public_contract_and_factory(method):
     chunker = text_chunker_factory({})

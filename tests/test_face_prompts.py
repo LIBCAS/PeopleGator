@@ -429,6 +429,40 @@ def test_assignment_retains_attempts_when_an_explicit_request_raises(tmp_path, m
             assert records == []
 
 
+@pytest.mark.parametrize('mode', ['page_parallel', 'document_parallel'])
+def test_parallel_assignment_keeps_mixed_attempts_without_applying_partial_results(tmp_path, monkeypatch, mode):
+    from test_face_assignment_text_entities import make_engine
+    from test_llm_prompts import InlinePool
+    from people_gator.core.layout import PeopleGatorFaceRegionLayout
+    from people_gator.engines.llm import LLMResponseError
+    engine = make_engine(tmp_path, mode)
+    engine.llm_prompter.raise_on_failure = True
+    engine.llm_prompter.max_attempts = 1
+    requests = []
+
+    def create(**request):
+        requests.append(request)
+        raw = 'invalid' if len(requests) == 2 else '{"faces": []}'
+        return NS(status='completed', output_text=raw)
+
+    llm = install_provider(monkeypatch, create)
+    monkeypatch.setattr(llm.multiprocessing, 'Pool', InlinePool)
+    engine.update_layout = Mock()
+    doc = diagnostic_document()
+    with pytest.raises(LLMResponseError):
+        engine.process_document(doc)
+
+    engine.update_layout.assert_not_called()
+    expected = ['{"faces": []}', '{"faces": []}', 'invalid', 'invalid']
+    if mode == 'document_parallel':
+        expected.extend(['{"faces": []}', '{"faces": []}'])
+    records = [f.face_metadata.prompts for p in doc.page_layouts for f in p.regions
+               if isinstance(f, PeopleGatorFaceRegionLayout)]
+    assert [r[0]['response'] if r else None for r in records] == expected + [None] * (6 - len(expected))
+    assert all(r[0]['engine'] == 'LLM_BATCH_FACE_ASSIGNMENT' for r in records if r)
+    assert all(r[0]['prompt'] == rendered(requests[i // 2]) for i, r in enumerate(records) if r)
+
+
 @pytest.mark.parametrize('fmt', ['alto', 'page'])
 def test_legacy_checkpoint_normalizes_missing_prompts_only_at_validated_load(tmp_path, monkeypatch, fmt):
     from test_checkpoints import pipeline, snapshots, assert_graph_equal

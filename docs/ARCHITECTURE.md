@@ -94,7 +94,7 @@ The broader system design also includes occurrences of person names in OCR text.
 | `people_gator/core/layout.py` | Page/document objects, face-region metadata, ALTO/PAGE I/O and rendering. |
 | `people_gator/core/checkpoints.py`, `checkpoint_document.py`, `checkpoint_inspection.py` | Hybrid checkpoint publication, trusted Pickle recovery, selected read-only JSON diagnostics, compatibility/integrity checks and durable app replay guards. |
 | `people_gator/engines/base.py` | Common processing-engine interfaces. |
-| `people_gator/text/` | Reusable text chunker, factory and exact OCR source mappings; consumed internally by text detectors. |
+| `people_gator/text/` | Reusable OCR chunking, canonical page mappings, offset-preserving normalization and text validation; independent of processing engines. |
 | `people_gator/engines/face_detection.py` | YOLO detection in selected image regions; boxes and five landmarks. |
 | `people_gator/engines/face_assignment.py` | LLM-supported single/batch naming using images, captions and OCR text. |
 | `people_gator/engines/entity_matching.py` | Candidate-entity lookup, LLM disambiguation and creation through the app API. |

@@ -86,9 +86,9 @@ def test_singleton_no_llm_and_compatible_model(engine):
 
 
 @pytest.mark.parametrize('options', [
-    {'CLUSTER_THRESHOLD': x} for x in ['-1', '101', 'nan', 'inf', 'no']
-] + [{'NAME_WEIGHT': x} for x in ['-1', 'nan', 'inf', 'bad']]
-  + [{'MENTION_WEIGHT': x} for x in ['-1', 'nan', 'inf', 'bad']]
+    {'CLUSTER_THRESHOLD': x} for x in ['-1', '101', 'nan', 'inf', '-inf', 'no']
+] + [{'NAME_WEIGHT': x} for x in ['-1', 'nan', 'inf', '-inf', 'bad']]
+  + [{'MENTION_WEIGHT': x} for x in ['-1', 'nan', 'inf', '-inf', 'bad']]
   + [{'NAME_WEIGHT': '0', 'MENTION_WEIGHT': '0'},
      {'NAME_WEIGHT': '1e308', 'MENTION_WEIGHT': '1e308'},
      {'SIMILARITY_AGGREGATION': 'median'}, {'SIMILARITY_AGGREGATION': 'MAX'}])
@@ -102,6 +102,13 @@ def test_defaults_and_lowercase_options(engine):
     assert (e.threshold, e.name_weight, e.mention_weight, e.aggregation) == (92, .7, .3, 'max')
     e = engine(cluster_threshold='100', name_weight='1', mention_weight='0', similarity_aggregation='min')
     assert (e.threshold, e.name_weight, e.mention_weight, e.aggregation) == (100, 1, 0, 'min')
+
+
+@pytest.mark.parametrize('aggregation', ['max', 'mean', 'min'])
+def test_supported_numeric_config_values(engine, aggregation):
+    e = engine(CLUSTER_THRESHOLD=' 0.0 ', NAME_WEIGHT='0', MENTION_WEIGHT='1e308',
+               SIMILARITY_AGGREGATION=aggregation)
+    assert (e.threshold, e.name_weight, e.mention_weight, e.aggregation) == (0, 0, 1e308, aggregation)
 
 
 @pytest.mark.parametrize('name', ['Čapek Karel', 'Čapek', 'K. Čapek', 'Ｋａｒｅｌ  Čapek', 'Karel\n  Čapek'])
@@ -259,6 +266,20 @@ def test_linked_manual_and_existing_cluster_protection(engine):
     e.process_document(doc)
     e.llm_prompter.assert_not_called()
     assert_partition(doc)
+
+
+def test_repeated_cluster_reference_is_rejected_without_replacing_prior_groups(engine):
+    from people_gator.core.layout import PeopleGatorTextEntityCluster
+    m = mention()
+    doc = document([m])
+    existing = PeopleGatorTextEntityCluster([m])
+    original = doc.text_entity_clusters = [existing, existing]
+    e = engine()
+    e.llm_prompter = Mock()
+    with pytest.raises(ValueError, match='duplicate membership'):
+        e.process_document(doc)
+    assert doc.text_entity_clusters is original
+    e.llm_prompter.assert_not_called()
 
 
 @pytest.mark.parametrize('case', ['duplicate', 'foreign', 'empty', 'overlap', 'conflict', 'cluster-conflict', 'repeated-input'])
@@ -447,10 +468,9 @@ def test_generated_schema_takes_precedence_over_optional_file(engine, tmp_path):
 
 
 @pytest.mark.parametrize('key', ['cluster_threshold', 'name_weight', 'mention_weight'])
-def test_boolean_numeric_options_rejected(key):
-    from people_gator.engines.text_entity_clustering import _number
-    with pytest.raises(ValueError, match=key.upper()):
-        _number({key: True}, key, 0)
+def test_boolean_numeric_strings_rejected_through_config_section(engine, key):
+    with pytest.raises(ValueError):
+        engine(**{key: 'True'})
 
 
 @pytest.mark.parametrize('text', ['', json.dumps({'clusters': [cluster([1, 2], name='Ada Lovelace')]})])

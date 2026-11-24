@@ -30,6 +30,8 @@ For **`Implement LIBCAS/PeopleGator issue #N`**, automatically follow the [agent
 
 - Prefer the **simplest direct implementation that humans can readily understand**; do not optimize for line count or add abstractions for hypothetical future needs.
 - Before adding a helper, wrapper, model or module, check whether an existing model method, utility or engine already owns the responsibility. Share logic only when its semantics truly agree; keep engine-specific decisions in their engines.
+- Initialize inherited engine infrastructure with `super().__init__()` before specialized members unless a concrete technical dependency requires another order; explain any exception.
+- Use native typed ConfigParser getters and existing list/path helpers for engine configuration, retaining only necessary domain-specific validation.
 - Prefer explicit data flow and initialized object invariants. Avoid repeated fallback checks, temporary state, extra context managers, redundant validation and compatibility shims **unless a concrete supported scenario requires them**. Necessary defensive handling and compatibility guarantees must be retained.
 - Make focused edits: no unrelated refactoring, formatting churn, new configuration/dependencies, speculative edge cases or contract changes without approval. Record adjacent findings separately rather than expanding the issue.
 - Remove superseded code, helpers and redundant tests/fixtures when replacing an implementation, while retaining meaningful regression coverage. Keep new tests and documentation proportional to the approved change.

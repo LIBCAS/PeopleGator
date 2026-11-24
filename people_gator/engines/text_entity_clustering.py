@@ -11,17 +11,7 @@ from rapidfuzz.fuzz import partial_token_sort_ratio
 from people_gator.core.layout import PeopleGatorDocument, PeopleGatorTextEntityCluster
 from people_gator.engines.base import DocumentProcessingEngine
 from people_gator.engines.llm import LLMBasedEngine, LLMResponseError
-
-
-def _safe_text(value):
-    """Reject blank text and non-whitespace control characters.
-
-    Args:
-        value: Proposed name or optional description string.
-    """
-    if not value.strip() or any(unicodedata.category(c) in {'Cc', 'Cs'} and c not in '\n\r\t' for c in value):
-        raise ValueError('Expected nonblank text without control characters')
-    return value
+from people_gator.text.chunking import is_valid_text
 
 
 class TextEntityClusterResult(BaseModel):
@@ -41,7 +31,9 @@ class TextEntityClusterResult(BaseModel):
         Args:
             value: Name or nullable description.
         """
-        return _safe_text(value) if value is not None else None
+        if value is not None and not is_valid_text(value):
+            raise ValueError('Expected nonblank text without control characters')
+        return value
 
 
 class TextEntityClusteringResult(BaseModel):
@@ -70,24 +62,6 @@ def _names(mention):
     return canonical, mention.name
 
 
-def _number(config, key, default):
-    """Read a finite, nonnegative numeric option, rejecting booleans.
-
-    Args:
-        config: Engine INI section.
-        key: Lowercase option name.
-        default: Algorithmic default.
-    """
-    raw = config.get(key, str(default))
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        raise ValueError(f'{key.upper()} must be finite and nonnegative') from None
-    if isinstance(raw, bool) or not math.isfinite(value) or value < 0:
-        raise ValueError(f'{key.upper()} must be finite and nonnegative')
-    return value
-
-
 class LLMTextEntityClusteringEngine(DocumentProcessingEngine, LLMBasedEngine):
     """Stage a complete partition, protecting existing clusters and assignments."""
 
@@ -99,17 +73,19 @@ class LLMTextEntityClusteringEngine(DocumentProcessingEngine, LLMBasedEngine):
             device: Standard engine device; clustering requires no GPU.
             config_path: Base directory for externally supplied prompt resources.
         """
-        self.threshold = _number(config, 'cluster_threshold', 92)
-        if self.threshold > 100:
+        super().__init__(config, device, config_path)
+        self.threshold = self.config.getfloat('cluster_threshold', 92.0)
+        if not 0 <= self.threshold <= 100:
             raise ValueError('CLUSTER_THRESHOLD must be in 0–100')
-        self.name_weight = _number(config, 'name_weight', .7)
-        self.mention_weight = _number(config, 'mention_weight', .3)
-        if self.name_weight + self.mention_weight <= 0 or not math.isfinite(self.name_weight + self.mention_weight):
-            raise ValueError('NAME_WEIGHT and MENTION_WEIGHT must have a finite positive sum')
-        self.aggregation = config.get('similarity_aggregation', 'max')
+        self.name_weight = self.config.getfloat('name_weight', 0.7)
+        self.mention_weight = self.config.getfloat('mention_weight', 0.3)
+        total_weight = self.name_weight + self.mention_weight
+        if (self.name_weight < 0 or self.mention_weight < 0
+                or not math.isfinite(total_weight) or total_weight <= 0):
+            raise ValueError('NAME_WEIGHT and MENTION_WEIGHT must be nonnegative with a finite positive sum')
+        self.aggregation = self.config.get('similarity_aggregation', 'max')
         if self.aggregation not in {'max', 'mean', 'min'}:
             raise ValueError('SIMILARITY_AGGREGATION must be max, mean or min')
-        super().__init__(config, device, config_path)
         self.llm_prompter.raise_on_failure = True
 
     def similarity(self, first, second):
@@ -125,9 +101,11 @@ class LLMTextEntityClusteringEngine(DocumentProcessingEngine, LLMBasedEngine):
         total = self.name_weight + self.mention_weight
         weights = [self.name_weight / total, self.mention_weight / total]
         denominator = 2 * max(weights)
-        scores = [partial_token_sort_ratio(_normalized_name(a), _normalized_name(b)) *
+        first_names = [_normalized_name(name) for name in _names(first)]
+        second_names = [_normalized_name(name) for name in _names(second)]
+        scores = [partial_token_sort_ratio(a, b) *
                   ((weights[i] + weights[j]) / denominator)
-                  for i, a in enumerate(_names(first)) for j, b in enumerate(_names(second))]
+                  for i, a in enumerate(first_names) for j, b in enumerate(second_names)]
         if self.aggregation == 'max':
             return max(scores)
         if self.aggregation == 'min':
@@ -172,27 +150,24 @@ class LLMTextEntityClusteringEngine(DocumentProcessingEngine, LLMBasedEngine):
                                             description=mention.description)
 
     @staticmethod
-    def _protected(document, mentions):
+    def _protected(document):
         """Validate and preserve existing groups; reject ambiguous prior membership.
 
         Args:
             document: Document with optional prior clusters.
-            mentions: Unique source objects in deterministic input order.
 
         Raises:
             ValueError: Existing groups contain foreign/duplicate members or app-ID conflicts.
         """
-        available = {id(m) for m in mentions}
-        covered = set()
+        try:
+            covered = document.validate_text_entity_clusters(document.text_entity_clusters)
+        except ValueError:
+            raise ValueError('Existing text clusters have empty, foreign or duplicate membership') from None
         for cluster in document.text_entity_clusters:
-            members = [id(m) for m in cluster.text_entities]
-            if not members or len(set(members)) != len(members) or any(m not in available or m in covered for m in members):
-                raise ValueError('Existing text clusters have empty, foreign or duplicate membership')
             identities = [cluster.identity] + [m.page_identity.identity for m in cluster.text_entities if m.page_identity]
             app_ids = {i.peoplegator_id for i in identities if i is not None and i.peoplegator_id is not None}
             if len(app_ids) > 1:
                 raise ValueError('Existing text cluster has conflicting app identities')
-            covered.update(members)
         return list(document.text_entity_clusters), covered
 
     def _resolve(self, mentions):
@@ -211,8 +186,8 @@ class LLMTextEntityClusteringEngine(DocumentProcessingEngine, LLMBasedEngine):
             result = self.llm_prompter({'entities': json.dumps(records, ensure_ascii=False)},
                                        response_model=TextEntityClusteringResult)
         except (ValidationError, LLMResponseError):
-            # A prompter may surface typed-content validation directly.
-            result = {}
+            self.logger.warning('Rejected text clustering partition; retaining %d singletons', len(mentions))
+            return [self._singleton(m) for m in mentions]
         except Exception as exc:
             self.logger.error('Text clustering request failed (%s)', type(exc).__name__)
             raise RuntimeError('Text clustering failed; check LLM service and request limits') from None
@@ -230,7 +205,8 @@ class LLMTextEntityClusteringEngine(DocumentProcessingEngine, LLMBasedEngine):
                     raise ValueError('Empty cluster')
                 members = [mentions[i - 1] for i in sorted(resolved.entity_indices)]
                 observed = {_normalized_name(n) for m in members for n in _names(m)}
-                if not _normalized_name(resolved.name) or _normalized_name(resolved.name) not in observed:
+                name_key = _normalized_name(resolved.name)
+                if not name_key or name_key not in observed:
                     raise ValueError('Unsupported cluster name')
                 clusters.append(PeopleGatorTextEntityCluster(
                     members, name=resolved.name,
@@ -251,10 +227,10 @@ class LLMTextEntityClusteringEngine(DocumentProcessingEngine, LLMBasedEngine):
             ValueError: Prior annotations cannot form a safe partition.
             RuntimeError: LLM request failure; all prior annotations remain intact.
         """
-        mentions = [m for page in document.page_layouts for m in page.text_entities]
+        mentions = document.text_entities
         if len({id(m) for m in mentions}) != len(mentions):
             raise ValueError('A text mention object occurs more than once in the document')
-        staged, covered = self._protected(document, mentions)
+        staged, covered = self._protected(document)
         candidates = []
         for mention in mentions:
             if id(mention) in covered:

@@ -62,6 +62,27 @@ def test_single_line_metadata_legacy_and_idempotence():
     assert manual.identity_name == 'Manual'
 
 
+def test_legacy_deduplication_uses_line_objects_with_repeated_ids():
+    from people_gator.core.layout import PeopleGatorTextEntityMention
+    doc = document('Karel came', 'Karel left')
+    page = doc.page_layouts[0]
+    first, second = page.regions[0].lines
+    manual = PeopleGatorTextEntityMention('Karel', 'manual', second, (0, 5))
+    page.text_entities.append(manual)
+    detector = engine()
+    detector.llm_prompter = Mock(return_value={'entities': [entity(), entity(context='Karel left')]})
+
+    detector.process_document(doc)
+    detector.process_document(doc)
+
+    assert page.text_entities[0] is manual
+    assert len(page.text_entities) == 2
+    detected = page.text_entities[1]
+    assert detected.line is first and detected.span == (0, 5)
+    assert detected.source_spans[0].source.line_index == 0
+    assert manual.source_spans == () and manual.text == 'manual'
+
+
 @pytest.mark.parametrize('text,name,context,expected', [
     ('Karel came; Karel left', 'Karel', 'Karel left', (12, 17)),
     ('Karel came; Karel left', 'Karel', 'Karel', None),
@@ -105,7 +126,7 @@ def test_overlap_distinct_positions_and_repeated_runs():
 
 
 @pytest.mark.parametrize('options', [
-    {'MENTION_MATCH_SCORE_CUTOFF': x} for x in ('no', 'nan', 'inf', '-1', '101')
+    {'MENTION_MATCH_SCORE_CUTOFF': x} for x in ('no', 'True', 'nan', 'inf', '-inf', '-1', '101')
 ] + [{'CHUNKING_MAX_CHARS': '0'}, {'CHUNKING_BAD': '1'}, {'CHUNKING_METHOD': 'BAD'}])
 def test_invalid_config(options):
     with pytest.raises(ValueError):
@@ -117,6 +138,12 @@ def test_config_defaults_lowercase_and_isolation():
     assert (detector.chunker.max_chars, detector.chunker.overlap_chars) == (17, 0)
     assert detector.model_name == 'mock'
     assert engine().match_cutoff == 80
+
+
+@pytest.mark.parametrize('cutoff', ['0', '100', ' 87.5 '])
+def test_supported_numeric_config_values(cutoff):
+    detector = engine(mention_match_score_cutoff=cutoff)
+    assert detector.match_cutoff == float(cutoff)
 
 
 @pytest.mark.parametrize('response', [[], {'entities': []}, {'entities': [None, {'type': 'place'}]}])

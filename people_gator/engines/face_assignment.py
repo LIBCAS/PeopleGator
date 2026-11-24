@@ -4,16 +4,163 @@ import numpy as np
 
 from pydantic import BaseModel, ConfigDict
 from collections import defaultdict
+from copy import deepcopy
 
-from people_gator.engines.face_entity_context import FaceEntityContext, assigned_caption
+from shapely.geometry import Polygon, box
 
-from people_gator.core.utils import find_text_in_bounding_box
-from people_gator.core.layout import PeopleGatorFaceRegionLayout
+from people_gator.core.utils import (find_text_in_bounding_box, assigned_caption,
+                                     caption_mentions)
 from people_gator.engines import DocumentProcessingEngine, LLMBasedEngine
 from people_gator.enums import ProcessingMode
 
 
 logger = logging.getLogger(__name__)
+
+
+def select_entity_context(page, source_region, context_bbox, caption_text, document=None):
+    """Build evidence for one selection using the same preparation as face batches.
+
+    Args:
+        page: Original page containing the face.
+        source_region: Image region with optional caption metadata.
+        context_bbox: Image crop in page coordinates.
+        caption_text: Assigned title or None.
+        document: Original document, or None for standalone page processing.
+    """
+    return select_entity_contexts(page, [(source_region, context_bbox, caption_text)], document)[0]
+
+
+def _off_page_entities(page, document, membership, occurrences):
+    """Group off-page evidence once, preserving encounter order and on-page exclusion.
+
+    Args:
+        page: Current page excluded from document evidence.
+        document: Original document, or None for standalone processing.
+        membership: First owning cluster keyed by mention identity.
+        occurrences: Current page's resolved original mentions.
+    """
+    if document is None:
+        return []
+    result = []
+    on_page = {id(membership[id(m)]) for m, _ in occurrences if id(m) in membership}
+    seen, groups = set(), {}
+    for pi, other_page in enumerate(document.page_layouts):
+        if other_page is page:
+            continue
+        _, other_occurrences = other_page.resolve_text_entities(pi)
+        for mention, sources in other_occurrences:
+            if id(mention) in seen:
+                continue
+            seen.add(id(mention))
+            cluster = membership.get(id(mention))
+            if cluster is not None and id(cluster) in on_page:
+                continue
+            record = mention.to_evidence_record(other_page, pi, sources, 'document')
+            if cluster is None:
+                result.append(record)
+            else:
+                if id(cluster) not in groups:
+                    group = dict(provenance='document', provisional=True, name=cluster.name,
+                                 description=cluster.description, short_description=cluster.short_description,
+                                 aliases=[], sources=[])
+                    groups[id(cluster)] = group
+                    result.append(group)
+                groups[id(cluster)]['sources'].append(record)
+    for group in groups.values():
+        group['aliases'] = list(dict.fromkeys(record['name'] for record in group['sources']))
+    return result
+
+
+def select_entity_contexts(page, selections, document=None):
+    """Prepare independent face payloads, reusing invariant sources within this call.
+
+    Args:
+        page: Original page containing the requests.
+        selections: Ordered (source region, crop bounds, caption text) tuples.
+        document: Original document, or None for standalone page processing.
+
+    Returns:
+        Ordered independent payloads. Caption-only requests do not resolve other
+        pages. Reuse ends when this function returns, before any model decisions.
+    """
+    if not selections:
+        return []
+    page_index = next(i for i, p in enumerate(document.page_layouts) if p is page) if document is not None else None
+    page_index, occurrences = page.resolve_text_entities(page_index)
+    membership = document.text_entity_membership() if document is not None else {}
+    captions_by_source, selected = {}, {}
+    document_entities = None
+    results = []
+    for source_region, context_bbox, caption_text in selections:
+        selection_key = (id(source_region), tuple(context_bbox), caption_text)
+        if selection_key in selected:
+            results.append(deepcopy(selected[selection_key]))
+            continue
+        caption_key = (id(source_region), caption_text)
+        if caption_key not in captions_by_source:
+            captions_by_source[caption_key] = caption_mentions(page, source_region, caption_text, occurrences)
+        captions = captions_by_source[caption_key]
+        result = {key: [] for key in ('caption_entities', 'surrounding_entities', 'page_entities', 'document_entities')}
+        result['caption_entities'] = [m.to_evidence_record(page, page_index, sources, 'caption', membership.get(id(m)))
+                                      for m, sources in captions]
+        if not captions:
+            crop = box(*context_bbox)
+            for mention, sources in occurrences:
+                cluster = membership.get(id(mention))
+                result['page_entities'].append(mention.to_evidence_record(page, page_index, sources, 'page', cluster))
+                if any(Polygon(line.polygon).intersection(crop).area > 0 for _, line in sources):
+                    result['surrounding_entities'].append(mention.to_evidence_record(page, page_index, sources, 'surrounding', cluster))
+            if document_entities is None:
+                document_entities = _off_page_entities(page, document, membership, occurrences)
+            result['document_entities'] = deepcopy(document_entities)
+        selected[selection_key] = result
+        results.append(result)
+    return results
+
+
+def _page_offsets(page, vertical, horizontal):
+    """Compute OCR-height-based crop margins once per prepared page.
+
+    Args:
+        page: Original page with OCR line heights.
+        vertical: Configured vertical multiplier.
+        horizontal: Configured horizontal multiplier.
+    """
+    heights = [line.heights[0] + line.heights[1] for line in page.lines_iterator()]
+    median = np.median(heights) if heights else 0
+    return int(median * vertical), int(median * horizontal)
+
+
+def _context_crop(page_image, source_region, vertical_offset, horizontal_offset):
+    """Clip source context to the image and copy it before drawing face markers.
+
+    Args:
+        page_image: Original image array.
+        source_region: Original image region.
+        vertical_offset: Vertical margin in pixels.
+        horizontal_offset: Horizontal margin in pixels.
+    """
+    left, top, right, bottom = source_region.get_polygon_bounding_box()
+    bounds = (max(0, left - horizontal_offset), max(0, top - vertical_offset),
+              min(page_image.shape[1], right + horizontal_offset), min(page_image.shape[0], bottom + vertical_offset))
+    x0, y0, x1, y1 = bounds
+    return bounds, np.copy(page_image[y0:y1, x0:x1])
+
+
+def _mark_face(context_image, bounds, face_bounds, color):
+    """Draw a face and return its center as integer context percentages.
+
+    Args:
+        context_image: Independent context crop to mark.
+        bounds: Context bounds in page coordinates.
+        face_bounds: Face bounds in page coordinates.
+        color: OpenCV marker color.
+    """
+    x0, y0, x1, y1 = bounds
+    left, top, right, bottom = face_bounds
+    cv2.rectangle(context_image, (left - x0, top - y0), (right - x0, bottom - y0), color, 3)
+    return (round(100 * ((left + right) / 2 - x0) / (x1 - x0)),
+            round(100 * ((top + bottom) / 2 - y0) / (y1 - y0)))
 
 
 class FaceIdentifier(BaseModel):
@@ -134,7 +281,7 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
             finally:
                 metadata = face_item.face_region.face_metadata
                 if metadata is not None:
-                    metadata.prompts.extend(dict(engine="LLM_FACE_ASSIGNMENT", **record) for record in interactions)
+                    metadata.record_interactions("LLM_FACE_ASSIGNMENT", interactions)
             face_item.result = result
 
         page_layout = self.update_layout(page_layout, face_data)
@@ -153,58 +300,27 @@ class LLMFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
             Request objects in face or source-region order.
         """
         face_data = []
-        entity_context = FaceEntityContext(document)
-        for i, region in enumerate(page_layout.regions):
-            if isinstance(region, PeopleGatorFaceRegionLayout):
-                face_x_min, face_y_min, face_x_max, face_y_max = region.get_polygon_bounding_box()
-                face_image = page_image[face_y_min:face_y_max, face_x_min:face_x_max]
+        selections = []
+        faces = page_layout.faces
+        if not faces:
+            return face_data
+        vertical_offset, horizontal_offset = _page_offsets(page_layout, self.vertical_offset, self.horizontal_offset)
+        for region in faces:
+            face_bounds = region.get_polygon_bounding_box()
+            left, top, right, bottom = face_bounds
+            face_image = page_image[top:bottom, left:right]
+            source_region = region.source_region
+            context_bbox, context_image = _context_crop(page_image, source_region, vertical_offset, horizontal_offset)
+            face_coordinates = _mark_face(context_image, context_bbox, face_bounds, (0, 255, 0))
+            context_text = find_text_in_bounding_box(page_layout, context_bbox)
+            caption_text = assigned_caption(source_region)
+            face_data.append(FaceAssignmentData(
+                face_region=region, face_image=face_image, face_coordinates=face_coordinates,
+                context_image=context_image, context_text=context_text, caption_text=caption_text))
+            selections.append((source_region, context_bbox, caption_text))
 
-                source_region = region.source_region
-
-                heights = [line.heights[0] + line.heights[1] for line in page_layout.lines_iterator()]
-                median_line_height = np.median(heights) if heights else 0
-                vertical_offset = int(median_line_height * self.vertical_offset)
-                horizontal_offset = int(median_line_height * self.horizontal_offset)
-
-                source_x_min, source_y_min, source_x_max, source_y_max = source_region.get_polygon_bounding_box()
-                context_x_min = max(0, source_x_min - horizontal_offset)
-                context_y_min = max(0, source_y_min - vertical_offset)
-                context_x_max = min(page_image.shape[1], source_x_max + horizontal_offset)
-                context_y_max = min(page_image.shape[0], source_y_max + vertical_offset)
-
-                context_image = np.copy(page_image[context_y_min:context_y_max, context_x_min:context_x_max])
-
-                face_relative_x_min = face_x_min - context_x_min
-                face_relative_y_min = face_y_min - context_y_min
-                face_relative_x_max = face_x_max - context_x_min
-                face_relative_y_max = face_y_max - context_y_min
-
-                cv2.rectangle(context_image, (face_relative_x_min, face_relative_y_min), (face_relative_x_max, face_relative_y_max), (0, 255, 0), 3)
-
-                face_center_x = (face_x_min + face_x_max) / 2
-                face_center_y = (face_y_min + face_y_max) / 2
-
-                face_center_x_relative = round(100 * (face_center_x - context_x_min) / (context_x_max - context_x_min))
-                face_center_y_relative = round(100 * (face_center_y - context_y_min) / (context_y_max - context_y_min))
-
-                face_coordinates = (face_center_x_relative, face_center_y_relative)
-
-                context_bbox = (context_x_min, context_y_min, context_x_max, context_y_max)
-                context_text = find_text_in_bounding_box(page_layout, context_bbox)
-
-                caption_text = assigned_caption(source_region)
-
-                face_item = FaceAssignmentData(face_region=region,
-                                               face_image=face_image,
-                                               face_coordinates=face_coordinates,
-                                               context_image=context_image,
-                                               context_text=context_text,
-                                               caption_text=caption_text,
-                                               entity_context=entity_context.select(
-                                                   page_layout, source_region, context_bbox, caption_text))
-
-                face_data.append(face_item)
-
+        for item, context in zip(face_data, select_entity_contexts(page_layout, selections, document)):
+            item.entity_context = context
         return face_data
 
     def update_layout(self, page_layout, face_data: list[FaceAssignmentData]):
@@ -354,23 +470,30 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
             logger.debug("Page %s: prepared %d LLM assignment requests", page_layout.id, len(face_data))
             all_face_data.extend(face_data)
 
-        data = [face_item.to_dict() for face_item in all_face_data]
-        images = [[face_item.context_image] for face_item in all_face_data]
+        self._assign_parallel(all_face_data)
+        self.update_layout(all_face_data)
+
+    def _assign_parallel(self, face_data):
+        """Assign ordered batches, retaining all attempts before propagating errors.
+
+        Args:
+            face_data: Prepared batches for either one page or the whole document.
+        """
+        data = [face_item.to_dict() for face_item in face_data]
+        images = [[face_item.context_image] for face_item in face_data]
         interactions = []
         try:
             results = self.llm_prompter.process_parallel(
                 data_list=data, images_list=images, response_model=BatchFaceAssignmentResult, interactions=interactions)
         finally:
-            for face_item, records in zip(all_face_data, interactions):
+            for face_item, records in zip(face_data, interactions):
                 for face in face_item.face_regions:
                     metadata = face.face_metadata
                     if metadata is not None:
-                        metadata.prompts.extend(dict(engine="LLM_BATCH_FACE_ASSIGNMENT", **record) for record in records)
+                        metadata.record_interactions("LLM_BATCH_FACE_ASSIGNMENT", records)
 
-        for face_item, result in zip(all_face_data, results):
+        for face_item, result in zip(face_data, results):
             face_item.result = result
-
-        self.update_layout(all_face_data)
 
     def process_page(self, page_image, page_layout, document=None):
         """Process one page in place and return its layout.
@@ -387,21 +510,7 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
         logger.debug("Page %s: prepared %d LLM assignment requests", page_layout.id, len(face_data))
 
         if self.processing_mode == ProcessingMode.PAGE_PARALLEL:
-            data = [face_item.to_dict() for face_item in face_data]
-            images = [[face_item.context_image] for face_item in face_data]
-            interactions = []
-            try:
-                results = self.llm_prompter.process_parallel(
-                    data_list=data, images_list=images, response_model=BatchFaceAssignmentResult, interactions=interactions)
-            finally:
-                for face_item, records in zip(face_data, interactions):
-                    for face in face_item.face_regions:
-                        metadata = face.face_metadata
-                        if metadata is not None:
-                            metadata.prompts.extend(dict(engine="LLM_BATCH_FACE_ASSIGNMENT", **record) for record in records)
-
-            for face_item, result in zip(face_data, results):
-                face_item.result = result
+            self._assign_parallel(face_data)
 
         else:
             for face_item in face_data:
@@ -414,7 +523,7 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                     for face in face_item.face_regions:
                         metadata = face.face_metadata
                         if metadata is not None:
-                            metadata.prompts.extend(dict(engine="LLM_BATCH_FACE_ASSIGNMENT", **record) for record in interactions)
+                            metadata.record_interactions("LLM_BATCH_FACE_ASSIGNMENT", interactions)
                 face_item.result = result
 
         self.update_layout(face_data)
@@ -433,36 +542,20 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
             Request objects in face or source-region order.
         """
         face_data = []
-        entity_context = FaceEntityContext(document)
+        selections = []
 
         source_regions_mapping = defaultdict(list)
-        for i, region in enumerate(page_layout.regions):
-            if isinstance(region, PeopleGatorFaceRegionLayout):
-                source_regions_mapping[region.source_region].append(region)
-
-        median_line_height = 0
-        lines = list(page_layout.lines_iterator())
-        if len(lines) > 0:
-            median_line_height = np.median([line.heights[0] + line.heights[1] for line in lines])
-    
-        vertical_offset = int(median_line_height * self.vertical_offset)
-        horizontal_offset = int(median_line_height * self.horizontal_offset)
+        for region in page_layout.faces:
+            source_regions_mapping[region.source_region].append(region)
+        vertical_offset, horizontal_offset = _page_offsets(page_layout, self.vertical_offset, self.horizontal_offset)
 
         for source_region, face_regions in source_regions_mapping.items():
             if len(face_regions) > self.max_people:
                 logger.debug('Found %s face regions for source region %s, which exceeds the maximum of %s. Skipping this source region.', len(face_regions), source_region.id, self.max_people)
                 continue
 
-            source_x_min, source_y_min, source_x_max, source_y_max = source_region.get_polygon_bounding_box()
-            context_x_min = max(0, source_x_min - horizontal_offset)
-            context_y_min = max(0, source_y_min - vertical_offset)
-            context_x_max = min(page_image.shape[1], source_x_max + horizontal_offset)
-            context_y_max = min(page_image.shape[0], source_y_max + vertical_offset)
-
-            context_bbox = (context_x_min, context_y_min, context_x_max, context_y_max)
+            context_bbox, context_image = _context_crop(page_image, source_region, vertical_offset, horizontal_offset)
             context_text = find_text_in_bounding_box(page_layout, context_bbox)
-
-            context_image = np.copy(page_image[context_y_min:context_y_max, context_x_min:context_x_max])
 
             # Stable sorting retains page-region order for equal horizontal centers.
             sorted_face_regions = sorted(
@@ -474,24 +567,7 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                 face_color_name = list(self.colors.keys())[i % len(self.colors)]
                 face_color = self.colors[face_color_name]
 
-                face_x_min, face_y_min, face_x_max, face_y_max = face_region.get_polygon_bounding_box()
-                face_relative_x_min = face_x_min - context_x_min
-                face_relative_y_min = face_y_min - context_y_min
-                face_relative_x_max = face_x_max - context_x_min
-                face_relative_y_max = face_y_max - context_y_min
-
-                cv2.rectangle(context_image, (face_relative_x_min, face_relative_y_min), (face_relative_x_max, face_relative_y_max), face_color[::-1], 3)
-
-                face_width = face_x_max - face_x_min
-                face_height = face_y_max - face_y_min
-
-                face_center_x = face_x_min + face_width / 2
-                face_center_y = face_y_min + face_height / 2
-
-                face_center_x_relative = round(100 * (face_center_x - context_x_min) / (context_x_max - context_x_min))
-                face_center_y_relative = round(100 * (face_center_y - context_y_min) / (context_y_max - context_y_min))
-
-                face_coordinates = (face_center_x_relative, face_center_y_relative)
+                face_coordinates = _mark_face(context_image, context_bbox, face_region.get_polygon_bounding_box(), face_color[::-1])
 
                 faces.append(
                     {
@@ -510,13 +586,14 @@ class LLMBatchFaceAssignmentEngine(DocumentProcessingEngine, LLMBasedEngine):
                 context_image=context_image,
                 faces=faces,
                 face_regions=sorted_face_regions,
-                result=None,
-                entity_context=entity_context.select(
-                    page_layout, source_region, context_bbox, caption_text)
+                result=None
             )
 
             face_data.append(face_item)
+            selections.append((source_region, context_bbox, caption_text))
 
+        for item, context in zip(face_data, select_entity_contexts(page_layout, selections, document)):
+            item.entity_context = context
         return face_data
 
     def update_layout(self, face_data: list[BatchFaceAssignmentData]):
