@@ -59,6 +59,33 @@ flowchart TD
 
 The available engines perform text entity detection and clustering, face detection, LLM-assisted naming, and entity matching. See [Processing](PROCESSING.md).
 
+### Processing implementation principles
+
+The intended direction of processing responsibilities is:
+
+```text
+DocumentParser
+    -> configured document-processing engines
+        -> existing document/page/mention/cluster/identity models
+        -> small shared utilities and existing service infrastructure
+```
+
+The parser orchestrates import, ordered engine execution, checkpoint boundaries
+and export. Each engine receives the existing document, performs its own
+processing and returns the document for the next stage. Engine-specific decisions,
+evidence selection and final prompt construction belong to that engine's module;
+shared LLM infrastructure handles common template, request and response
+operations, not specialized processing decisions.
+
+Use existing domain models for genuine data access, manipulation and common
+record serialization, and small stateless functions for reusable operations.
+Engines should not depend on another engine's internal processing or prompt
+construction. Avoid intermediary processing layers that only relocate complexity.
+
+The independent `people_gator/text/` package owns reusable OCR chunking, source
+mappings and normalization. Its chunker is consumed by the detector, not
+registered as another processing engine. See [implementation rules](../AGENTS.md#implementation-style-and-scope).
+
 ## Data model
 
 The main in-memory objects and their relationships are:
