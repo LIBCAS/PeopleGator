@@ -78,7 +78,7 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# Private processing snapshots and their recovery ledgers.
+# Private processing snapshots.
 checkpoint.json
 document.pkl
 processing-checkpoints/

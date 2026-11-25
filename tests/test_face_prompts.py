@@ -4,6 +4,7 @@ from configparser import ConfigParser
 from copy import deepcopy
 import json
 import multiprocessing
+import sys
 from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
@@ -29,9 +30,9 @@ def rendered(request):
         for m in request['input'] if any(c['type'] == 'input_text' for c in m['content']))
 
 
-def test_metadata_lists_checkpoint_fidelity_and_separate_persistence():
+def test_metadata_lists_checkpoint_fidelity_and_separate_persistence(tmp_path):
     from test_entity_matching import face_only, identity
-    from people_gator.core.checkpoint_document import serialize_document, restore_document
+    from people_gator.core.checkpoints import save_checkpoint, load_checkpoint
     doc = face_only(identity(), identity())
     a, b = doc.faces
     assert a.face_metadata.prompts == b.face_metadata.prompts == []
@@ -41,7 +42,9 @@ def test_metadata_lists_checkpoint_fidelity_and_separate_persistence():
     a.face_metadata.prompts.append(record)
     assert b.face_metadata.prompts == []
     assert a.face_metadata.to_dict() == before
-    restored = restore_document(serialize_document(doc))
+    stage = tmp_path / "stage"
+    save_checkpoint(stage, doc, {"next_step": 1})
+    restored, _ = load_checkpoint(stage)
     assert restored.faces[0].face_metadata.prompts == [record]
     assert restored.faces[1].face_metadata.prompts == []
     assert restored.faces[0].face_metadata.prompts is not a.face_metadata.prompts
@@ -260,7 +263,6 @@ def test_export_every_face_unique_stable_unicode_and_no_xml_changes(tmp_path, fm
 
 @pytest.mark.parametrize('mode', ['absent', 'empty', 'ini', 'override', 'disable', 'resume'])
 def test_cli_ini_precedence_disabled_output_and_final_processed_document(tmp_path, monkeypatch, mode):
-    import sys
     from test_entity_matching import face_only, identity
     from user_scripts import parse_folder
     doc = face_only(identity(), identity())
@@ -299,19 +301,26 @@ def test_cli_ini_precedence_disabled_output_and_final_processed_document(tmp_pat
 
 
 def test_checkpoint_resume_can_enable_or_relocate_prompt_output(tmp_path, monkeypatch):
-    from test_checkpoints import pipeline, rich_document, snapshots
-    parser, _, config = pipeline(tmp_path, monkeypatch)
-    doc = rich_document()
+    from test_entity_matching import face_only, identity
+    from test_checkpoints import pipeline, snapshots
+    from people_gator.core import document_parser
+    from user_scripts import parse_folder
+    parser, engines, config = pipeline(tmp_path, monkeypatch)
+    doc = face_only(identity())
     record = dict(engine='LLM_FACE_ASSIGNMENT', prompt='[user]\nČapek', response='raw')
     doc.faces[0].face_metadata.prompts.append(record)
     parser.process_document(doc)
     path = snapshots(tmp_path)[-1]
-    config['PARSE_FOLDER']['OUTPUT_FACE_PROMPTS_PATH'] = str(tmp_path / 'new-output')
-    restored = parser.process_document(None, resume_from_checkpoint=path)
-    assert restored.faces[0].face_metadata.prompts == [record]
-    config['PARSE_FOLDER']['OUTPUT_FACE_PROMPTS_PATH'] = str(tmp_path / 'relocated-output')
-    restored = parser.process_document(None, resume_from_checkpoint=path)
-    assert restored.faces[0].face_metadata.prompts == [record]
+    ini = tmp_path / 'pipeline.ini'
+    with ini.open('w') as stream:
+        config.write(stream)
+    monkeypatch.setattr(document_parser, 'engine_factory', Mock(side_effect=engines * 2))
+    for destination in ('new-output', 'relocated-output'):
+        output = tmp_path / destination
+        monkeypatch.setattr(sys, 'argv', ['peoplegator', '--config', str(ini), '--device', 'cpu',
+            '--resume-from-checkpoint', str(path), '--output-face-prompts-path', str(output)])
+        assert parse_folder.main() == 0
+        assert [json.loads(p.read_text()) for p in output.glob('*.json')] == [[record]]
 
 
 def test_app_face_payload_is_identical_with_or_without_diagnostics():
@@ -461,49 +470,3 @@ def test_parallel_assignment_keeps_mixed_attempts_without_applying_partial_resul
     assert [r[0]['response'] if r else None for r in records] == expected + [None] * (6 - len(expected))
     assert all(r[0]['engine'] == 'LLM_BATCH_FACE_ASSIGNMENT' for r in records if r)
     assert all(r[0]['prompt'] == rendered(requests[i // 2]) for i, r in enumerate(records) if r)
-
-
-@pytest.mark.parametrize('fmt', ['alto', 'page'])
-def test_legacy_checkpoint_normalizes_missing_prompts_only_at_validated_load(tmp_path, monkeypatch, fmt):
-    from test_checkpoints import pipeline, snapshots, assert_graph_equal
-    from test_entity_matching import document, face
-    from people_gator.core.checkpoint_document import serialize_document, restore_document
-    from user_scripts.parse_folder import save_face_prompts
-    doc = document(fmt)
-    for page in doc.page_layouts:
-        del face(page).face_metadata.prompts
-    doc.source_metadata = {}
-    saved = face(doc.page_layouts[0], suffix='saved')
-    record = dict(engine='LLM_FACE_ASSIGNMENT', prompt='[user]\nČapek', response='raw')
-    saved.face_metadata.prompts.append(record)
-    doc.source_metadata['saved_prompts'] = saved.face_metadata.prompts
-    no_metadata = deepcopy(saved)
-    no_metadata.id = 'no-metadata'
-    no_metadata.face_metadata = None
-    doc.page_layouts[0].regions.append(no_metadata)
-
-    payload = serialize_document(doc)
-    raw = restore_document(payload)
-    assert_graph_equal(doc, raw)
-    assert not hasattr(raw.page_layouts[0].faces[0].face_metadata, 'prompts')
-    assert not hasattr(raw.page_layouts[1].faces[0].face_metadata, 'prompts')
-
-    parser, _, _ = pipeline(tmp_path, monkeypatch)
-    parser.process_document(doc)
-    restored = parser.process_document(None, resume_from_checkpoint=snapshots(tmp_path)[-1])
-    first = restored.page_layouts[0].faces[0].face_metadata
-    second = restored.page_layouts[1].faces[0].face_metadata
-    preserved = restored.page_layouts[0].faces[1].face_metadata
-    assert first.prompts == second.prompts == []
-    assert first.prompts is not second.prompts
-    assert preserved.prompts == [record]
-    assert preserved.prompts is restored.source_metadata['saved_prompts']
-    assert restored.page_layouts[0].faces[2].face_metadata is None
-    assert not hasattr(doc.page_layouts[0].faces[0].face_metadata, 'prompts')
-
-    output = tmp_path / 'prompts'
-    save_face_prompts(restored, output)
-    assert sorted((json.loads(path.read_text()) for path in output.glob('*.json')), key=len) == [[], [], [], [record]]
-    assert_graph_equal(restored, restore_document(serialize_document(restored)))
-    first.prompts.append(dict(engine='ENTITY_MATCHING', prompt='one face', response=None))
-    assert second.prompts == [] and preserved.prompts == [record]
