@@ -1,8 +1,8 @@
 import logging
-from contextlib import nullcontext
-from time import monotonic
-from uuid import UUID
+from pathlib import Path
+from uuid import UUID, uuid4
 
+from people_gator.core.checkpoints import load_checkpoint, save_checkpoint
 from people_gator.core.layout import PeopleGatorDocument, PeopleGatorFaceRegionLayout
 from people_gator.engines import FaceDetectionYoloEngine, LLMFaceAssignmentEngine, LLMBatchFaceAssignmentEngine, EntityMatchingEngine, LLMTextEntityDetectionEngine, LLMTextEntityClusteringEngine
 from people_gator.core.services import UuidService
@@ -44,59 +44,41 @@ class DocumentParser:
             import_from_app: Whether to import app annotations first; defaults to False.
             export_to_app: Whether to export processing results; defaults to False.
             drop_existing_annotations: Whether to remove stored annotations before export; defaults to False.
-            resume_from_checkpoint: Finalized checkpoint path; skips document loading/import and completed engines.
+            resume_from_checkpoint: Trusted stage directory or checkpoint.json. Loading a Pickle can execute code.
 
         Returns:
             The processed document (the same instance for the built-in engines).
         """
-        from people_gator.core.checkpoints import CheckpointRun, CheckpointError
-        directory = self.config.get('PARSE_FOLDER', 'PROCESSING_CHECKPOINTS', fallback='').strip()
-        run = None
-        if directory or resume_from_checkpoint:
-            run = CheckpointRun(self.config, self.config_path, directory,
-                dict(import_from_app=import_from_app, export_to_app=export_to_app,
-                     drop_existing_annotations=drop_existing_annotations, device=str(self.device)),
-                document=document, resume=resume_from_checkpoint)
-            if len(run.pipeline) != len(self.engines):
-                raise CheckpointError('Checkpointing requires every ENGINE section to load successfully')
-            document = run.document
-        with run.locked() if run else nullcontext():
-            return self._process_document(document, import_from_app, export_to_app,
-                                          drop_existing_annotations, run)
+        start = 0
+        if resume_from_checkpoint:
+            document, metadata = load_checkpoint(resume_from_checkpoint)
+            start = metadata['next_step']
 
-    def _process_document(self, document, import_from_app, export_to_app, drop_existing_annotations, run):
-        """Run engines and final app export under the optional history lock.
-
-        Args:
-            document: Initial or restored complete document.
-            import_from_app: Effective initial import option.
-            export_to_app: Requested final app export.
-            drop_existing_annotations: Requested destructive export option.
-            run: Optional checkpoint history, holding the run lock.
-        """
         logger.info("Processing document %s: %d pages, %d engines",
                     document.id, len(document.page_layouts), len(self.engines))
         if not document.page_layouts:
             logger.debug("Document %s has no pages", document.id)
         if (import_from_app or export_to_app) and self.db_api_service is None:
             logger.warning("Document %s: requested app operation skipped; DB_API is not configured", document.id)
-        if import_from_app and self.db_api_service is not None and not (run and run.completed):
+        if import_from_app and self.db_api_service is not None and not resume_from_checkpoint:
             logger.info("Importing document %s from PeopleGatorApp", document.id)
             document = import_document(document, self.db_api_service)
 
-        start = len(run.completed) if run else 0
-        for ordinal, engine in enumerate(self.engines[start:], start=start):
-            logger.debug("Document %s: running engine %s", document.id, engine.__class__.__name__)
-            if run:
-                run.before_engine(ordinal)
-            began = monotonic()
+        directory = self.config.get('PARSE_FOLDER', 'PROCESSING_CHECKPOINTS', fallback='').strip()
+        run_dir = Path(directory) / uuid4().hex if directory else None
+        for index, engine in enumerate(self.engines[start:], start=start):
+            engine_name = type(engine).__name__
+            logger.debug("Document %s: running engine %s", document.id, engine_name)
             document = engine.process_document(document)
-            if run:
-                run.save(document, ordinal, monotonic() - began)
+            if run_dir is not None:
+                save_checkpoint(run_dir / f'{index + 1:04d}-{engine_name}', document, {
+                    'document_id': document.id,
+                    'engine': engine_name,
+                    'last_completed': index,
+                    'next_step': index + 1,
+                })
 
         if export_to_app and self.db_api_service is not None:
-            if run:
-                run.before_export()
             logger.info("Exporting document %s to PeopleGatorApp", document.id)
             export_document(document, self.db_api_service, drop_existing_annotations=drop_existing_annotations)
 

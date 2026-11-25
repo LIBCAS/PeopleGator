@@ -33,7 +33,7 @@ def parse_arguments():
     parser.add_argument("--output-render-path", help="Path to directory where rendered images will be saved.")
     parser.add_argument("--output-face-prompts-path", help="Directory for per-face rendered LLM prompts and raw responses as JSON.")
     parser.add_argument("--processing-checkpoints", help="Directory for private per-engine JSON metadata + Pickle checkpoints (empty disables).")
-    parser.add_argument("--resume-from-checkpoint", help="Continue from a trusted local checkpoint directory or checkpoint.json using the supplied configuration.")
+    parser.add_argument("--resume-from-checkpoint", help="Continue from a trusted local checkpoint directory or checkpoint.json using the supplied configuration. Pickle can execute code.")
 
     parser.add_argument("--import-from-app", action="store_true", help="Import the document from the People Gator app instead of processing it locally.")
     parser.add_argument("--export-to-app", action="store_true", help="Export the processed document to the People Gator app.")

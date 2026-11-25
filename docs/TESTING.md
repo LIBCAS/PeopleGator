@@ -10,7 +10,7 @@ PeopleGator tests cover document loading, processing engines, identity linking, 
 | Face detection and assignment | Regions, coordinates, landmarks, image/OCR/caption evidence, single/batch modes and ambiguous results |
 | Text processing | Reading order and OCR source spans, detection, clustering, identity propagation and unchanged original evidence |
 | LLM and database integration | Prompt/schema validation, retries and failures, candidate decisions, protected IDs and partial app writes |
-| Output and recovery | ALTO/PAGE round trips, linked text-mention export, diagnostic JSON, checkpoint integrity and replay safeguards |
+| Output and recovery | ALTO/PAGE round trips, linked text-mention export, diagnostic JSON, checkpoint pairs and stage-by-stage resume |
 | Deployment | Dependency extras, installed entry points, worker subprocess outcomes, logging and documentation |
 
 Use small synthetic documents and mocked LLM, model and database responses for deterministic tests. Verify **existing document content remains intact**, not only newly written fields. Mocked correctness does not establish model extraction or identity accuracy on a real corpus; live integration and corpus evaluation require separate tests.
@@ -139,7 +139,7 @@ Prompt tests validate wiring, schemas and evidence boundaries, not factual quali
 
 ## Face prompt/response diagnostics
 
-`tests/test_face_prompts.py` verifies independent per-face interaction lists, exact rendered role text and raw responses (including failures/retries), single/batch and multi-face matching association, ordered parallel results, and optional JSON export for every face. It covers collision-safe filenames, CLI/INI precedence, disabled/resumed output and legacy checkpoint normalization without changing XML/app contracts.
+`tests/test_face_prompts.py` verifies independent per-face interaction lists, exact rendered role text and raw responses (including failures/retries), single/batch and multi-face matching association, ordered parallel results, and optional JSON export for every face. It covers collision-safe filenames, CLI/INI precedence, disabled/resumed output and native Pickle persistence without changing XML/app contracts.
 
 ```bash
 python -m pytest -q tests/test_face_prompts.py tests/test_checkpoints.py
@@ -149,10 +149,10 @@ A real process-pool regression requires POSIX `fork`; other systems use determin
 
 ## Processing checkpoints
 
-`tests/test_checkpoints.py` tests complete Pickle/document-graph fidelity, ALTO/PAGE and inherited OCR metadata, resource/input integrity, trusted loading, exact and legacy restore behavior, CLI precedence, stage-by-stage resume and app replay fencing. It also tests interruption-safe publication, JSON diagnostics and key-based credential redaction without filtering legitimate document data.
+`tests/test_checkpoints.py` uses ALTO/PAGE fixtures to check native Pickle persistence of OCR, source references, identities, receipts and images. It exercises per-engine saves, ordinary read/write failures, CLI precedence, copied pairs, resumed exports and selected inspection output.
 
 ```bash
 python -m pytest -q tests/test_checkpoints.py
 ```
 
-Run with processing extras; tests mock LLM/app operations. The supported checkpoint format, privacy requirements and conservative recovery limitations are defined in [Processing checkpoints and recovery](CHECKPOINTS.md).
+Run with processing extras; tests mock LLM/app operations. The supported checkpoint format, trusted loading and recovery limitations are defined in [Processing checkpoints and recovery](CHECKPOINTS.md).

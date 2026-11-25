@@ -1,7 +1,8 @@
-"""Read-only, selected JSON diagnostics for trusted hybrid checkpoints."""
+"""Read-only, selected JSON diagnostics for trusted local checkpoints."""
 
-from configparser import ConfigParser
 from dataclasses import asdict
+
+from people_gator.core.checkpoints import load_checkpoint
 
 
 def document_summary(document):
@@ -39,14 +40,11 @@ def inspect_checkpoint(path, details=('ocr', 'regions', 'entities')):
     """Export selected details from a trusted local checkpoint without processing.
 
     Args:
-        path: Published stage directory or checkpoint.json, never an external Pickle.
+        path: Trusted stage directory or checkpoint.json. Pickle can execute code.
         details: Selected diagnostic groups; these are not a recovery representation.
     """
-    from people_gator.core.checkpoints import read_metadata, load_document
-    data, marker = read_metadata(path)
-    document = load_document(data, marker, ConfigParser())
-    result = {'schema_version': data['schema_version'], 'run_id': data['run_id'],
-              'last_completed': data['last_completed'], 'next_step': data['next_step'],
+    document, metadata = load_checkpoint(path)
+    result = {**metadata,
               'summary': document_summary(document), 'document': {'id': document.id, 'name': document.name,
               'library': document.library}, 'pages': []}
     mentions = {id(mention): index for index, mention in enumerate(document.text_entities)}

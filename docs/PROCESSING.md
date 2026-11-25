@@ -286,7 +286,7 @@ The authoritative [app payload, eligibility and retry limitations](OUTPUT_FORMAT
 | `--output-render-path` | Optional annotated JPEG directory |
 | `--output-face-prompts-path` | Optional directory for one prompt/raw-response JSON list per face |
 | `--processing-checkpoints` | Optional directory for JSON metadata + Pickle document after each successful engine; empty disables |
-| `--resume-from-checkpoint` | Resume a finalized snapshot, skipping completed engines and initial app import |
+| `--resume-from-checkpoint` | Load a trusted checkpoint pair, skipping completed engines and initial app import |
 | `--import-from-app` / `--export-to-app` | Import stored annotations before processing / export results after processing |
 | `--device`, `--gpu-id` | CPU or GPU choice and optional GPU index; CPU is the default |
 | `--logging-level` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
@@ -310,7 +310,7 @@ The script can therefore run with just `--config ./config.ini` when the remainin
 
 `OUTPUT_FACE_PROMPTS_PATH = ./output/face-prompts` enables one final JSON diagnostic file per face; the CLI override may relocate or disable it. Face-associated LLM requests (including failed application-level attempts and retries) retain rendered text and raw responses in metadata; unassociated text-only requests do not. The shared prompter accepts an optional caller-owned `interactions` list and does not keep mutable capture state. `LLMPrompter.process()` and `__call__()` append attempt dictionaries directly; `process_parallel()` appends one attempt list per input request in input order. Existing entries are preserved, and recorded attempts remain available when a request fails or raises. See [Face LLM diagnostics](OUTPUT_FORMATS.md#face-llm-diagnostics) for the JSON schema, naming, retention and checkpoint behavior.
 
-`PROCESSING_CHECKPOINTS = ./processing-checkpoints` is an optional `[PARSE_FOLDER]` setting; the CLI override takes precedence, including an empty string to disable snapshots. Like other document paths, the directory resolves from the working directory. Consult [Processing checkpoints](CHECKPOINTS.md) for publication, security, trusted restoration, relocation and app replay safeguards. Engine checkpoints precede final app and file exports.
+`PROCESSING_CHECKPOINTS = ./processing-checkpoints` is an optional `[PARSE_FOLDER]` setting; the CLI override takes precedence, including an empty string to disable snapshots. Like other document paths, the directory resolves from the working directory. Consult [Processing checkpoints](CHECKPOINTS.md) for the file layout, trusted loading and handling repeated app writes. Engine checkpoints precede final app and file exports.
 
 ### Example
 
@@ -1087,8 +1087,8 @@ propagation, so interrupted propagation can replay the receipt. Face-only direct
 The linker itself has no server idempotency key. Without optional
 [processing checkpoints](CHECKPOINTS.md), receipts do not survive restart/XML
 reconstruction, and concurrent independent processes can race. Checkpoints
-preserve the receipts, lock each history and durably fence app stage/export replay;
-they conservatively block uncertain recovery instead of blindly repeating creates.
+preserve the receipts available at the saved stage. Resuming an earlier stage
+can repeat subsequent entity creation or final app exports.
 After an uncertain write, reconcile the remote app before rebuilding/retrying
 the document or intentionally clearing its receipt. Never
 assume search-index absence proves that a timed-out create did not succeed.

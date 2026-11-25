@@ -215,8 +215,8 @@ serialization and global document errors can still abort output. The in-memory
 `entity_linking_journal` retains creation receipts for retries of the same document
 but is not part of either XML format or the app persistence contract. Reconstructing
 a document from XML loses these receipts. Optional [processing checkpoints](CHECKPOINTS.md)
-preserve the complete object graph and receipts with durable replay guards;
-remote reconciliation remains required after an uncertain write. See
+preserve the receipts present after each completed engine. Resuming an older
+snapshot can repeat later writes. Reconcile the app after an uncertain write. See
 [linking/retry rules](PROCESSING.md#propagation-protected-links-and-retry-limits).
 
 
@@ -295,8 +295,6 @@ corresponding files. The exporter does not remove older files from the directory
 These records are separate debugging artifacts, excluded from ALTO/PAGE XML,
 face `to_dict()` mappings and PeopleGatorApp payloads/imports. Complete trusted
 [Pickle checkpoints](CHECKPOINTS.md) retain the lists and resumed final output
-can enable or relocate this directory. After restoration and validation, the
-checkpoint loader initializes missing face `prompts` attributes to independent
-empty lists. Engines and the exporter use this invariant directly. Faces with no
+can enable or relocate this directory. Faces with no
 metadata export `[]`.
 Without the output setting, processing writes no prompt files.
