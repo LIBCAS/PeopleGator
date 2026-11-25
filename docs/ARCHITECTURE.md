@@ -59,6 +59,35 @@ flowchart TD
 
 The available engines perform text entity detection and clustering, face detection, LLM-assisted naming, and entity matching. See [Processing](PROCESSING.md).
 
+### Processing implementation principles
+
+The intended direction of processing responsibilities is:
+
+```text
+DocumentParser
+    -> configured document-processing engines
+        -> existing document/page/mention/cluster/identity models
+        -> small shared utilities and existing service infrastructure
+```
+
+The parser orchestrates import, ordered engine execution, checkpoint boundaries
+and export. Each engine receives the existing document, performs its own
+processing and returns the document for the next stage. Engine-specific decisions,
+evidence selection and final prompt construction belong to that engine's module;
+shared LLM infrastructure handles common template, request and response
+operations, not specialized processing decisions.
+
+Use existing domain models for genuine data access, manipulation and common
+record serialization, and small stateless functions for reusable operations.
+Engines should not depend on another engine's internal processing or prompt
+construction. Avoid intermediary processing layers that only relocate complexity.
+
+The independent `people_gator/text/` package owns reusable OCR chunking, source
+mappings and normalization. Its chunker supplies source-mapped OCR chunks to the
+text detection engine; it is not a document-processing engine. See
+[chunker inputs, outputs and configuration](PROCESSING.md#reusable-text-chunking)
+and [implementation rules](../AGENTS.md#implementation-style-and-scope).
+
 ## Data model
 
 The main in-memory objects and their relationships are:
@@ -102,8 +131,6 @@ The broader system design also includes occurrences of person names in OCR text.
 | `people_gator/core/db.py`, `connector.py` | Authenticated client for documents, pages, faces and person records. |
 | `user_scripts/parse_folder.py` | Local processing entry point. |
 | `processing_api/api.py`, `client.py`, `worker.py` | Processing job API, CLI client and worker based on DocAPI. |
-
-The independent `people_gator.text` chunker supplies source-mapped OCR chunks to the detection engine; it is not a document-processing engine. See [chunker inputs, outputs and configuration](PROCESSING.md#reusable-text-chunking).
 
 ## Related software and services
 

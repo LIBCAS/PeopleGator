@@ -55,11 +55,12 @@ python -m pytest -q tests/test_text_chunking.py
 
 ## How to write new tests
 
-1. Convert each acceptance criterion into observable assertions; include typical, empty, error and previously failing cases.
-2. Reuse small fixtures in `tests/resources/`; mock model calls, app responses and external services.
-3. Check output structure, object identity/provenance and preservation of existing XML and document metadata when relevant.
-4. Run the affected modules and the available complete suite, then report **actual** results and any unverified criteria.
-5. Keep tests focused and readable. Avoid duplicating equivalent fixtures or building helpers used only to hide straightforward setup.
+1. Convert agreed acceptance criteria into observable assertions; include typical, empty, realistic error and previously failing cases. Do not invent requirements or tests for speculative validation.
+2. Prefer real domain models and supported interfaces (e.g. ConfigParser sections and the engine factory). Reuse small fixtures in `tests/resources/`; mock inference, LLM, app requests and other external services at their boundaries. Adapt unrealistic fixtures instead of adding production fallback or compatibility branches just to satisfy them.
+3. Test observable behavior rather than private scaffolding. Direct helper tests are appropriate for meaningful algorithms such as OCR normalization and source-span resolution.
+4. During refactoring, preserve regression coverage for exact outputs, original object relationships/provenance, processing/request order, mutation boundaries, failure handling and existing XML/document metadata as applicable. Use targeted traversal-count or reuse assertions when avoiding repeated work is an explicit requirement.
+5. Remove or replace tests of superseded implementation details and requester-approved contract changes; distinguish approved changes from behavior preservation. Do not weaken meaningful coverage just to pass tests.
+6. Keep tests focused and readable. Avoid duplicating equivalent fixtures or building helpers used only to hide straightforward setup. Run the affected modules and the applicable complete suite as described above, and report **actual** results and any unverified criteria.
 
 See [Output formats](OUTPUT_FORMATS.md) for ALTO/PAGE examples and [Processing](PROCESSING.md) for engine contracts.
 
