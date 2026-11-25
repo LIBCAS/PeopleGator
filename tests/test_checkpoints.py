@@ -3,7 +3,6 @@
 from configparser import ConfigParser
 from copy import copy
 import json
-import os
 from pathlib import Path
 import pickle
 import shutil
@@ -197,8 +196,7 @@ def test_inspect_pair_without_processing(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sys, 'argv', ['inspect_checkpoint', str(stage), '--details', 'entities', '--output-path', str(output)])
     assert cli.main() == 0
     selected = json.loads(output.read_text())
-    if os.name == 'posix':
-        assert output.stat().st_mode & 0o777 == 0o600
+    assert output.read_text(encoding='utf-8') == json.dumps(selected, ensure_ascii=True, indent=2) + '\n'
     assert selected['clusters'][0]['mentions'] == [0, 1]
     assert selected['pages'][0]['mentions'][0]['source_spans'][0]['start'] == 0
     assert 'ocr' not in selected['pages'][0]
@@ -211,11 +209,62 @@ def test_inspect_pair_without_processing(tmp_path, monkeypatch, capsys):
     assert report['pages'][0]['ocr'][0]['text'] == page.regions[0].lines[0].transcription
     assert report['pages'][0]['faces'][0]['source_region_id'] == page.regions[0].id
     assert report['pages'][0]['faces'][0]['entity_id'] == 'app-person'
-    for input_file in before:
+    alias = tmp_path / 'report.json'
+    alias.hardlink_to(stage / 'document.pkl')
+    for input_file in (*before, alias):
         monkeypatch.setattr(sys, 'argv', ['inspect_checkpoint', str(stage), '--output-path', str(input_file)])
         with pytest.raises(SystemExit):
             cli.main()
+    monkeypatch.setattr(sys, 'argv', ['inspect_checkpoint', str(stage), '--output-path', str(output.parent)])
+    with pytest.raises(OSError):
+        cli.main()
     assert {p: p.read_bytes() for p in stage.iterdir()} == before
+
+
+def test_inspect_optional_face_and_entity_fields(tmp_path):
+    import numpy as np
+    from test_entity_matching import add_cluster, document, face, identity, page_identity
+    from people_gator.core.checkpoint_inspection import inspect_checkpoint
+    from people_gator.core.layout import Position
+
+    doc = document(linked=identity(entity_id='cluster'))
+    first, second = doc.page_layouts
+    first.text_entities[0].page_identity = page_identity(identity(entity_id='mention'))
+    second.text_entities[0].page_identity = page_identity()
+    second.text_entities[0].page_identity.identity = None
+    add_cluster(doc, name='Unlinked')
+    source = first.regions[0]
+    linked = face(first, identity('Linked face', 'face'), source=source)
+    meta = linked.face_metadata
+    meta.left_eye_position = Position(np.int32(1), 2)
+    meta.right_eye_position = Position(3, 4)
+    meta.nose_position = None
+    meta.left_mouth_corner_position = Position(5, 6)
+    meta.right_mouth_corner_position = Position(7, 8)
+    face(first, suffix='no-metadata').face_metadata = None
+    face(first, suffix='no-page-identity').face_metadata.page_identity = None
+    face(first, suffix='no-identity').face_metadata.page_identity.identity = None
+
+    stage = tmp_path / 'stage'
+    save_checkpoint(stage, doc, {'next_step': 1})
+    report = inspect_checkpoint(stage)
+    assert report['summary']['resolved_identities'] == 3
+    assert [c['entity_id'] for c in report['clusters']] == ['cluster', None]
+    assert [m['entity_id'] for p in report['pages'] for m in p['mentions']] == ['mention', None, None]
+    page = report['pages'][0]
+    assert [(r['id'], r['source_region_id']) for r in page['regions']] == [
+        (region.id, source.id if region is linked else None) for region in first.regions]
+    linked_face, no_metadata, no_page_identity, no_identity = page['faces']
+    assert linked_face == {
+        'id': linked.id, 'name': 'Linked face', 'entity_id': 'face', 'source_region_id': source.id,
+        'landmarks': {'left_eye_position': {'x': 1, 'y': 2}, 'right_eye_position': {'x': 3, 'y': 4},
+                      'nose_position': None, 'left_mouth_corner_position': {'x': 5, 'y': 6},
+                      'right_mouth_corner_position': {'x': 7, 'y': 8}},
+    }
+    for unlinked in (no_metadata, no_page_identity, no_identity):
+        assert unlinked['name'] is None and unlinked['entity_id'] is None and unlinked['source_region_id'] is None
+    assert no_metadata['landmarks'] == dict.fromkeys(linked_face['landmarks'])
+    assert no_page_identity['landmarks']['nose_position'] == no_identity['landmarks']['nose_position'] == {'x': 10, 'y': 10}
 
 
 @pytest.mark.parametrize('mode', ['cli', 'ini', 'override', 'empty', 'absent', 'disable'])

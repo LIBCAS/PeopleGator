@@ -36,7 +36,7 @@ python -m user_scripts.inspect_checkpoint ./stage/checkpoint.json \
   --details ocr entities --output-path diagnostics/stage.json
 ```
 
-Inspection loads the same pair and writes JSON to stdout or the selected file. It reports counts and document identity. Choose from `ocr`, `regions` (including faces) and `entities` (mentions, sources and cluster membership). Inspection requires the model classes and their dependencies only.
+Inspection loads the same pair and prints JSON to stdout. With `--output-path`, it creates any missing parent directories and writes directly to the selected file. The two input files are protected from overwrite. It reports counts and document identity. Choose from `ocr`, `regions` (including faces) and `entities` (mentions, sources and cluster membership). Inspection requires the model classes and their dependencies only.
 
 ## App writes and legacy recovery
 
