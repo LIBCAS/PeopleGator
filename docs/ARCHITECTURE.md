@@ -83,8 +83,10 @@ Engines should not depend on another engine's internal processing or prompt
 construction. Avoid intermediary processing layers that only relocate complexity.
 
 The independent `people_gator/text/` package owns reusable OCR chunking, source
-mappings and normalization. Its chunker is consumed by the detector, not
-registered as another processing engine. See [implementation rules](../AGENTS.md#implementation-style-and-scope).
+mappings and normalization. Its chunker supplies source-mapped OCR chunks to the
+text detection engine; it is not a document-processing engine. See
+[chunker inputs, outputs and configuration](PROCESSING.md#reusable-text-chunking)
+and [implementation rules](../AGENTS.md#implementation-style-and-scope).
 
 ## Data model
 
@@ -129,8 +131,6 @@ The broader system design also includes occurrences of person names in OCR text.
 | `people_gator/core/db.py`, `connector.py` | Authenticated client for documents, pages, faces and person records. |
 | `user_scripts/parse_folder.py` | Local processing entry point. |
 | `processing_api/api.py`, `client.py`, `worker.py` | Processing job API, CLI client and worker based on DocAPI. |
-
-The independent `people_gator.text` chunker supplies source-mapped OCR chunks to the detection engine; it is not a document-processing engine. See [chunker inputs, outputs and configuration](PROCESSING.md#reusable-text-chunking).
 
 ## Related software and services
 
