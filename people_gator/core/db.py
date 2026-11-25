@@ -5,8 +5,10 @@ from http import HTTPStatus
 from urllib.parse import urljoin
 from uuid import UUID
 
-from people_gator.core.connector import Connector
-from people_gator.core.layout import PeopleGatorFaceRegionLayout
+from requests import RequestException
+
+from people_gator.core.connector import AuthenticationError, Connector
+from people_gator.core.layout import PeopleGatorFaceRegionLayout, PeopleGatorIdentity
 
 
 logger = logging.getLogger(__name__)
@@ -776,6 +778,49 @@ class DatabaseApiService:
                 return None
 
         return result
+
+    def ensure_person_entity(self, entity_id: UUID, identity: PeopleGatorIdentity) -> bool:
+        """Resolve a recorded person UUID, creating it only after a lookup returns 404.
+
+        Args:
+            entity_id: Parsed UUID of the recorded app identity.
+            identity: Source identity supplying the person data for creation.
+
+        Returns:
+            True if the app confirmed the person UUID. False on request or response failure.
+        """
+        url = self.compose_url("/api/v1/entities", entity_id)
+        try:
+            response = self.connector.get(url)
+            replaced = False
+            if response.status_code == HTTPStatus.NOT_FOUND:
+                payload = {
+                    "entity_type": "person",
+                    "name": identity.name if identity.name is not None else "",
+                }
+                if identity.other_ids and identity.other_ids.get("wikidata"):
+                    payload["wikidata_id"] = identity.other_ids["wikidata"]
+                response = self.connector.put(url, json=payload)
+                if response.status_code not in (HTTPStatus.CREATED, HTTPStatus.OK):
+                    logger.warning("Database operation put entity failed (HTTP %s)", response.status_code)
+                    return False
+                replaced = response.status_code == HTTPStatus.OK
+            elif response.status_code != HTTPStatus.OK:
+                logger.warning("Database operation get entity failed (HTTP %s)", response.status_code)
+                return False
+
+            result = response.json()
+        except (AuthenticationError, RequestException, ValueError) as exc:
+            logger.warning("Database operation ensure_person_entity failed (%s)", type(exc).__name__)
+            return False
+
+        if (not isinstance(result, dict) or result.get("entity_id") != str(entity_id)
+                or result.get("entity_type") != "person" or not isinstance(result.get("name"), str)):
+            logger.warning("Database operation ensure_person_entity returned an invalid person response")
+            return False
+        if replaced:
+            logger.warning("PeopleGatorApp replaced entity %s after the lookup returned 404", entity_id)
+        return True
 
     def get_entity_info(self, entity_id, route="/api/v1/entities/{entity_id}", response_model=None):
         """Get entity info through the PeopleGatorApp API.

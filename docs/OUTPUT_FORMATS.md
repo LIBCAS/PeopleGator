@@ -180,7 +180,33 @@ The JSON is formatted across lines and enclosed in single-quoted XML attribute d
 
 ## XML import and repeat processing
 
-The ALTO face readers and `altoxml_load_regions` hook are pending implementation. The PAGE writer currently emits `ImageRegion`, while the PAGE face import hook searches for `CustomRegion[@type='face']`. The ALTO cleanup helper `remove_peoplegator_elements()` currently preserves the input unchanged. Completing face round-trip and repeated-enrichment behavior is tracked in [TODO.md](TODO.md) and [Testing](TESTING.md).
+The PAGE reader restores face `ImageRegion` elements marked with the
+`face` category in the JSON `custom` attribute. ALTO face and identity loading
+is pending, so replay of saved face annotations uses PAGE XML. The ALTO cleanup
+helper `remove_peoplegator_elements()` currently preserves the input unchanged.
+
+## PeopleGatorApp face export
+
+For a face with a valid recorded person UUID, export checks that UUID via
+`GET /api/v1/entities/{entity_id}`. A successful lookup reuses the entity.
+HTTP 404 triggers `PUT /api/v1/entities/{entity_id}` with `entity_type: person`,
+the recorded name (or an empty string when missing), and a recorded Wikidata ID
+when available. Once resolved, the UUID is reused for the rest of the export
+and the existing face request carries the original identity ID. Export
+leaves the in-memory identity and the input XML untouched. Failed resolution
+is logged for the affected face and export continues with the other annotations
+and page artifacts.
+
+[PeopleGatorApp's PUT route](https://github.com/DCGM/PeopleGatorApp/pull/174)
+returns 201 for creation and 200 for replacement, which can clear omitted
+optional fields. If another writer creates the same UUID between GET and PUT,
+the request can replace that record. Export logs a replacement response and
+uses the confirmed UUID for the face.
+
+Re-export reuses existing entities but can append duplicate annotation rows.
+`--drop-existing-annotations` removes stored faces before exporting and
+leaves stored entities and text mentions in place. See the
+[CLI invocation](PROCESSING.md#export-pre-annotated-page-xml).
 
 ## In-memory text clusters
 

@@ -694,6 +694,13 @@ class PeopleGatorFaceRegionLayout(RegionLayout):
         Returns:
             A face region, or None when its custom category is not face.
         """
+        if "custom" not in region_element.attrib:
+            return None
+        custom = json.loads(region_element.attrib["custom"])
+        category = custom.get("category")
+        if not isinstance(category, str) or category.lower() != "face":
+            return None
+
         region_id = region_element.attrib["id"]
         region_type = region_element.attrib.get("type", None)
 
@@ -706,11 +713,6 @@ class PeopleGatorFaceRegionLayout(RegionLayout):
                 polygon.append((float(x_str), float(y_str)))
 
         polygon = np.array(polygon)
-
-        custom = json.loads(region_element.attrib["custom"])
-        category = custom.get("category", None)
-        if category.lower() != "face":
-            return None
 
         detection_confidence = custom.get("detection_confidence", None)
         source_region_id = custom.get("source_region", None)
@@ -1505,7 +1507,7 @@ def pagexml_load_regions(page_layout, page_tree):
     """
     root = page_tree.getroot()
     for region_element in root.findall(".//ImageRegion", root.nsmap):
-        region = PeopleGatorFaceRegionLayout.from_pagexml(region_element, page_layout)
+        region = PeopleGatorFaceRegionLayout.from_pagexml(region_element, root.nsmap, page_layout=page_layout)
         if region is not None:
             page_layout.regions.append(region)
 
