@@ -221,7 +221,7 @@ def test_inspect_pair_without_processing(tmp_path, monkeypatch, capsys):
     assert {p: p.read_bytes() for p in stage.iterdir()} == before
 
 
-def test_inspect_optional_face_and_entity_fields(tmp_path):
+def test_inspect_geometry_and_optional_face_and_entity_fields(tmp_path):
     import numpy as np
     from test_entity_matching import add_cluster, document, face, identity, page_identity
     from people_gator.core.checkpoint_inspection import inspect_checkpoint
@@ -234,9 +234,13 @@ def test_inspect_optional_face_and_entity_fields(tmp_path):
     second.text_entities[0].page_identity.identity = None
     add_cluster(doc, name='Unlinked')
     source = first.regions[0]
+    line = source.lines[0]
+    line.polygon = np.array([[1, 2], [3, 4], [5, 6]], dtype=np.int32)
+    line.baseline = [(1, 4), (3, 4)]
+    line.heights = None
     linked = face(first, identity('Linked face', 'face'), source=source)
     meta = linked.face_metadata
-    meta.left_eye_position = Position(np.int32(1), 2)
+    meta.left_eye_position = Position(np.int32(1), np.float32(2.5))
     meta.right_eye_position = Position(3, 4)
     meta.nose_position = None
     meta.left_mouth_corner_position = Position(5, 6)
@@ -247,17 +251,21 @@ def test_inspect_optional_face_and_entity_fields(tmp_path):
 
     stage = tmp_path / 'stage'
     save_checkpoint(stage, doc, {'next_step': 1})
-    report = inspect_checkpoint(stage)
+    report = json.loads(json.dumps(inspect_checkpoint(stage), allow_nan=False))
     assert report['summary']['resolved_identities'] == 3
     assert [c['entity_id'] for c in report['clusters']] == ['cluster', None]
     assert [m['entity_id'] for p in report['pages'] for m in p['mentions']] == ['mention', None, None]
     page = report['pages'][0]
+    ocr = page['ocr'][0]
+    assert ocr['polygon'] == [[1, 2], [3, 4], [5, 6]]
+    assert ocr['baseline'] == [[1, 4], [3, 4]]
+    assert ocr['heights'] is None
     assert [(r['id'], r['source_region_id']) for r in page['regions']] == [
         (region.id, source.id if region is linked else None) for region in first.regions]
     linked_face, no_metadata, no_page_identity, no_identity = page['faces']
     assert linked_face == {
         'id': linked.id, 'name': 'Linked face', 'entity_id': 'face', 'source_region_id': source.id,
-        'landmarks': {'left_eye_position': {'x': 1, 'y': 2}, 'right_eye_position': {'x': 3, 'y': 4},
+        'landmarks': {'left_eye_position': {'x': 1, 'y': 2.5}, 'right_eye_position': {'x': 3, 'y': 4},
                       'nose_position': None, 'left_mouth_corner_position': {'x': 5, 'y': 6},
                       'right_mouth_corner_position': {'x': 7, 'y': 8}},
     }

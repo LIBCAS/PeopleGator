@@ -32,9 +32,11 @@ def _coordinates(value):
     """Convert selected diagnostic geometry, not arbitrary document objects.
 
     Args:
-        value: Numeric array, sequence or None.
+        value: NumPy array or scalar, Python number or sequence, or None.
     """
-    return value.tolist() if hasattr(value, 'tolist') else value
+    import numpy as np
+
+    return value.tolist() if isinstance(value, (np.ndarray, np.generic)) else value
 
 
 def inspect_checkpoint(path, details=('ocr', 'regions', 'entities')):
