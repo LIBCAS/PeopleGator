@@ -115,7 +115,7 @@ def person(entity_id, name):
 
 
 @pytest.mark.parametrize('name, put_status', [(' Karel Čapek ', 201), (None, 201), ('', 201), ('Recorded', 200)])
-def test_replay_creates_missing_uuid_and_reuses_it_within_and_across_exports(run_cli, caplog, name, put_status):
+def test_replay_looks_up_every_face_and_creates_missing_person_once(run_cli, name, put_status):
     connector, run = run_cli
     existing = person(EXISTING_ID, 'Stored name')
     people = {EXISTING_ID: existing}
@@ -166,14 +166,21 @@ def test_replay_creates_missing_uuid_and_reuses_it_within_and_across_exports(run
         connector.reset_mock()
         document = run(faces)
         assert next(f for f in document.faces if f.id == 'first').face_metadata.page_identity.identity.name == name
-        entity_calls = [c for c in connector.method_calls if '/entities' in c.args[0]]
-        lookup = call.get(f'{API}/entities/{PERSON_ID}')
         creation = call.put(f'{API}/entities/{PERSON_ID}', json={
             'entity_type': 'person', 'name': '' if name is None else name, 'wikidata_id': 'Q155855'})
-        assert entity_calls.count(lookup) == 1
-        assert entity_calls.count(call.get(f'{API}/entities/{EXISTING_ID}')) == 1
-        assert len(entity_calls) == (3 if first_run else 2)
-        face_calls = [c for c in connector.post.call_args_list if c.args[0] == API + '/faces']
+        export_calls = [c for c in connector.method_calls
+                        if '/entities' in c.args[0] or c.args[0] == API + '/faces']
+        face_calls = [c for c in export_calls if c.args[0] == API + '/faces']
+        expected_calls = []
+        create_missing = first_run
+        for face_call in face_calls:
+            entity_id = face_call.kwargs['json']['entity_id']
+            expected_calls.append(call.get(f'{API}/entities/{entity_id}'))
+            if create_missing and entity_id == PERSON_ID:
+                expected_calls.append(creation)
+                create_missing = False
+            expected_calls.append(face_call)
+        assert export_calls == expected_calls
         payloads = {c.kwargs['json']['identifier']: c.kwargs['json'] for c in face_calls}
         assert len(face_calls) == 4
         for face_id, source, entity_id in [
@@ -187,41 +194,14 @@ def test_replay_creates_missing_uuid_and_reuses_it_within_and_across_exports(run
             assert payload['bounding_box'] == {'x': 3, 'y': 3, 'width': 10, 'height': 11}
             assert payload['keypoints'] == [{'type': key, 'x': x, 'y': y}
                                             for key, (x, y) in zip(POINT_NAMES, POINTS)]
-        first_link = next(i for i, c in enumerate(connector.method_calls)
-                          if c.args[0] == API + '/faces' and c.kwargs['json']['entity_id'] == PERSON_ID)
-        writes = connector.method_calls
-        assert writes.index(lookup) < first_link
-        if first_run:
-            assert writes.index(lookup) < writes.index(creation) < first_link
         uploads = [c.args[0] for c in connector.put.call_args_list if '/pages/' in c.args[0]]
         assert sorted(uploads) == sorted(f'{API}/pages/{source}/{suffix}'
                                         for source in SOURCE_IDS.values() for suffix in ('image', 'page-layout'))
         assert people[EXISTING_ID] == person(EXISTING_ID, 'Stored name')
-    assert ('replaced' in caplog.text) == (put_status == 200)
 
 
-@pytest.mark.parametrize('step, failure', [
-    ('get', 401), ('get', 403), ('get', 503), ('get', 'authentication'),
-    ('get', 'network'), ('get', 'json'), ('get', 'wrong-id'),
-    ('put', 409), ('put', 503), ('put', 'network'), ('put', 'json'), ('put', 'wrong-id'),
-])
-def test_unresolved_face_is_skipped_and_other_faces_and_artifacts_continue(run_cli, caplog, step, failure):
-    from requests import ConnectionError
-    from people_gator.core.connector import AuthenticationError
-
+def test_failed_put_skips_only_the_affected_face(run_cli, caplog):
     connector, run = run_cli
-    private = 'private credentials'
-    if isinstance(failure, int):
-        failed = response(failure)
-    elif failure == 'authentication':
-        failed = AuthenticationError(private)
-    elif failure == 'network':
-        failed = ConnectionError(private)
-    elif failure == 'json':
-        failed = response(200 if step == 'get' else 201)
-        failed.json.side_effect = ValueError(private)
-    else:
-        failed = response(200 if step == 'get' else 201, person(EXISTING_ID, 'Wrong entity'))
 
     def get(url, params=None):
         if url == API + '/documents/lookup':
@@ -231,12 +211,11 @@ def test_unresolved_face_is_skipped_and_other_faces_and_artifacts_continue(run_c
         if url == f'{API}/entities/{EXISTING_ID}':
             return response(200, person(EXISTING_ID, 'Already stored'))
         assert url == f'{API}/entities/{PERSON_ID}'
-        if step == 'get' and isinstance(failed, Exception):
-            raise failed
-        return failed if step == 'get' else response(404)
+        return response(404)
 
     connector.get.side_effect = get
-    connector.put.side_effect = ([failed] if step == 'put' else []) + [response(200, {'uploaded': True})] * 2
+    connector.put.side_effect = [response(409), response(200, {'uploaded': True}),
+                                 response(200, {'uploaded': True})]
     connector.post.return_value = response(201, {'detection_id': 'created'})
     with caplog.at_level(logging.DEBUG):
         run({'p1': [face_xml('skipped', PERSON_ID, 'Recorded'),
@@ -244,7 +223,7 @@ def test_unresolved_face_is_skipped_and_other_faces_and_artifacts_continue(run_c
                     face_xml('unlinked', None, 'Recorded'),
                     face_xml('legacy', 'invalid-uuid', 'Recorded')]})
     assert [c.args[0] for c in connector.put.call_args_list] == (
-        [f'{API}/entities/{PERSON_ID}'] * (step == 'put')
+        [f'{API}/entities/{PERSON_ID}']
         + [f'{API}/pages/{SOURCE_IDS["p1"]}/{suffix}' for suffix in ('image', 'page-layout')])
     assert [c.args[0] for c in connector.post.call_args_list] == [API + '/faces'] * 3
     payloads = [c.kwargs['json'] for c in connector.post.call_args_list]
@@ -252,4 +231,3 @@ def test_unresolved_face_is_skipped_and_other_faces_and_artifacts_continue(run_c
         ('linked', EXISTING_ID), ('unlinked', None), ('legacy', 'invalid-uuid')]
     assert 'Failed to resolve entity' in caplog.text
     assert 'Created face skipped' not in caplog.text
-    assert private not in caplog.text

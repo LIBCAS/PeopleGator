@@ -203,7 +203,7 @@ def import_document(document: PeopleGatorDocument, db_api_service: DatabaseApiSe
 def export_document(document: PeopleGatorDocument, db_api_service: DatabaseApiService, drop_existing_annotations: bool = False):
     """Export pages, faces, linked text occurrences and artifacts, logging failures.
 
-    Recorded face UUIDs are resolved before exporting their faces.
+    Each face with a valid recorded UUID is looked up before export.
     Text occurrences require a recorded name and resolved entity UUID. Failures
     are isolated per mention. Re-export can append duplicate text rows: the app
     create contract has no external occurrence ID or OCR offsets.
@@ -240,7 +240,6 @@ def export_document(document: PeopleGatorDocument, db_api_service: DatabaseApiSe
             if not result:
                 logger.error('Failed to drop existing annotations for document %s in PeopleGator App', document.id)
 
-    resolved_face_entities: set[UUID] = set()
     for page_image, page_layout in document.pages_iterator():
         db_page = db_api_service.get_page_info(document.id, page_layout.id, library=document.library)
         if not db_page:
@@ -252,22 +251,24 @@ def export_document(document: PeopleGatorDocument, db_api_service: DatabaseApiSe
         else:
             logger.debug('Page %s already exists in PeopleGator App, updating existing page', page_layout.id)
 
-        faces = [region for region in page_layout.regions if isinstance(region, PeopleGatorFaceRegionLayout)]
-        for face_region in faces:
+        for face_region in page_layout.faces:
             metadata = face_region.face_metadata
             page_identity = metadata.page_identity if metadata is not None else None
             identity = page_identity.identity if page_identity is not None else None
-            if identity is not None and isinstance(identity.peoplegator_id, str):
+            face_entity_id = identity.peoplegator_id if identity is not None else None
+            if isinstance(face_entity_id, str):
                 try:
-                    face_entity_id = UUID(identity.peoplegator_id)
+                    UUID(face_entity_id)
                 except ValueError:
                     face_entity_id = None
-                if face_entity_id is not None and face_entity_id not in resolved_face_entities:
-                    if not db_api_service.ensure_person_entity(face_entity_id, identity):
+                if face_entity_id is not None:
+                    db_entity = db_api_service.get_entity_info(face_entity_id)
+                    if db_entity is None:
+                        db_entity = db_api_service.put_person_entity(face_entity_id, identity)
+                    if db_entity is None:
                         logger.error('Failed to resolve entity %s for face %s on page %s',
                                      face_entity_id, face_region.id, page_layout.id)
                         continue
-                    resolved_face_entities.add(face_entity_id)
 
             db_face = db_api_service.create_face(face_region, db_page["source_id"])
             if not db_face:

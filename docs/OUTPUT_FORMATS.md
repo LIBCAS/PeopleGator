@@ -187,21 +187,22 @@ helper `remove_peoplegator_elements()` currently preserves the input unchanged.
 
 ## PeopleGatorApp face export
 
-For a face with a valid recorded person UUID, export checks that UUID via
-`GET /api/v1/entities/{entity_id}`. A successful lookup reuses the entity.
-HTTP 404 triggers `PUT /api/v1/entities/{entity_id}` with `entity_type: person`,
-the recorded name (or an empty string when missing), and a recorded Wikidata ID
-when available. Once resolved, the UUID is reused for the rest of the export
-and the existing face request carries the original identity ID. Export
-leaves the in-memory identity and the input XML untouched. Failed resolution
-is logged for the affected face and export continues with the other annotations
-and page artifacts.
+For each face with a valid recorded person UUID, export calls the existing
+`GET /api/v1/entities/{entity_id}` lookup, including for faces sharing the
+same UUID. A lookup that returns a record reuses that entity. When the lookup
+returns `None`, export sends `PUT /api/v1/entities/{entity_id}` with
+`entity_type: person`, the recorded name (an empty string when missing), and a
+recorded Wikidata ID when available. A successful PUT allows the face to export
+with its original UUID. An unsuccessful PUT response is logged and the affected
+face is skipped. Export leaves the in-memory identity and input XML untouched.
 
 [PeopleGatorApp's PUT route](https://github.com/DCGM/PeopleGatorApp/pull/174)
-returns 201 for creation and 200 for replacement, which can clear omitted
-optional fields. If another writer creates the same UUID between GET and PUT,
-the request can replace that record. Export logs a replacement response and
-uses the confirmed UUID for the face.
+returns 201 for creation, 200 for replacement and 409 for an entity-type
+conflict. Replacement can clear omitted optional fields. The existing lookup
+returns `None` for both HTTP 404 and other unsuccessful HTTP responses. Export
+uses either result to attempt PUT, so a failed lookup or a concurrent creation
+between GET and PUT can cause an existing record to be replaced. Distinguishing
+not-found responses from other lookup failures is deferred.
 
 Re-export reuses existing entities but can append duplicate annotation rows.
 `--drop-existing-annotations` removes stored faces before exporting and
