@@ -18,16 +18,23 @@ Link relevant code or a synthetic document/XML example when available. -->
 
 ## Intended behavior
 
-<!-- State the expected result, including inputs, outputs and edge cases. -->
+<!-- State the approved result, including inputs, outputs and edge cases.
+Trace each requirement to an explicit requester instruction, verified applicable
+project contract or explicitly approved proposal. Keep unapproved proposals
+separate; do not add unrequested optimizations or other behavior. -->
 
 ## Scope
 
 <!-- Affected engines, document handling, ALTO/PAGE output or API contracts.
-Mention important boundaries when applicable. -->
+Mention important boundaries when applicable. Include only approved scope;
+exclude unapproved optional improvements. -->
 
 ## Acceptance criteria
 
-- [ ] <!-- Observable, verifiable result. -->
+<!-- Before creating or updating the issue, even on immediate publication,
+audit every requirement, scope item and criterion against its origin. Remove
+unsupported additions or identify them separately as unapproved proposals. -->
+- [ ] <!-- Observable, verifiable result derived from an approved requirement. -->
 - [ ] <!-- Important additional case or constraint. -->
 
 ## Validation plan
@@ -35,6 +42,13 @@ Mention important boundaries when applicable. -->
 <!-- Planned processing tests, synthetic fixtures and XML checks.
 See docs/TESTING.md. Record actual results later in the PR. -->
 
-## Related work and open questions
+## Related work
 
-<!-- Existing issues/PRs, dependencies, unresolved decisions. Omit if none. -->
+<!-- Existing issues/PRs and dependencies. Omit if none. -->
+
+## Open questions / decisions
+
+<!-- Identify unapproved proposals separately from approved requirements.
+If explicitly asked to publish with unresolved material decisions needed for
+implementation, use a [Draft] title and list those decisions here. Otherwise
+resolve them before publishing a ready issue. Omit this section if empty. -->
