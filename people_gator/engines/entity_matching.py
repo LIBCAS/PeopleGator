@@ -5,6 +5,7 @@ import logging
 import unicodedata
 from typing import Literal
 
+from openai import APIResponseValidationError, APIStatusError
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from people_gator.engines import DocumentProcessingEngine, LLMBasedEngine
@@ -103,8 +104,8 @@ class _LinkUnit:
     def identities(self):
         """Return distinct existing person objects, retaining their metadata."""
         values = [c.identity for c in self.clusters]
-        values.extend(getattr(m.page_identity, 'identity', None)
-                      for c in self.clusters for m in c.text_entities)
+        values.extend(m.page_identity.identity for c in self.clusters for m in c.text_entities
+                      if m.page_identity is not None)
         values.extend(f.face_metadata.page_identity.identity for _, f in self.faces)
         return list({id(i): i for i in values if i is not None}.values())
 
@@ -182,7 +183,8 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
         for page in document.page_layouts:
             for face in page.faces:
                 metadata = face.face_metadata
-                identity = getattr(getattr(metadata, 'page_identity', None), 'identity', None)
+                page_identity = metadata.page_identity if metadata is not None else None
+                identity = page_identity.identity if page_identity is not None else None
                 if identity is not None and _text(identity.name):
                     units.append(_LinkUnit(order=len(units), faces=[(page, face)]))
         # Object identity, never name equality, establishes explicit shared links.
@@ -343,7 +345,7 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                     reason = 'invalid/unusable response schema'
                 else:
                     reason = 'external request or response processing error'
-                status = getattr(exc, 'status_code', None)
+                status = exc.status_code if isinstance(exc, (APIStatusError, APIResponseValidationError)) else None
                 if type(status) is int and 100 <= status <= 599:
                     reason += f'; HTTP status={status}'
                 logger.error('Entity unit %d: %s failed (%s): %s; unchanged',
@@ -377,7 +379,7 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
             page_layout: Original PeopleGator page, returned after processing.
         """
         document = PeopleGatorDocument(page_layouts=[page_layout])
-        if not hasattr(page_layout, '_entity_linking_journal'):
+        if page_layout._entity_linking_journal is None:
             page_layout._entity_linking_journal = []
         document.entity_linking_journal = page_layout._entity_linking_journal
         self.process_document(document)

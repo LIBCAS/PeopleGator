@@ -272,14 +272,15 @@ def test_module_help_and_nonzero_process(tmp_path):
 
 
 def test_nullable_detection_metadata_and_missing_ids():
-    from types import SimpleNamespace as NS
-    from people_gator.core.layout import PeopleGatorDocument, PeopleGatorTextEntityMention
+    from people_gator.core.layout import PeopleGatorDocument, PeopleGatorPageLayout, PeopleGatorTextEntityMention
     from people_gator.text import SourceSpan, SourceLine
     from user_scripts.detect_text_entities import detection_result
 
     spans = (SourceSpan(SourceLine(0, None, 1, None, 2, None), 3, 5),)
     mention = PeopleGatorTextEntityMention('😀é', '😀é here', source_spans=spans)
-    doc = PeopleGatorDocument(page_layouts=[NS(text_entities=[mention])])
+    page = PeopleGatorPageLayout()
+    page.text_entities = [mention]
+    doc = PeopleGatorDocument(page_layouts=[page])
     result = detection_result(doc)
     assert result['document_id'] is None
     assert result['pages'] == [{

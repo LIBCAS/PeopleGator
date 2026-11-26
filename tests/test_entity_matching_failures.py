@@ -3,10 +3,11 @@
 from copy import deepcopy
 import json
 import logging
-from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
 import pytest
+
+from processing_fixtures import responses_result
 
 from test_entity_matching import (
     engine, processing_only, add_cluster, candidate, decision, document, face,
@@ -65,6 +66,9 @@ def test_request_failures_preserve_unit_and_continue_without_fallback(
     from people_gator.engines.entity_matching import EntityMatchingResult
     from people_gator.engines.llm import LLMRequestError, LLMResponseError
     from pydantic import ValidationError
+    from httpx import Request, Response
+    from openai import APIStatusError
+
     person = identity()
     doc = document(linked=person)
     first = doc.text_entity_clusters[0]
@@ -73,8 +77,9 @@ def test_request_failures_preserve_unit_and_continue_without_fallback(
     before = deepcopy(attached.face_metadata.to_dict())
     wrapper = first.text_entities[0].page_identity
     later = add_cluster(doc, name='private-later')
-    error = RuntimeError('private-credential private-OCR private-caption private-response')
-    error.status_code = 503
+    response = Response(503, request=Request('POST', 'https://example.invalid'))
+    error = APIStatusError('private-credential private-OCR private-caption private-response',
+                           response=response, body=None)
     engine.llm_prompter.side_effect = [decision('create'), decision('create', name=later.name)]
     engine.db_api_service.create_entity.side_effect = [{'entity_id': 'first'}, {'entity_id': 'later'}]
     if failure.startswith('search'):
@@ -110,6 +115,8 @@ def test_request_failures_preserve_unit_and_continue_without_fallback(
     assert 'private-' not in caplog.text and 'Karel Čapek' not in caplog.text
     if failure in ('search', 'details', 'create'):
         assert 'HTTP status=503' in caplog.text
+    else:
+        assert 'HTTP status=' not in caplog.text
     if failure.startswith('create'):
         receipt = doc.entity_linking_journal[0]
         assert receipt['state'] == 'uncertain' and receipt['entity_id'] is None
@@ -173,8 +180,8 @@ def test_parse_folder_exports_failed_face_diagnostics_and_normal_outputs(
     invalid = dict(valid, name='private-mismatched-name')
     raw = json.dumps(invalid, ensure_ascii=False) if failure == 'selection' else '{private-malformed-response'
     attempts = 1 if failure == 'selection' else 3
-    failed_response = OSError('private-provider-payload') if failure == 'request' else NS(status='completed', output_text=raw)
-    provider = Mock(side_effect=[*[failed_response] * attempts, NS(status='completed', output_text=json.dumps(valid))])
+    failed_response = OSError('private-provider-payload') if failure == 'request' else responses_result(status='completed', output_text=raw)
+    provider = Mock(side_effect=[*[failed_response] * attempts, responses_result(status='completed', output_text=json.dumps(valid))])
     install_provider(monkeypatch, provider)
     config = tmp_path / 'config.ini'
     prompt = tmp_path / 'prompt.json'
@@ -228,11 +235,27 @@ def test_zero_candidates_invalid_selection_and_summary_skips(engine, caplog):
 
 @pytest.mark.parametrize('status', ['private-status', {'private': 'response'}, True, 999])
 def test_arbitrary_external_status_is_not_logged(engine, caplog, status):
-    error = RuntimeError('private-payload')
+    from httpx import Request, Response
+    from openai import APIStatusError
+
+    response = Response(503, request=Request('POST', 'https://example.invalid'))
+    error = APIStatusError('private-payload', response=response, body=None)
     error.status_code = status
     engine.db_api_service.search_entities.side_effect = error
     assert engine.process_document(document()) is not None
     assert 'private' not in caplog.text and 'HTTP status=' not in caplog.text
+
+
+def test_validation_error_logs_its_http_status(engine, caplog):
+    from httpx import Request, Response
+    from openai import APIResponseValidationError
+
+    response = Response(502, request=Request('POST', 'https://example.invalid'))
+    engine.db_api_service.search_entities.side_effect = APIResponseValidationError(
+        response, body='private-response', message='private-message')
+    assert engine.process_document(document()) is not None
+    assert 'HTTP status=502' in caplog.text
+    assert 'private' not in caplog.text
 
 
 @pytest.mark.parametrize('llm_fails', [False, True])

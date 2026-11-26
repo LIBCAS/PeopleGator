@@ -149,7 +149,7 @@ class PeopleGatorWorker(DocWorkerWrapper):
             OSError: If the processing executable cannot be started.
             ValueError: If both ALTO and PAGE inputs are required.
         """
-        job_id = getattr(job, "id", None) or "unknown"
+        job_id = job.id or "unknown"
         logger.info("Starting processing subprocess for job %s", job_id)
         config_path = os.path.join(engine_dir, "config.ini")
 

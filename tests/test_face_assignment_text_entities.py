@@ -9,6 +9,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from processing_fixtures import mention_fields
+
 
 @pytest.fixture(autouse=True)
 def processing_only(runtime_mode):
@@ -48,9 +50,18 @@ def mention(page, pi, li=0, name=None, context=None, legacy=False, spans=None):
     return m
 
 
-def source(title=None, caption_lines=None):
-    metadata = NS(title=title, caption_lines_metadata=NS(lines=caption_lines) if caption_lines is not None else None)
-    return NS(graphical_metadata=metadata)
+def source(title=None, caption_lines=None, bounds=(0, 0, 50, 70)):
+    import numpy as np
+    from anno_page.core.layout import AnnoPageRegionLayout
+    from anno_page.core.metadata import GraphicalObjectMetadata, RelatedLinesMetadata
+
+    references = (RelatedLinesMetadata('caption', 'MODS_CAPTION', caption_lines, relation=None)
+                  if caption_lines is not None else None)
+    metadata = GraphicalObjectMetadata(
+        'image', 'MODS_IMAGE', title=title, caption_lines_metadata=references)
+    left, top, right, bottom = bounds
+    return AnnoPageRegionLayout('image', np.array(polygon(left, top, right - left, bottom - top)),
+                                graphical_metadata=metadata)
 
 
 def select(pages, src=None, clusters=(), bbox=(0, 0, 50, 50)):
@@ -64,6 +75,27 @@ def select(pages, src=None, clusters=(), bbox=(0, 0, 50, 50)):
 
 def names(records):
     return [record['name'] for record in records]
+
+
+@pytest.mark.parametrize('kind', ['no_source', 'text_region', 'image_without_metadata'])
+def test_missing_graphical_metadata_has_no_assigned_caption(kind):
+    import numpy as np
+    from anno_page.core.layout import AnnoPageRegionLayout
+    from pero_ocr.core.layout import RegionLayout
+    from people_gator.core.utils import assigned_caption, caption_mentions
+
+    bounds = np.array(polygon(0, 0))
+    region = {
+        'no_source': None,
+        'text_region': RegionLayout('text', bounds),
+        'image_without_metadata': AnnoPageRegionLayout('image', bounds),
+    }[kind]
+    p = page(line('Alice Smith'))
+    original = mention(p, 0)
+    _, occurrences = p.resolve_text_entities(0)
+    assert assigned_caption(region) is None
+    assert caption_mentions(p, region, None, occurrences) == []
+    assert caption_mentions(p, region, 'Alice Smith', occurrences)[0][0] is original
 
 
 def test_caption_association_returns_original_objects_and_resolved_spans():
@@ -242,14 +274,7 @@ def engine_document():
     mention(q, 1)
     regions = []
     for index, title in enumerate(['Caption A', 'Caption B']):
-        src = source(title)
-        src.get_polygon_bounding_box = lambda index=index: (index * 60, 0, index * 60 + 50, 70)
-        # NS is not hashable; source regions are dictionary keys in batch mode.
-        class Region:
-            pass
-        region = Region()
-        region.graphical_metadata = src.graphical_metadata
-        region.get_polygon_bounding_box = src.get_polygon_bounding_box
+        region = source(title, bounds=(index * 60, 0, index * 60 + 50, 70))
         regions.append(region)
         for j in range(2):
             face = PeopleGatorFaceRegionLayout(id=f'f{index}{j}', polygon=np.array(polygon(index * 60 + j * 15, 20, 10, 10)), category='face',
@@ -367,7 +392,7 @@ def test_all_engine_modes_exact_requests_and_null_preservation(tmp_path, mode, c
     engine = make_engine_from_prompt(prompt, mode)
     renderer = engine.llm_prompter
     requests = []
-    before = deepcopy([m.__dict__ for page_ in doc.page_layouts for m in page_.text_entities])
+    before = deepcopy([mention_fields(m) for page_ in doc.page_layouts for m in page_.text_entities])
     original_lines = [(ln, ln.transcription) for pg in doc.page_layouts for ln in pg.lines_iterator()]
 
     def respond(data, images, response_model, interactions=None):
@@ -414,7 +439,7 @@ def test_all_engine_modes_exact_requests_and_null_preservation(tmp_path, mode, c
             assert data['face_coordinates'] == ((10 if index % 2 == 0 else 40), 36)
         else:
             assert [(f['id'], f['coordinates'], f['color_name']) for f in data['faces']] == [(0, (10, 36), 'red'), (1, (40, 36), 'green')]
-    assert [m.__dict__ for page_ in doc.page_layouts for m in page_.text_entities] == before
+    assert [mention_fields(m) for page_ in doc.page_layouts for m in page_.text_entities] == before
     assert all(ln.transcription == text for ln, text in original_lines)
     assert all(face.face_metadata.page_identity.identity.name is None for face in p.regions[1:])
     assert not caplog.records
@@ -481,8 +506,7 @@ def batch_ordering_document(boxes):
     from people_gator.core.layout import PeopleGatorFaceRegionLayout
 
     p = page()
-    src = Mock(graphical_metadata=NS(title=None))
-    src.get_polygon_bounding_box.return_value = (10, 10, 110, 110)
+    src = source(bounds=(10, 10, 110, 110))
     faces = []
     for index, (left, top, right, bottom) in enumerate(boxes):
         faces.append(PeopleGatorFaceRegionLayout(
@@ -757,7 +781,7 @@ def test_unresolved_predictions_preserve_existing_face_identities(tmp_path, mode
         identity.name = f'Existing {i}' if i % 2 == 0 else None
         identity.peoplegator_id = f'app-{i}'
         identity.other_ids = {'authority': str(i)}
-    before = [deepcopy(identity.__dict__) for identity in identities]
+    before = [deepcopy(identity.to_dict()) for identity in identities]
     engine = make_engine(tmp_path, mode)
 
     def predict(data, images, response_model, interactions=None):
@@ -778,7 +802,7 @@ def test_unresolved_predictions_preserve_existing_face_identities(tmp_path, mode
     for i, (face, identity) in enumerate(zip(faces, identities)):
         assert face.face_metadata.page_identity.identity is identity
         if i % 2 == 0:
-            assert identity.__dict__ == before[i]
+            assert identity.to_dict() == before[i]
         else:
             assert identity.peoplegator_id == before[i]['peoplegator_id']
             assert identity.other_ids == before[i]['other_ids']
@@ -873,7 +897,7 @@ def test_later_page_direct_preparation_and_processing_preserve_original_indices(
     document = doc if with_document else None
     image = next(doc.pages_iterator())[0]
     engine = make_engine(tmp_path, mode)
-    before = [m.__dict__.copy() for m in p.text_entities]
+    before = [mention_fields(m) for m in p.text_entities]
     prepared = engine.prepare_face_data(image, p, document=document)
     requests = []
 
@@ -895,7 +919,7 @@ def test_later_page_direct_preparation_and_processing_preserve_original_indices(
         if not caption:
             assert all(record['page_index'] == 1 for record in data['page_entities'])
             assert names(data['document_entities']) == (['Background'] if with_document else [])
-    assert [m.__dict__ for m in p.text_entities] == before
+    assert [mention_fields(m) for m in p.text_entities] == before
 
 
 @pytest.mark.parametrize('mode', ['single', 'sequential', 'page_parallel', 'document_parallel'])
@@ -922,7 +946,7 @@ def test_noncontiguous_caption_lines_in_all_engine_modes(tmp_path, mode, legacy)
         src.graphical_metadata.title = 'Caption A Caption B'
         # Reference-list order/duplicates and foreign references cannot override OCR order.
         src.graphical_metadata.caption_lines_metadata = NS(lines=[last, first, first, line('Article')])
-    before = [m.__dict__.copy() for m in p.text_entities]
+    before = [mention_fields(m) for m in p.text_entities]
     requests = []
     engine = make_engine(tmp_path, mode)
 
@@ -940,7 +964,7 @@ def test_noncontiguous_caption_lines_in_all_engine_modes(tmp_path, mode, legacy)
         assert names(data['caption_entities']) == ['Caption A', 'Caption B', 'Caption A\nCaption B']
         assert [span['line_index'] for span in data['caption_entities'][-1]['source_spans']] == [0, 2]
         assert data['surrounding_entities'] == data['page_entities'] == data['document_entities'] == []
-    assert [m.__dict__ for m in p.text_entities] == before
+    assert [mention_fields(m) for m in p.text_entities] == before
     assert [ln.transcription for ln in p.regions[0].lines] == ['Caption A', 'Article', 'Caption B']
 
 
