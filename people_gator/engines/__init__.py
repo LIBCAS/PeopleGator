@@ -4,6 +4,7 @@ from .llm import LLMBasedEngine
 from .entity_matching import EntityMatchingEngine
 
 from .face_detection import FaceDetectionYoloEngine
+from .embedding import FaceEmbeddingEngine
 from .face_assignment import LLMFaceAssignmentEngine, LLMBatchFaceAssignmentEngine
 
 from .text_entity_detection import LLMTextEntityDetectionEngine

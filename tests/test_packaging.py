@@ -45,7 +45,7 @@ def test_metadata_and_direct_dependencies():
     imports_to_distributions = {
         "anno_page": "anno-page", "pero_ocr": "pero-ocr", "cv2": "opencv-python",
         "numpy": "numpy", "lxml": "lxml", "shapely": "shapely",
-        "torch": "torch", "ultralytics": "ultralytics", "pydantic": "pydantic",
+        "torch": "torch", "timm": "timm", "ultralytics": "ultralytics", "pydantic": "pydantic",
         "openai": "openai", "jinja2": "jinja2", "jsonschema": "jsonschema",
         "requests": "requests", "safe_gpu": "safe-gpu", "rapidfuzz": "rapidfuzz",
         "doc_api": "doc-api", "doc_worker": "doc-api", "doc_client": "doc-api",

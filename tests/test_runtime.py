@@ -26,6 +26,7 @@ processing_modules = (
     'people_gator.core.layout', 'people_gator.core.document_parser',
     'people_gator.core.db', 'people_gator.engines.face_detection',
     'people_gator.engines.face_assignment', 'people_gator.engines.entity_matching',
+    'people_gator.engines.embedding', 'timm',
     'people_gator.engines.llm', 'user_scripts.parse_folder',
     'user_scripts.merge_document_entities',
 )
@@ -34,7 +35,7 @@ modules = processing_modules if mode == 'tool' else api_modules if mode == 'clie
 for module in modules:
     importlib.import_module(module)
 if mode == 'client':
-    for module in ('torch', 'ultralytics', 'anno_page', 'pero_ocr'):
+    for module in ('torch', 'timm', 'ultralytics', 'anno_page', 'pero_ocr'):
         assert importlib.util.find_spec(module) is None, module + ' must be absent in the client-only environment'
 """, runtime_mode], cwd=tmp_path, text=True, capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr

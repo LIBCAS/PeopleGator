@@ -83,6 +83,27 @@ person, or unresolved outcome. See [linking rules and prompt contract](#document
 
 The LLM settings come from `LLMBasedEngine` in `people_gator/engines/llm.py`. Run detection before face assignment, and face assignment before entity matching when using all three stages.
 
+### `FACE_EMBEDDING`
+
+Enable this stage by adding an `[ENGINE_FACE_EMBEDDING]` section. In a pipeline
+with face detection, place it after detection. The stage also accepts existing
+or imported faces, including unnamed faces. It uses the original page image
+and the five landmarks to align each face to the ArcFace reference. If alignment
+fails or the landmarks are missing or unusable, it resizes the face's bounding-box
+crop. It skips an empty crop and propagates model execution errors.
+
+| name | required | default value | description |
+| --- | --- | --- | --- |
+| `METHOD` | True | — | Selects `FACE_EMBEDDING`. |
+| `MODEL` | True | — | Hugging Face timm model identifier. The example uses `gaunernst/vit_small_patch8_gap_112.cosface_ms1mv3`. |
+| `PRECISION` | False | `float32` | Inference dtype on the configured device. Also accepts `float16` and `bfloat16`, or the aliases `fp32`, `fp16`, and `bf16`. |
+| `DECIMAL_PLACES` | False | `None` | Optional integer used to round the L2-normalized vector. Omit it to keep the full computed values. |
+
+The engine loads pretrained weights once per instance and runs locally with
+`timm` from the `tool` and `full` extras. For the example model, RGB inputs
+are 112×112 and the model produces 512 values per face. Each run appends one
+structured result per processed face. See [face embedding outputs](OUTPUT_FORMATS.md#face-embeddings).
+
 ## Shared LLM prompt configuration and data diagnostics
 
 Every engine inheriting `LLMBasedEngine` requires a nonblank
@@ -100,7 +121,7 @@ requirement, not an optional detector-specific setting.
 
 The repository's [prompt resources](../resources/README.md) are examples selected
 **only through INI configuration**. The example [config.example.ini](../resources/config.example.ini)
-shows text detection → clustering → face detection → single or batch face
+shows text detection → clustering → face detection → optional face embeddings → single or batch face
 assignment → entity matching. Sections execute in insertion order; section names
 do not sort the pipeline. Both face-assignment alternatives are shown: remove the
 unused section before running. All five example prompt JSONs are populated;

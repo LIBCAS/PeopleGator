@@ -288,6 +288,17 @@ before repeating an export after a partial/uncertain write. See
 [processing behavior](PROCESSING.md#linked-text-mention-export).
 
 
+## Face embeddings
+
+The optional `FACE_EMBEDDING` engine appends an AnnoPage `ObjectEmbedding` to
+each processed face region's `embeddings` list. The record identifies the
+face occurrence by its MODS UUID, face region ID and page layout ID. It stores
+the normalized vector and the computation's software, model, timestamp,
+precision and rounding settings.
+
+Embeddings are available in memory and in [complete document checkpoints](CHECKPOINTS.md).
+ALTO, PAGE and PeopleGatorApp exports omit these vectors.
+
 ## Face LLM diagnostics
 
 `[PARSE_FOLDER] OUTPUT_FACE_PROMPTS_PATH` or `--output-face-prompts-path DIR`
