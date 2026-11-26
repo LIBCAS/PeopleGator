@@ -6,7 +6,7 @@ from urllib.parse import urljoin
 from uuid import UUID
 
 from people_gator.core.connector import Connector
-from people_gator.core.layout import PeopleGatorFaceRegionLayout
+from people_gator.core.layout import PeopleGatorFaceRegionLayout, PeopleGatorIdentity
 
 
 logger = logging.getLogger(__name__)
@@ -776,6 +776,38 @@ class DatabaseApiService:
                 return None
 
         return result
+
+    def put_person_entity(self, entity_id: str, identity: PeopleGatorIdentity):
+        """Create or replace a person at a specified UUID through PeopleGatorApp.
+
+        Args:
+            entity_id: Recorded app identity UUID.
+            identity: Source identity supplying the person's name and supported authority IDs.
+
+        Returns:
+            Decoded JSON on HTTP 201 or 200, or None on an unsuccessful status.
+
+        Raises:
+            ValueError: If an otherwise successful response contains invalid JSON.
+        """
+        url = self.compose_url("/api/v1/entities", entity_id)
+        payload = {
+            "entity_type": "person",
+            "name": identity.name if identity.name is not None else "",
+        }
+        if identity.other_ids and identity.other_ids.get("wikidata"):
+            payload["wikidata_id"] = identity.other_ids["wikidata"]
+
+        response = self.connector.put(url, json=payload)
+        if response.status_code not in (HTTPStatus.CREATED, HTTPStatus.OK):
+            logger.warning("Database operation put_person_entity failed (HTTP %s)", response.status_code)
+            return None
+
+        try:
+            return response.json()
+        except ValueError:
+            logger.error("Database returned invalid JSON (HTTP %s)", response.status_code)
+            raise
 
     def get_entity_info(self, entity_id, route="/api/v1/entities/{entity_id}", response_model=None):
         """Get entity info through the PeopleGatorApp API.

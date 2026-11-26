@@ -340,6 +340,26 @@ Use `--input-xml-path` and `--output-xml-path` for PAGE XML. Optional metadata J
 
 The DocAPI-based client and worker in `processing_api/` offer the job-based processing path. See [Architecture](ARCHITECTURE.md) and [Output formats](OUTPUT_FORMATS.md).
 
+### Export pre-annotated PAGE XML
+
+Use the existing CLI to send faces from [PeopleGator-annotated PAGE XML](OUTPUT_FORMATS.md#page-xml)
+to PeopleGatorApp. Configure `[DB_API]` with the destination URL and credentials,
+omit all `[ENGINE_*]` sections, and leave app import disabled. Supply the
+matching JPEGs and metadata JSON with `document.id`, `document.name` and
+`document.library`.
+
+```bash
+peoplegator --config ./export.ini \
+  --input-image-path ./images \
+  --input-xml-path ./page \
+  --input-metadata-path ./metadata.json \
+  --export-to-app
+```
+
+This runs zero engines and makes no LLM or embedding requests. See the
+[face export contract and replay limits](OUTPUT_FORMATS.md#peoplegatorapp-face-export)
+for UUID handling, the required API route, and repeated exports.
+
 ## DocAPI worker
 
 Install `.[worker,tool]` or `.[full]` to run processing jobs. For example:

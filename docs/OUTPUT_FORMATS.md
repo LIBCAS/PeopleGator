@@ -180,7 +180,34 @@ The JSON is formatted across lines and enclosed in single-quoted XML attribute d
 
 ## XML import and repeat processing
 
-The ALTO face readers and `altoxml_load_regions` hook are pending implementation. The PAGE writer currently emits `ImageRegion`, while the PAGE face import hook searches for `CustomRegion[@type='face']`. The ALTO cleanup helper `remove_peoplegator_elements()` currently preserves the input unchanged. Completing face round-trip and repeated-enrichment behavior is tracked in [TODO.md](TODO.md) and [Testing](TESTING.md).
+The PAGE reader restores face `ImageRegion` elements marked with the
+`face` category in the JSON `custom` attribute. ALTO face and identity loading
+is pending, so replay of saved face annotations uses PAGE XML. The ALTO cleanup
+helper `remove_peoplegator_elements()` currently preserves the input unchanged.
+
+## PeopleGatorApp face export
+
+For each face with a valid recorded person UUID, export calls the existing
+`GET /api/v1/entities/{entity_id}` lookup, including for faces sharing the
+same UUID. A lookup that returns a record reuses that entity. When the lookup
+returns `None`, export sends `PUT /api/v1/entities/{entity_id}` with
+`entity_type: person`, the recorded name (an empty string when missing), and a
+recorded Wikidata ID when available. A successful PUT allows the face to export
+with its original UUID. An unsuccessful PUT response is logged and the affected
+face is skipped. Export leaves the in-memory identity and input XML untouched.
+
+[PeopleGatorApp's PUT route](https://github.com/DCGM/PeopleGatorApp/pull/174)
+returns 201 for creation, 200 for replacement and 409 for an entity-type
+conflict. Replacement can clear omitted optional fields. The existing lookup
+returns `None` for both HTTP 404 and other unsuccessful HTTP responses. Export
+uses either result to attempt PUT, so a failed lookup or a concurrent creation
+between GET and PUT can cause an existing record to be replaced. Distinguishing
+not-found responses from other lookup failures is deferred.
+
+Re-export reuses existing entities but can append duplicate annotation rows.
+`--drop-existing-annotations` removes stored faces before exporting and
+leaves stored entities and text mentions in place. See the
+[CLI invocation](PROCESSING.md#export-pre-annotated-page-xml).
 
 ## In-memory text clusters
 

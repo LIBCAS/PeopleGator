@@ -203,6 +203,7 @@ def import_document(document: PeopleGatorDocument, db_api_service: DatabaseApiSe
 def export_document(document: PeopleGatorDocument, db_api_service: DatabaseApiService, drop_existing_annotations: bool = False):
     """Export pages, faces, linked text occurrences and artifacts, logging failures.
 
+    Each face with a valid recorded UUID is looked up before export.
     Text occurrences require a recorded name and resolved entity UUID. Failures
     are isolated per mention. Re-export can append duplicate text rows: the app
     create contract has no external occurrence ID or OCR offsets.
@@ -250,8 +251,25 @@ def export_document(document: PeopleGatorDocument, db_api_service: DatabaseApiSe
         else:
             logger.debug('Page %s already exists in PeopleGator App, updating existing page', page_layout.id)
 
-        faces = [region for region in page_layout.regions if isinstance(region, PeopleGatorFaceRegionLayout)]
-        for face_region in faces:
+        for face_region in page_layout.faces:
+            metadata = face_region.face_metadata
+            page_identity = metadata.page_identity if metadata is not None else None
+            identity = page_identity.identity if page_identity is not None else None
+            face_entity_id = identity.peoplegator_id if identity is not None else None
+            if isinstance(face_entity_id, str):
+                try:
+                    UUID(face_entity_id)
+                except ValueError:
+                    face_entity_id = None
+                if face_entity_id is not None:
+                    db_entity = db_api_service.get_entity_info(face_entity_id)
+                    if db_entity is None:
+                        db_entity = db_api_service.put_person_entity(face_entity_id, identity)
+                    if db_entity is None:
+                        logger.error('Failed to resolve entity %s for face %s on page %s',
+                                     face_entity_id, face_region.id, page_layout.id)
+                        continue
+
             db_face = db_api_service.create_face(face_region, db_page["source_id"])
             if not db_face:
                 logger.error('Failed to create face %s in PeopleGator App', face_region.id)
