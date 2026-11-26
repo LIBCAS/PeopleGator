@@ -28,6 +28,8 @@ The database API is implemented in [PeopleGatorApp](https://github.com/DCGM/Peop
 | Search and match | Find person entities using names proposed by the processing engines. |
 | Export | Create document, page, face and linked text-mention records and upload page images and layout data. |
 
+The service owns individual API operations and interprets their responses; `Connector` owns HTTP transport and authentication. Import/export and processing decisions remain with the calling workflow. For example, in [#76](https://github.com/LIBCAS/PeopleGator/issues/76) / [PR #77](https://github.com/LIBCAS/PeopleGator/pull/77), a GET wrapper and a UUID-addressed PUT wrapper belong in `DatabaseApiService`, while GET → conditional PUT → face export belongs in `export_document()`. The service may interpret or expose HTTP outcomes (including distinguishing not-found from request failure); the caller decides whether to create an entity after a confirmed not-found result. This describes ownership, not a change to the existing decoded-response-or-`None` contract: #76 deliberately defers distinguishing lookup failures from not-found.
+
 The `[DB_API]` configuration defines the connection. The CLI switches `--import-from-app` and `--export-to-app` enable the corresponding stages. See [Database API](PROCESSING.md#database-api) for the connection settings.
 
 ## Processing architecture
@@ -117,16 +119,18 @@ The broader system design also includes occurrences of person names in OCR text.
 
 | Component | Responsibility |
 | --- | --- |
-| `people_gator/core/document_parser.py` | Configured engine orchestration and application import/export. |
-| `people_gator/core/layout.py` | Page/document objects, face-region metadata, ALTO/PAGE I/O and rendering. |
+| `DocumentParser` and import/export functions (`people_gator/core/document_parser.py`) | Document import/export policies, configured engine orchestration and checkpoint boundaries; not engine-specific algorithms or direct HTTP transport. |
+| Data models (`people_gator/core/layout.py` and other existing model modules) | Data representation, operations on their own data, relevant serialization (including ALTO/PAGE I/O) and existing layout/rendering functionality; not external service orchestration. |
 | `people_gator/core/checkpoints.py`, `checkpoint_inspection.py` | Native Pickle/JSON save and resume, and selected read-only JSON diagnostics. |
+| Processing engines (`people_gator/engines/`) | Their own processing algorithms, evidence selection and domain decisions; not another engine's internal algorithms or unrelated workflows. |
 | `people_gator/engines/base.py` | Common processing-engine interfaces. |
 | `people_gator/text/` | Reusable OCR chunking, canonical page mappings, offset-preserving normalization and text validation; independent of processing engines. |
 | `people_gator/engines/face_detection.py` | YOLO detection in selected image regions; boxes and five landmarks. |
 | `people_gator/engines/face_assignment.py` | LLM-supported single/batch naming using images, captions and OCR text. |
 | `people_gator/engines/entity_matching.py` | Candidate-entity lookup, LLM disambiguation and creation through the app API. |
 | `people_gator/engines/llm.py` | Shared required-prompt validation, template/data key diagnostics, prompt assembly and structured LLM responses. |
-| `people_gator/core/db.py`, `connector.py` | Authenticated client for documents, pages, faces and person records. |
+| `Connector` (`people_gator/core/connector.py`) | HTTP transport, authenticated session and token refresh; not domain-specific entity, processing or export decisions. |
+| `DatabaseApiService` (`people_gator/core/db.py`) | Individual PeopleGatorApp API operations, endpoint URLs, request payload construction and response/error interpretation; not import/export orchestration, decisions about whether to create a person, entity matching or engine algorithms. |
 | `user_scripts/parse_folder.py` | Local processing entry point. |
 | `processing_api/api.py`, `client.py`, `worker.py` | Processing job API, CLI client and worker based on DocAPI. |
 
