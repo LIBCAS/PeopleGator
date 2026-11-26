@@ -36,8 +36,13 @@ write "None" when all work is complete. -->
 
 ## Review checklist
 
+<!-- Author self-review; checked items do not replace an independent architectural PR review under AGENTS.md. -->
+
 - [ ] The changes stay within the issue's agreed scope.
 - [ ] Every acceptance criterion has an outcome and supporting evidence.
 - [ ] Relevant processing tests ran successfully, or blockers are documented.
 - [ ] Applicable documentation and output contracts are updated.
+- [ ] New or substantially modified functions, methods and classes belong to the appropriate existing component and architectural layer.
+- [ ] Separation of concerns and existing component responsibilities are preserved; new state, dependencies, helpers or abstractions are necessary and suitable existing functionality is reused.
+- [ ] Any departure from established responsibilities has explicit requester approval and is documented.
 - [ ] The PR targets `develop` and is ready for human review (or remains a draft).
