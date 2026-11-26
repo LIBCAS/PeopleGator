@@ -55,7 +55,8 @@ The root [`AGENTS.md`](../AGENTS.md) instructs the agent to create and work excl
 | **Scope** | Affected processing stages, modules or documents; important boundaries and exclusions when relevant. |
 | **Acceptance criteria** | Short, testable checkboxes describing observable results and edge cases. |
 | **Validation plan** | Proposed checks from [TESTING.md](TESTING.md), especially synthetic fixtures and ALTO/PAGE XML assertions. |
-| **Related work and decisions** | Relevant issues/PRs, dependencies, interface changes and open questions, when applicable. |
+| **Related work** | Relevant issues/PRs and dependencies, when applicable. |
+| **Open questions / decisions** | Unresolved material decisions and separately identified unapproved proposals, when applicable; required for a `[Draft]` issue. |
 
 Focus technical detail where it matters: image regions and face coordinates; OCR/caption context; proposed versus matched identities; ALTO/PAGE XML contracts; engine configuration; and PeopleGatorApp API interactions. Include DocAPI-related details only when the request concerns that integration.
 
