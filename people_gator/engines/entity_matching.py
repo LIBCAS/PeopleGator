@@ -5,7 +5,6 @@ import logging
 import unicodedata
 from typing import Literal
 
-from openai import APIResponseValidationError, APIStatusError
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from people_gator.engines import DocumentProcessingEngine, LLMBasedEngine
@@ -345,9 +344,6 @@ class EntityMatchingEngine(DocumentProcessingEngine, LLMBasedEngine):
                     reason = 'invalid/unusable response schema'
                 else:
                     reason = 'external request or response processing error'
-                status = exc.status_code if isinstance(exc, (APIStatusError, APIResponseValidationError)) else None
-                if type(status) is int and 100 <= status <= 599:
-                    reason += f'; HTTP status={status}'
                 logger.error('Entity unit %d: %s failed (%s): %s; unchanged',
                              position, operation, type(exc).__name__, reason)
                 if operation == 'entity creation':
