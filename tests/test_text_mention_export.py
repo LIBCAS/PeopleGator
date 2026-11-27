@@ -8,6 +8,8 @@ from uuid import UUID
 
 import pytest
 
+from processing_fixtures import mention_fields
+
 
 ENTITY = 'ed8bae46-adff-4c10-81d7-2b03c210cc3e'
 SOURCES = ['4812610d-85c3-4400-af58-dce19d9e8a5f', 'e41b380b-e1f9-457b-a4c8-50db3a06328b']
@@ -73,7 +75,8 @@ def test_every_occurrence_uses_page_source_and_preserves_data(document, service)
     document.page_layouts[1].text_entities = [third]
     document.text_entity_clusters = [PeopleGatorTextEntityCluster([first, second, third], name='Canonical name')]
     members = [first, second, third]
-    before = deepcopy([vars(m) for m in members])
+    evidence = deepcopy([mention_fields(m)[:-1] for m in members])
+    identities = deepcopy([m.page_identity.identity.to_dict() for m in members])
     spans = [m.source_spans for m in members]
     wrappers = [m.page_identity for m in members]
     clusters = document.text_entity_clusters
@@ -82,12 +85,11 @@ def test_every_occurrence_uses_page_source_and_preserves_data(document, service)
     assert service.create_text_mention.call_args_list == [
         call(name=m.name, context=m.text, entity_id=ENTITY, source_id=source)
         for m, source in zip(members, [SOURCES[0], SOURCES[0], SOURCES[1]])]
-    for m, saved, span, wrapper in zip(members, before, spans, wrappers):
+    for m, saved, identity, span, wrapper in zip(members, evidence, identities, spans, wrappers):
         assert m.source_spans is span
         assert m.page_identity is wrapper
-        assert {k: v for k, v in vars(m).items() if k != 'page_identity'} == {
-            k: v for k, v in saved.items() if k != 'page_identity'}
-        assert vars(m.page_identity.identity) == vars(saved['page_identity'].identity)
+        assert mention_fields(m)[:-1] == saved
+        assert m.page_identity.identity.to_dict() == identity
     assert document.text_entity_clusters is clusters
     service.create_entity.assert_not_called()
     service.create_face.assert_not_called()

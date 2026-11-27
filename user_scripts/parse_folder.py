@@ -169,7 +169,8 @@ def save_face_prompts(document, output_path):
             if not isinstance(face, PeopleGatorFaceRegionLayout):
                 continue
             metadata = face.face_metadata
-            tag = getattr(metadata, 'tag_id', None) or face.id or "face"
+            tag_id = metadata.tag_id if metadata is not None else None
+            tag = tag_id or face.id or "face"
             face_id = quote(str(tag), safe="").replace("_", "%5F")
             filename = f"{page_index}_{page_id}_{region_index}_{face_id}.json"
             with open(os.path.join(output_path, filename), 'w', encoding='utf-8') as stream:

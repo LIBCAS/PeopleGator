@@ -137,14 +137,18 @@ def test_installed_model_free_processing(tmp_path, runtime_mode, runner):
         result = subprocess.run([sys.executable, "-I", "-c", """
 import logging
 from pathlib import Path
-from types import SimpleNamespace
+from uuid import UUID
+from doc_api.api.schemas.base_objects import Job
 from doc_api.connector import Connector
 from processing_api.worker import PeopleGatorWorker
 logging.basicConfig(level=logging.INFO)
 root = Path.cwd()
 worker = PeopleGatorWorker('https://example.invalid', Connector('test'), base_dir=str(root / 'worker'))
-job = SimpleNamespace(alto_required=False, page_required=True, meta_json_required=False,
-                      engine_settings={'outputs': {'alto': True, 'page': True, 'renders': True}})
+job = Job.model_construct(
+    id=UUID('12345678-1234-1234-1234-123456789abc'),
+    alto_required=False, page_required=True, meta_json_required=False,
+    engine_settings={'outputs': {'alto': True, 'page': True, 'renders': True}},
+)
 response = worker.process_job(job, None, str(root / 'images'), str(root / 'results'),
                               page_xml_dir=str(root / 'pages'), engine_dir=str(root))
 assert response.success

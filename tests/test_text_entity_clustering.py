@@ -9,6 +9,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from processing_fixtures import mention_fields, responses_result
+
 
 @pytest.fixture(autouse=True)
 def processing_only(runtime_mode):
@@ -236,14 +238,14 @@ def test_transport_failure_no_partial_commit(engine, failure, caplog):
     protected = PeopleGatorTextEntityCluster([original], name='Manual')
     doc.text_entity_clusters = [protected]
     original_list = doc.text_entity_clusters
-    before = [m.__dict__.copy() for m in [original, a, b, c, d]]
+    before = [mention_fields(m) for m in [original, a, b, c, d]]
     e.llm_prompter = Mock(side_effect=[{'clusters': [cluster([1, 2])]}, failure])
     with pytest.raises(RuntimeError, match='Text clustering failed'):
         e.process_document(doc)
     assert e.llm_prompter.call_count == 2
     assert doc.text_entity_clusters is original_list
     assert doc.text_entity_clusters == [protected]
-    assert [m.__dict__ for m in [original, a, b, c, d]] == before
+    assert [mention_fields(m) for m in [original, a, b, c, d]] == before
     assert 'private' not in caplog.text
 
 
@@ -319,13 +321,13 @@ def test_multiline_unicode_provenance_ocr_faces_images_preserved(engine):
     face, image = object(), object()
     doc.page_layouts[0].regions.append(face)
     doc.page_images['p'] = image
-    before = [m.__dict__.copy() for m in [a, b]]
+    before = [mention_fields(m) for m in [a, b]]
     e.llm_prompter = Mock(return_value={'clusters': [cluster([1, 2])]})
     e.process_document(doc)
     assert membership(doc) == [[a, b]]
     for m, fields in zip([a, b], before):
-        for key, value in fields.items():
-            assert getattr(m, key) is value
+        for current, original in zip(mention_fields(m), fields):
+            assert current is original
     assert doc.page_layouts[0].regions == [face]
     assert doc.page_images['p'] is image
     assert line.transcription == 'Kare1 Čapek'
@@ -400,27 +402,27 @@ def test_detection_then_clustering_parser_xml(format, engine, tmp_path, monkeypa
 def test_real_responses_typed_retry_invalid_partition_and_service_failure(engine, monkeypatch):
     from people_gator.engines import llm
     e = engine()
-    responses = Mock(side_effect=[NS(status='completed', output_text='bad JSON'), NS(status='completed', output_text=json.dumps({'clusters': [cluster([1, 2])]}))])
+    responses = Mock(side_effect=[responses_result(status='completed', output_text='bad JSON'), responses_result(status='completed', output_text=json.dumps({'clusters': [cluster([1, 2])]}))])
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=responses))))
     a, b = mention(), mention()
     doc = document([a, b])
     e.process_document(doc)
     assert responses.call_count == 2 and membership(doc) == [[a, b]]
     responses.side_effect = None
-    responses.return_value = NS(status='completed', output_text=json.dumps({'clusters': [cluster([1, 1])]}))
+    responses.return_value = responses_result(status='completed', output_text=json.dumps({'clusters': [cluster([1, 1])]}))
     doc = document([a, b])
     e.process_document(doc)
     assert membership(doc) == [[a], [b]]
-    responses.return_value = NS(status='completed', output_text='{"clusters": [null]}')
+    responses.return_value = responses_result(status='completed', output_text='{"clusters": [null]}')
     doc = document([a, b])
     e.process_document(doc)
     assert membership(doc) == [[a], [b]]
-    responses.return_value = NS(status='completed', output_text='bad JSON')
+    responses.return_value = responses_result(status='completed', output_text='bad JSON')
     doc = document([a, b])
     e.process_document(doc)
     assert membership(doc) == [[a], [b]]
     for failure in [OSError('private OCR'),
-                    NS(status='incomplete', incomplete_details=NS(reason='max_output_tokens'))]:
+                    responses_result(status='incomplete', incomplete_details=NS(reason='max_output_tokens'))]:
         responses.side_effect = failure if isinstance(failure, Exception) else None
         responses.return_value = failure
         doc = document([a, b])
@@ -433,7 +435,7 @@ def test_real_responses_typed_retry_invalid_partition_and_service_failure(engine
 def test_prior_invalid_content_cannot_mask_later_transport_failure(engine, monkeypatch):
     from people_gator.engines import llm
     e = engine()
-    responses = Mock(side_effect=[NS(status='completed', output_text='{"clusters": [null]}'),
+    responses = Mock(side_effect=[responses_result(status='completed', output_text='{"clusters": [null]}'),
                                   OSError('private transport'), OSError('private transport')])
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=responses))))
     doc = document([mention(), mention()])
@@ -484,9 +486,9 @@ def test_failed_response_on_later_group_preserves_original_cluster_list(engine, 
     protected = PeopleGatorTextEntityCluster([manual], name='protected')
     doc.text_entity_clusters = [protected]
     original = doc.text_entity_clusters
-    before = [m.__dict__.copy() for m in mentions]
-    successful = NS(status='completed', output_text=json.dumps({'clusters': [cluster([1, 2])]}))
-    failed = NS(status='failed', output_text=text)
+    before = [mention_fields(m) for m in mentions]
+    successful = responses_result(status='completed', output_text=json.dumps({'clusters': [cluster([1, 2])]}))
+    failed = responses_result(status='failed', output_text=text)
     responses = Mock(side_effect=[successful, failed, failed, failed])
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=responses))))
     caplog.set_level('DEBUG')
@@ -495,7 +497,7 @@ def test_failed_response_on_later_group_preserves_original_cluster_list(engine, 
     assert responses.call_count == 4
     assert doc.text_entity_clusters is original
     assert doc.text_entity_clusters == [protected]
-    assert [m.__dict__ for m in mentions] == before
+    assert [mention_fields(m) for m in mentions] == before
     assert 'singletons' not in caplog.text
     assert 'Text clustering completed' not in caplog.text
     assert not any(value in caplog.text for value in ['Ada', 'Karel', 'private-key'])

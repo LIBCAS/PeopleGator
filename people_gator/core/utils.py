@@ -4,6 +4,7 @@ import json
 import logging
 import re
 
+from anno_page.core.layout import AnnoPageRegionLayout
 from anno_page.enums.language import Language
 from people_gator.text.chunking import page_text, normalize_ocr, resolve_mappings, mapping_source_spans
 
@@ -143,8 +144,8 @@ def assigned_caption(source_region):
     Args:
         source_region: Image region with optional graphical metadata.
     """
-    metadata = getattr(source_region, 'graphical_metadata', None)
-    title = getattr(metadata, 'title', None)
+    metadata = source_region.graphical_metadata if isinstance(source_region, AnnoPageRegionLayout) else None
+    title = metadata.title if metadata is not None else None
     if isinstance(title, dict):
         title = title.get(Language.CZECH, title.get(Language.ENGLISH, next(iter(title.values()), None)))
     return title if isinstance(title, str) else None
@@ -176,9 +177,10 @@ def caption_mentions(page, source_region, caption, occurrences):
     Returns:
         Associated mention/source pairs, without engine-specific prompt data.
     """
-    metadata = getattr(source_region, 'graphical_metadata', None)
-    caption_metadata = getattr(metadata, 'caption_lines_metadata', None)
-    referenced_ids = {id(line) for line in (getattr(caption_metadata, 'lines', ()) or ())}
+    metadata = source_region.graphical_metadata if isinstance(source_region, AnnoPageRegionLayout) else None
+    caption_metadata = metadata.caption_lines_metadata if metadata is not None else None
+    caption_references = caption_metadata.lines if caption_metadata is not None else None
+    referenced_ids = {id(line) for line in (caption_references or ())}
     caption_lines = [line for region in page.regions for line in region.lines
                      if id(line) in referenced_ids and isinstance(line.transcription, str)
                      and line.transcription.strip()]

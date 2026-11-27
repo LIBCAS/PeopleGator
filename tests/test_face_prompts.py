@@ -11,6 +11,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from processing_fixtures import responses_result
+
 
 @pytest.fixture(autouse=True)
 def processing_only(runtime_mode):
@@ -57,12 +59,12 @@ def test_raw_attempts_keep_existing_results_and_failure_semantics(monkeypatch, p
     from test_llm_prompts import InlinePool
     from people_gator.engines.llm import LLMPrompter, LLMRequestError, LLMResponseError
     invalid = {
-        'malformed': NS(status='completed', output_text=' ```json\n{Čapek\n``` '),
-        'schema': NS(status='completed', output_text='{"wrong": "Čapek"}'),
+        'malformed': responses_result(status='completed', output_text=' ```json\n{Čapek\n``` '),
+        'schema': responses_result(status='completed', output_text='{"wrong": "Čapek"}'),
         'transport': OSError('do not export this exception or API key'),
-        'failed': NS(status='failed', output_text='raw failed output'),
-        'incomplete': NS(status='incomplete', output_text='raw partial output', incomplete_details=NS(reason='other')),
-        'token-limit': NS(status='incomplete', output_text='raw token-limited output', incomplete_details=NS(reason='max_output_tokens')),
+        'failed': responses_result(status='failed', output_text='raw failed output'),
+        'incomplete': responses_result(status='incomplete', output_text='raw partial output', incomplete_details=NS(reason='other')),
+        'token-limit': responses_result(status='incomplete', output_text='raw token-limited output', incomplete_details=NS(reason='max_output_tokens')),
     }[failure]
     create = Mock(side_effect=[invalid, invalid])
     llm = install_provider(monkeypatch, create)
@@ -126,11 +128,11 @@ def test_assignment_modes_attach_exact_attempts_to_only_participating_faces(tmp_
         requests.append(request)
         count = counts[prompt] = counts.get(prompt, 0) + 1
         if count == 1:
-            return NS(status='completed', output_text='malformed Čapek')
+            return responses_result(status='completed', output_text='malformed Čapek')
         if count == 2:
             raise OSError('private transport error')
         raw = json.dumps({'name_normalized': None, 'name_in_text': None, 'faces': [], 'prompt': prompt}, ensure_ascii=False)
-        return NS(status='completed', output_text=raw)
+        return responses_result(status='completed', output_text=raw)
 
     llm = install_provider(monkeypatch, create)
     monkeypatch.setattr(llm.multiprocessing, 'Pool', InlinePool)
@@ -160,7 +162,7 @@ def test_real_pool_returns_worker_records_to_original_faces(tmp_path, monkeypatc
     from people_gator.core.layout import PeopleGatorFaceRegionLayout
     engine = make_engine(tmp_path, 'document_parallel')
     engine.llm_prompter.num_processes = 2
-    llm = install_provider(monkeypatch, Mock(return_value=NS(status='completed', output_text='{"faces": []}')))
+    llm = install_provider(monkeypatch, Mock(return_value=responses_result(status='completed', output_text='{"faces": []}')))
     monkeypatch.setattr(llm.multiprocessing, 'Pool', multiprocessing.get_context('fork').Pool)
     doc = diagnostic_document()
     engine.process_document(doc)
@@ -189,7 +191,7 @@ def test_matching_multiple_faces_text_only_and_unrelated_units(tmp_path, monkeyp
     db.search_entities.return_value = {'items': []}
     engine = EntityMatchingEngine(config['ENGINE'], 'cpu', str(tmp_path), db_api_service=db)
     raw = '{bad Čapek' if fail else json.dumps(dict(action='unresolved', source_is_person=True, item_id=None, name=None, reason='No matching evidence.'))
-    create = Mock(return_value=NS(status='completed', output_text=raw))
+    create = Mock(return_value=responses_result(status='completed', output_text=raw))
     install_provider(monkeypatch, create)
     assert engine.process_document(doc) is doc
     expected_count = 3 if fail else 1
@@ -259,6 +261,34 @@ def test_export_every_face_unique_stable_unicode_and_no_xml_changes(tmp_path, fm
     save_face_prompts(doc, out)
     assert {f.name: f.read_text(encoding='utf-8') for f in out.glob('*.json')} == content
     assert all('prompts' not in r.face_metadata.to_dict() for r in doc.faces if r.face_metadata)
+
+
+def test_prompt_filename_uses_tag_region_or_literal_fallback(tmp_path):
+    from people_gator.core.layout import PeopleGatorDocument, PeopleGatorPageLayout
+    from test_entity_matching import face, identity
+    from user_scripts.parse_folder import save_face_prompts
+
+    page = PeopleGatorPageLayout('page_1')
+    tagged = face(page, identity())
+    tagged.face_metadata.tag_id = 'tag_1'
+    untagged = face(page, identity())
+    untagged.face_metadata.tag_id = None
+    untagged.id = 'region_2'
+    no_metadata = face(page, identity())
+    no_metadata.face_metadata = None
+    no_metadata.id = 'region_3'
+    unnamed = face(page, identity())
+    unnamed.face_metadata = None
+    unnamed.id = None
+
+    save_face_prompts(PeopleGatorDocument(page_layouts=[page]), tmp_path)
+
+    assert {path.name: json.loads(path.read_text()) for path in tmp_path.iterdir()} == {
+        '0_page%5F1_0_tag%5F1.json': [],
+        '0_page%5F1_1_region%5F2.json': [],
+        '0_page%5F1_2_region%5F3.json': [],
+        '0_page%5F1_3_face.json': [],
+    }
 
 
 @pytest.mark.parametrize('mode', ['absent', 'empty', 'ini', 'override', 'disable', 'resume'])
@@ -343,7 +373,7 @@ def test_app_face_payload_is_identical_with_or_without_diagnostics():
 def test_explicit_collection_preserves_existing_entries_and_is_request_local(monkeypatch, method):
     from test_llm_prompts import InlinePool
     from people_gator.engines.llm import LLMPrompter
-    create = Mock(return_value=NS(status='completed', output_text=' {"ok": "Čapek"}\n'))
+    create = Mock(return_value=responses_result(status='completed', output_text=' {"ok": "Čapek"}\n'))
     llm = install_provider(monkeypatch, create)
     monkeypatch.setattr(llm.multiprocessing, 'Pool', InlinePool)
     prompter = LLMPrompter('https://example.invalid', 'private-key', 'mock', prompt_template_user='{{ name }}')
@@ -351,7 +381,11 @@ def test_explicit_collection_preserves_existing_entries_and_is_request_local(mon
     parallel = method == 'process_parallel'
     interactions = [[prior]] if parallel else [prior]
     argument = [{'name': 'first'}] if parallel else {'name': 'first'}
-    operation = getattr(prompter, method)
+    operation = {
+        'process': prompter.process,
+        '__call__': prompter,
+        'process_parallel': prompter.process_parallel,
+    }[method]
     expected = [{'ok': 'Čapek'}] if parallel else {'ok': 'Čapek'}
     assert operation(argument, interactions=interactions) == expected
     first = {'prompt': '[user]\nfirst', 'response': ' {"ok": "Čapek"}\n'}
@@ -379,7 +413,7 @@ def test_parallel_capture_preserves_all_request_groups_on_failure(monkeypatch, r
     def create(**request):
         text = rendered(request)
         raw = 'invalid Čapek' if 'bad' in text else '{"ok": true}'
-        return NS(status='completed', output_text=raw)
+        return responses_result(status='completed', output_text=raw)
 
     llm = install_provider(monkeypatch, Mock(side_effect=create))
     monkeypatch.setattr(llm.multiprocessing, 'Pool', InlinePool)
@@ -422,7 +456,7 @@ def test_assignment_retains_attempts_when_an_explicit_request_raises(tmp_path, m
     engine = make_engine(tmp_path, mode)
     engine.llm_prompter.raise_on_failure = True
     engine.llm_prompter.max_attempts = 2
-    llm = install_provider(monkeypatch, Mock(return_value=NS(status='completed', output_text='bad Čapek')))
+    llm = install_provider(monkeypatch, Mock(return_value=responses_result(status='completed', output_text='bad Čapek')))
     monkeypatch.setattr(llm.multiprocessing, 'Pool', InlinePool)
     doc = diagnostic_document()
     with pytest.raises(LLMResponseError):
@@ -452,7 +486,7 @@ def test_parallel_assignment_keeps_mixed_attempts_without_applying_partial_resul
     def create(**request):
         requests.append(request)
         raw = 'invalid' if len(requests) == 2 else '{"faces": []}'
-        return NS(status='completed', output_text=raw)
+        return responses_result(status='completed', output_text=raw)
 
     llm = install_provider(monkeypatch, create)
     monkeypatch.setattr(llm.multiprocessing, 'Pool', InlinePool)

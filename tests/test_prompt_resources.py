@@ -10,6 +10,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from processing_fixtures import responses_result
+
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_CONFIG = ROOT / 'resources' / 'config.example.ini'
@@ -257,7 +259,7 @@ def test_detection_resource_typed_response_and_description(populated, resource_e
     document = PeopleGatorDocument(page_layouts=[page])
     payload = {'entities': [{'name': 'Karel Čapek', 'type': 'being', 'info': 'spisovatel',
                             'mentions': [{'name': 'Čapek', 'context': 'Čapek 😀'}]}] if populated else []}
-    create = Mock(return_value=NS(status='completed', output_text=json.dumps(payload)))
+    create = Mock(return_value=responses_result(status='completed', output_text=json.dumps(payload)))
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=create))))
     engine.process_document(document)
     assert len(page.text_entities) == int(populated)
@@ -285,7 +287,7 @@ def test_clustering_resource_uses_serialized_records_and_typed_partition(
     payload = {'clusters': [dict(name='Karel Čapek', short_description=None,
                                  long_description=None, entity_indices=indices)
                             for indices in ([[1], [2]] if split else [[1, 2]])]}
-    create = Mock(return_value=NS(status='completed', output_text=json.dumps(payload)))
+    create = Mock(return_value=responses_result(status='completed', output_text=json.dumps(payload)))
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=create))))
     engine.process_document(doc)
     request = create.call_args.kwargs
@@ -316,7 +318,7 @@ def test_matching_resource_structured_evidence_and_typed_decisions(
                   for i in range(2)] if populated or action == 'select' else []
     payload = dict(action=action, source_is_person=person, item_id=1 if action == 'select' else None,
                    name=None if action == 'unresolved' else name, reason='Supplied evidence supports this decision.')
-    create = Mock(return_value=NS(status='completed', output_text=json.dumps(payload)))
+    create = Mock(return_value=responses_result(status='completed', output_text=json.dumps(payload)))
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=create))))
     result = engine.match_entity(name, context, candidates)
     assert isinstance(result, EntityMatchingResult) and result.model_dump() == payload
@@ -363,7 +365,7 @@ def test_parse_folder_config_deployment_retains_engine_order_and_source_mapping(
                                'mentions': [{'name': 'Čapek', 'context': 'Čapek 😀'}]}]}
     grouping = {'clusters': [{'name': 'Karel Čapek', 'short_description': None,
                               'long_description': None, 'entity_indices': [1, 2]}]}
-    create = Mock(side_effect=[NS(status='completed', output_text=json.dumps(payload))
+    create = Mock(side_effect=[responses_result(status='completed', output_text=json.dumps(payload))
                                for payload in (extraction, extraction, grouping)])
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=create))))
     real_create_parser = cli.create_document_parser

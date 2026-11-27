@@ -7,6 +7,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from processing_fixtures import responses_result
+
 
 @pytest.fixture(autouse=True)
 def processing_only(runtime_mode):
@@ -23,7 +25,7 @@ def prompter_client(monkeypatch, responses):
 
 @pytest.mark.parametrize('text', ['', '{"entities": [', '{"entities": []}'])
 def test_output_token_limit_is_not_json_error_or_identically_retried(text, monkeypatch, caplog):
-    response = NS(status='incomplete', incomplete_details=NS(reason='max_output_tokens'), output_text=text)
+    response = responses_result(status='incomplete', incomplete_details=NS(reason='max_output_tokens'), output_text=text)
     llm, create = prompter_client(monkeypatch, [response])
     request = {'max_output_tokens': 1500}
     with caplog.at_level(logging.DEBUG):
@@ -37,8 +39,8 @@ def test_output_token_limit_is_not_json_error_or_identically_retried(text, monke
 
 
 def test_incomplete_response_never_returns_previous_invalid_candidate(monkeypatch, caplog):
-    llm, create = prompter_client(monkeypatch, [NS(status='completed', output_text='{"private": "sensitive"}'),
-        NS(status='incomplete', incomplete_details=NS(reason='max_output_tokens'), output_text='')])
+    llm, create = prompter_client(monkeypatch, [responses_result(status='completed', output_text='{"private": "sensitive"}'),
+        responses_result(status='incomplete', incomplete_details=NS(reason='max_output_tokens'), output_text='')])
     assert llm.LLMPrompter._send_request('https://example.invalid', 'secret', {'max_output_tokens': 1500},
         3, {'type': 'object', 'required': ['required']}) is None
     assert create.call_count == 2
@@ -54,7 +56,7 @@ def test_http_json_error_has_distinct_safe_diagnostic(monkeypatch, caplog):
 
 
 def test_model_json_error_and_safe_token_metadata(monkeypatch, caplog):
-    llm, create = prompter_client(monkeypatch, [NS(status='completed', output_text='private response',
+    llm, create = prompter_client(monkeypatch, [responses_result(status='completed', output_text='private response',
         usage=NS(output_tokens=25, output_tokens_details=NS(reasoning_tokens=10)))])
     with caplog.at_level(logging.DEBUG):
         assert llm.LLMPrompter._send_request('https://example.invalid', 'secret', {}, 1, None) is None
@@ -63,10 +65,17 @@ def test_model_json_error_and_safe_token_metadata(monkeypatch, caplog):
     assert 'private response' not in caplog.text
 
 
-def test_complete_json_response_still_succeeds(monkeypatch):
-    llm, create = prompter_client(monkeypatch, [NS(status='completed', output_text='{"entities": []}')])
-    assert llm.LLMPrompter._send_request('https://example.invalid', 'secret', {}, 3, None) == {'entities': []}
-    assert create.call_count == 1
+@pytest.mark.parametrize('incomplete_first', [False, True])
+def test_complete_json_response_without_usage(monkeypatch, caplog, incomplete_first):
+    responses = [responses_result(status='completed', output_text='{"entities": []}')]
+    if incomplete_first:
+        responses.insert(0, responses_result(status='incomplete'))
+    llm, create = prompter_client(monkeypatch, responses)
+    with caplog.at_level(logging.DEBUG):
+        assert llm.LLMPrompter._send_request('https://example.invalid', 'secret', {}, 3, None) == {'entities': []}
+    assert create.call_count == len(responses)
+    assert ('returned an incomplete response; retrying' in caplog.text) == incomplete_first
+    assert 'output tokens=None, reasoning tokens=None' in caplog.text
 
 
 @pytest.mark.parametrize('kind', ['json', 'schema', 'transport', 'http-json', 'incomplete', 'token-limit'])
@@ -75,12 +84,12 @@ def test_opt_in_failure_types_preserve_request_vs_content(kind, parallel, monkey
     from people_gator.engines import llm
     from test_llm_prompts import InlinePool
     invalid = {
-        'json': NS(status='completed', output_text='private invalid JSON'),
-        'schema': NS(status='completed', output_text='{"private": "data"}'),
+        'json': responses_result(status='completed', output_text='private invalid JSON'),
+        'schema': responses_result(status='completed', output_text='{"private": "data"}'),
         'transport': OSError('private transport'),
         'http-json': json.JSONDecodeError('bad', 'private HTTP', 0),
-        'incomplete': NS(status='incomplete', incomplete_details=NS(reason='other')),
-        'token-limit': NS(status='incomplete', incomplete_details=NS(reason='max_output_tokens')),
+        'incomplete': responses_result(status='incomplete', incomplete_details=NS(reason='other')),
+        'token-limit': responses_result(status='incomplete', incomplete_details=NS(reason='max_output_tokens')),
     }[kind]
     create = Mock(side_effect=invalid if isinstance(invalid, Exception) else None, return_value=invalid)
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=create))))
@@ -102,7 +111,7 @@ def test_opt_in_failure_types_preserve_request_vs_content(kind, parallel, monkey
 @pytest.mark.parametrize('text', ['', '{"ok": true}'])
 @pytest.mark.parametrize('strict', [False, True])
 def test_noncompleted_status_is_request_failure_before_parsing(status, text, strict, monkeypatch, caplog):
-    response = NS(status=status, output_text=text)
+    response = responses_result(status=status, output_text=text)
     llm, create = prompter_client(monkeypatch, [response, response])
     with caplog.at_level(logging.DEBUG):
         if strict:
@@ -121,8 +130,8 @@ def test_noncompleted_status_is_request_failure_before_parsing(status, text, str
 
 @pytest.mark.parametrize('strict', [False, True])
 def test_noncompleted_status_retries_until_completed(monkeypatch, strict):
-    llm, create = prompter_client(monkeypatch, [NS(status='failed', output_text='{"unusable": true}'),
-        NS(status='completed', output_text='{"ok": true}')])
+    llm, create = prompter_client(monkeypatch, [responses_result(status='failed', output_text='{"unusable": true}'),
+        responses_result(status='completed', output_text='{"ok": true}')])
     assert llm.LLMPrompter._send_request('https://example.invalid', 'private-key', {}, 2, None,
                                        raise_on_failure=strict) == {'ok': True}
     assert create.call_count == 2
@@ -130,8 +139,8 @@ def test_noncompleted_status_retries_until_completed(monkeypatch, strict):
 
 @pytest.mark.parametrize('strict', [False, True])
 def test_failed_status_discards_previous_invalid_content(monkeypatch, strict):
-    llm, create = prompter_client(monkeypatch, [NS(status='completed', output_text='{"private": true}'),
-        NS(status='failed', output_text='')])
+    llm, create = prompter_client(monkeypatch, [responses_result(status='completed', output_text='{"private": true}'),
+        responses_result(status='failed', output_text='')])
     schema = {'type': 'object', 'required': ['ok']}
     if strict:
         with pytest.raises(llm.LLMRequestError):

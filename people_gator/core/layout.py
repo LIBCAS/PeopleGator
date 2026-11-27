@@ -8,7 +8,7 @@ from lxml import etree as ET
 from typing import Tuple
 
 from pero_ocr.core.layout import RegionLayout, TextLine, ALTOVersion, create_ocr_processing_element
-from anno_page.core.layout import AnnoPagePageLayout, set_position_and_size, get_next_id, get_page_element, get_print_space_coords, update_print_space_and_margins
+from anno_page.core.layout import AnnoPagePageLayout, AnnoPageRegionLayout, set_position_and_size, get_next_id, get_page_element, get_print_space_coords, update_print_space_and_margins
 from anno_page.core.metadata import BaseMetadata as AnnoPageBaseMetadata
 from anno_page.core.utils import find_or_create_tags_element, get_root_element, find_or_create_element
 from anno_page.enums import Language
@@ -934,6 +934,7 @@ class PeopleGatorPageLayout(AnnoPagePageLayout):
         super().__init__(id, page_size, file=None)
 
         self.text_entities: list[PeopleGatorTextEntityMention] = []
+        self._entity_linking_journal: list[dict] | None = None
 
         self.from_altoxml_ended += altoxml_load_regions
         self.from_pagexml_ended += pagexml_load_regions
@@ -1436,14 +1437,20 @@ def new_text_identity_ids(page):
     Args:
         page: Original page containing OCR, faces and existing local identity tags.
     """
-    used = {region.id for region in page.regions}
-    metadata = [getattr(region, 'graphical_metadata', None) for region in page.regions]
-    metadata.extend(getattr(region, 'face_metadata', None) for region in page.regions)
-    metadata.extend(getattr(item, 'page_identity', None) for item in list(metadata) if item is not None)
-    metadata.extend(m.page_identity for m in page.text_entities)
-    for item in metadata:
-        if item is not None:
-            used.update((getattr(item, 'tag_id', None), getattr(item, 'mods_id', None)))
+    used = set()
+    for region in page.regions:
+        used.add(region.id)
+        if isinstance(region, AnnoPageRegionLayout) and region.graphical_metadata is not None:
+            metadata = region.graphical_metadata
+            used.update((metadata.tag_id, metadata.mods_id))
+        if isinstance(region, PeopleGatorFaceRegionLayout) and region.face_metadata is not None:
+            metadata = region.face_metadata
+            used.update((metadata.tag_id, metadata.mods_id))
+            if metadata.page_identity is not None:
+                used.update((metadata.page_identity.tag_id, metadata.page_identity.mods_id))
+    for mention in page.text_entities:
+        if mention.page_identity is not None:
+            used.update((mention.page_identity.tag_id, mention.page_identity.mods_id))
     index = 1
     while f'person_text_{index:03}' in used or f'MODS_PERSON_TEXT_{index:04}' in used:
         index += 1

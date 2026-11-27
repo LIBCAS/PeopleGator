@@ -198,11 +198,12 @@ class LLMPrompter:
             try:
                 response = client.responses.create(**request_args)
                 if interactions is not None:
-                    record['response'] = getattr(response, 'output_text', None)
-                status = getattr(response, "status", None)
+                    record['response'] = response.output_text
+                status = response.status
                 if status == "incomplete":
                     result = None
-                    reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
+                    details = response.incomplete_details
+                    reason = details.reason if details is not None else None
                     if reason == "max_output_tokens":
                         logger.error("LLM response reached MAX_OUTPUT_TOKENS=%s before completing JSON; "
                                      "increase MAX_OUTPUT_TOKENS. "
@@ -221,10 +222,11 @@ class LLMPrompter:
                     continue
                 decode_stage = "model output decoding"
                 output_text = response.output_text or ""
+                usage = response.usage
+                token_details = usage.output_tokens_details if usage is not None else None
                 logger.debug("LLM response: text characters=%d, output tokens=%s, reasoning tokens=%s",
-                             len(output_text), getattr(getattr(response, "usage", None), "output_tokens", None),
-                             getattr(getattr(getattr(response, "usage", None), "output_tokens_details", None),
-                                     "reasoning_tokens", None))
+                             len(output_text), usage.output_tokens if usage is not None else None,
+                             token_details.reasoning_tokens if token_details is not None else None)
                 parsed_json = json.loads(strip_markdown(output_text))
 
                 result = parsed_json

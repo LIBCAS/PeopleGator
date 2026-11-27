@@ -9,6 +9,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from processing_fixtures import responses_result
+
 
 @pytest.fixture(autouse=True)
 def processing_only(runtime_mode):
@@ -62,7 +64,10 @@ def document(fmt='alto', names=('Karel Čapek', 'K. Čapek'), linked=None):
     pages = []
     for i in range(2):
         page = PeopleGatorPageLayout()
-        getattr(page, 'from_altoxml' if fmt == 'alto' else 'from_pagexml')(str(root))
+        if fmt == 'alto':
+            page.from_altoxml(str(root))
+        else:
+            page.from_pagexml(str(root))
         page.id = 'p' + str(i)
         pages.append(page)
     doc = PeopleGatorDocument(page_layouts=pages)
@@ -139,7 +144,10 @@ def test_text_only_cross_page_aliases_rerun_and_xml(engine, fmt, tmp_path):
     engine.db_api_service.create_entity.assert_called_once()
     out = tmp_path / 'xml'
     out.mkdir()
-    getattr(doc, 'to_altoxml' if fmt == 'alto' else 'to_pagexml')(str(out))
+    if fmt == 'alto':
+        doc.to_altoxml(str(out))
+    else:
+        doc.to_pagexml(str(out))
     assert len(list(out.glob('*.xml'))) == 2
     for file in out.glob('*.xml'):
         etree.parse(str(file))
@@ -275,7 +283,10 @@ def caption_document():
     from people_gator.core.layout import PeopleGatorDocument, PeopleGatorPageLayout, PeopleGatorTextEntityMention, PeopleGatorTextEntityCluster
     from people_gator.text import SourceLine, SourceSpan
     from pero_ocr.core.layout import TextLine, RegionLayout
+    from anno_page.core.layout import AnnoPageRegionLayout
+    from anno_page.core.metadata import GraphicalObjectMetadata, RelatedLinesMetadata
     import numpy as np
+
     p = PeopleGatorPageLayout('p', (100, 100))
     polygon = np.array([(0, 0), (90, 0), (90, 10), (0, 10)])
     ln = TextLine(id='l', transcription='Karel Čapek, Czech writer.', polygon=polygon)
@@ -286,7 +297,9 @@ def caption_document():
     p.text_entities.append(m)
     c = PeopleGatorTextEntityCluster([m], name='Karel Čapek', description='Czech writer')
     doc = PeopleGatorDocument(page_layouts=[p], text_entity_clusters=[c])
-    src = NS(graphical_metadata=NS(title=ln.transcription, caption_lines_metadata=NS(lines=[ln])))
+    refs = RelatedLinesMetadata('caption', 'MODS_CAPTION', [ln], relation=None)
+    src = AnnoPageRegionLayout('image', polygon, graphical_metadata=GraphicalObjectMetadata(
+        'image', 'MODS_IMAGE', title=ln.transcription, caption_lines_metadata=refs))
     f = face(p, source=src)
     return doc, c, f
 
@@ -387,7 +400,12 @@ def test_failures_keep_private_payloads_out_and_never_fabricate_success(engine, 
     doc = document()
     if operation == 'get_entity_info':
         engine.db_api_service.search_entities.return_value = {'items': [{'entity_id': 'existing'}]}
-    target = engine.llm_prompter if operation == 'llm' else getattr(engine.db_api_service, operation)
+    target = {
+        'llm': engine.llm_prompter,
+        'search_entities': engine.db_api_service.search_entities,
+        'get_entity_info': engine.db_api_service.get_entity_info,
+        'create_entity': engine.db_api_service.create_entity,
+    }[operation]
     target.side_effect = RuntimeError('private-credential OCR name provider body')
     assert engine.process_document(doc) is doc
     assert 'private-credential' not in caplog.text
@@ -550,15 +568,23 @@ def test_repeated_cluster_and_shared_cluster_identity_resolve_once_in_stable_ord
 
 
 def test_local_text_ids_avoid_existing_region_and_face_identity_metadata(engine):
+    from anno_page.core.layout import AnnoPageRegionLayout
+    from anno_page.core.metadata import GraphicalObjectMetadata
+
     doc = document()
     page = doc.page_layouts[0]
     page.regions[0].id = 'person_text_001'
     f = face(page, identity(None))
     f.face_metadata.page_identity.mods_id = 'MODS_PERSON_TEXT_0002'
+    page.regions.extend([
+        AnnoPageRegionLayout('untagged-image', f.polygon),
+        AnnoPageRegionLayout('tagged-image', f.polygon, graphical_metadata=GraphicalObjectMetadata(
+            'person_text_003', 'MODS_IMAGE')),
+    ])
     engine.process_document(doc)
     m = doc.text_entities[0]
-    assert m.page_identity.tag_id == 'person_text_003'
-    assert m.page_identity.mods_id == 'MODS_PERSON_TEXT_0003'
+    assert m.page_identity.tag_id == 'person_text_004'
+    assert m.page_identity.mods_id == 'MODS_PERSON_TEXT_0004'
     assert f.face_metadata.page_identity.identity.peoplegator_id is None
 
 
@@ -595,12 +621,41 @@ def test_uncertain_write_also_blocks_other_same_name_sources_on_retry(engine):
     engine.db_api_service.create_entity.assert_called_once()
 
 
-def test_page_only_uncertain_write_journal_survives_retry(engine):
-    doc = face_only(identity())
+def test_page_only_uncertain_write_journal_survives_retry(engine, tmp_path):
+    from people_gator.core.checkpoints import load_checkpoint, save_checkpoint
+
+    pending = tmp_path / 'pending'
+    save_checkpoint(pending, face_only(identity()), {'next_step': 0})
+    doc, _ = load_checkpoint(pending)
+    page = doc.page_layouts[0]
+    assert page._entity_linking_journal is None
+
     engine.db_api_service.create_entity.return_value = None
-    assert engine.process_page(doc.page_layouts[0]) is doc.page_layouts[0]
-    engine.process_page(doc.page_layouts[0])
+    assert engine.process_page(page) is page
+    engine.process_page(page)
+    completed = tmp_path / 'completed'
+    save_checkpoint(completed, doc, {'next_step': 1})
+    restored, _ = load_checkpoint(completed)
+    engine.process_page(restored.page_layouts[0])
     engine.db_api_service.create_entity.assert_called_once()
+
+    other_page = face_only(identity()).page_layouts[0]
+    engine.process_page(other_page)
+    assert engine.db_api_service.create_entity.call_count == 2
+
+
+@pytest.mark.parametrize('missing', ['face_metadata', 'page_identity', 'identity'])
+def test_face_with_incomplete_identity_is_ignored(engine, missing):
+    doc = face_only(identity())
+    face = doc.faces[0]
+    if missing == 'face_metadata':
+        face.face_metadata = None
+    elif missing == 'page_identity':
+        face.face_metadata.page_identity = None
+    else:
+        face.face_metadata.page_identity.identity = None
+    assert engine.process_document(doc) is doc
+    engine.db_api_service.search_entities.assert_not_called()
 
 
 @pytest.mark.parametrize('invalid', ['foreign', 'overlap', 'empty'])
@@ -655,7 +710,7 @@ def test_documented_external_prompt_renders_new_context_and_typed_provider_schem
         engine.db_api_service.search_entities.return_value = {'items': [candidate()]}
         engine.db_api_service.get_entity_info.return_value = candidate()
     payload = decision(action, 0 if action == 'select' else None).model_dump()
-    create = Mock(return_value=NS(status='completed', output_text=json.dumps(payload)))
+    create = Mock(return_value=responses_result(status='completed', output_text=json.dumps(payload)))
     monkeypatch.setattr(llm, 'OpenAI', Mock(return_value=NS(responses=NS(create=create))))
     doc = document()
     e.process_document(doc)
@@ -705,7 +760,10 @@ def test_mixed_linking_preserves_ocr_and_face_xml_contract(engine, fmt, tmp_path
     engine.process_document(doc)
     out = tmp_path / 'mixed-output'
     out.mkdir()
-    getattr(doc, 'to_altoxml' if fmt == 'alto' else 'to_pagexml')(str(out))
+    if fmt == 'alto':
+        doc.to_altoxml(str(out))
+    else:
+        doc.to_pagexml(str(out))
     tree = etree.parse(str(out / 'p0.xml'))
     if fmt == 'alto':
         assert tree.xpath('//*[local-name()="String"]/@CONTENT') == source_strings

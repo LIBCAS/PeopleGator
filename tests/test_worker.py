@@ -36,7 +36,7 @@ def invoke(worker_module, monkeypatch, tmp_path):
         worker = worker_module.PeopleGatorWorker(
             "https://example.invalid", Mock(), device=device, gpu_id=gpu_id,
         )
-        job = SimpleNamespace(engine_settings=settings, alto_required=alto,
+        job = SimpleNamespace(id=None, engine_settings=settings, alto_required=alto,
                               page_required=page, meta_json_required=metadata)
         response = worker.process_job(
             job, Mock(), "input images", str(tmp_path / "results"),
@@ -174,12 +174,10 @@ def invoke_completion(worker_module, monkeypatch):
     def run(returncode=0, output=("", ""), job_id="job-29", input_format="alto"):
         process.returncode = returncode
         process.communicate.return_value = output
-        job = SimpleNamespace(alto_required=input_format == "alto",
+        job = SimpleNamespace(id=job_id, alto_required=input_format == "alto",
                               page_required=input_format == "page",
                               meta_json_required=True,
                               engine_settings={"outputs": {"alto": True, "page": True, "renders": True}})
-        if job_id is not None:
-            job.id = job_id
         return instance.process_job(job, None, "input images", "results",
                                     alto_dir="input alto", page_xml_dir="input page",
                                     meta_file="meta.json", engine_dir="engine")
