@@ -621,15 +621,22 @@ def test_uncertain_write_also_blocks_other_same_name_sources_on_retry(engine):
     engine.db_api_service.create_entity.assert_called_once()
 
 
-def test_page_only_uncertain_write_journal_survives_retry(engine):
-    import pickle
+def test_page_only_uncertain_write_journal_survives_retry(engine, tmp_path):
+    from people_gator.core.checkpoints import load_checkpoint, save_checkpoint
 
-    doc = face_only(identity())
+    pending = tmp_path / 'pending'
+    save_checkpoint(pending, face_only(identity()), {'next_step': 0})
+    doc, _ = load_checkpoint(pending)
+    page = doc.page_layouts[0]
+    assert page._entity_linking_journal is None
+
     engine.db_api_service.create_entity.return_value = None
-    assert engine.process_page(doc.page_layouts[0]) is doc.page_layouts[0]
-    engine.process_page(doc.page_layouts[0])
-    restored = pickle.loads(pickle.dumps(doc.page_layouts[0]))
-    engine.process_page(restored)
+    assert engine.process_page(page) is page
+    engine.process_page(page)
+    completed = tmp_path / 'completed'
+    save_checkpoint(completed, doc, {'next_step': 1})
+    restored, _ = load_checkpoint(completed)
+    engine.process_page(restored.page_layouts[0])
     engine.db_api_service.create_entity.assert_called_once()
 
     other_page = face_only(identity()).page_layouts[0]

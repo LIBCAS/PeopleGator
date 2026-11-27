@@ -43,3 +43,5 @@ Inspection loads the same pair and prints JSON to stdout. With `--output-path`, 
 A checkpoint records state **after its engine and before final exports**. Resuming an older stage can repeat entity creation, append duplicate annotations or repeat a destructive app export. Check the app after an uncertain write, reconcile its state, and enable export only when intended. Receipts in the saved document reflect what the engine knew at that stage.
 
 Native Pickle requires compatible Python classes and pickleable fields. The supported baseline is the new pair. Older payloads can contain custom external-image references or need legacy metadata handling. Keep the previous PeopleGator version and original history and assets for recovery of old checkpoints.
+
+Standalone library calls to `EntityMatchingEngine.process_page()` require a page with the page-level journal attribute. A page restored from an older native checkpoint may lack that attribute if it had never run standalone matching. Normal parser resume runs document-wide matching and accepts checkpoints without this page-level attribute.

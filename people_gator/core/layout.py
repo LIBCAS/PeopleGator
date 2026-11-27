@@ -923,9 +923,6 @@ class PeopleGatorPageLayout(AnnoPagePageLayout):
         faces: Computed list of face regions.
     """
 
-    # A page has no receipt list until its first standalone matching run.
-    _entity_linking_journal: list[dict] | None = None
-
     def __init__(self, id: str|None = None, page_size: tuple[int, int] = (0, 0), file: str|None = None):
         """Initialize PeopleGatorPageLayout from the supplied settings and data.
 
@@ -937,6 +934,7 @@ class PeopleGatorPageLayout(AnnoPagePageLayout):
         super().__init__(id, page_size, file=None)
 
         self.text_entities: list[PeopleGatorTextEntityMention] = []
+        self._entity_linking_journal: list[dict] | None = None
 
         self.from_altoxml_ended += altoxml_load_regions
         self.from_pagexml_ended += pagexml_load_regions
