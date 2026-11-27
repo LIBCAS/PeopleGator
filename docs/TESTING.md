@@ -147,6 +147,15 @@ python -m pytest -q tests/test_face_prompts.py tests/test_checkpoints.py
 
 A real process-pool regression requires POSIX `fork`; other systems use deterministic inline-pool checks.
 
+## Face embeddings
+
+`tests/test_face_embedding.py` uses the INI factory, real face regions and
+AnnoPage records, and a mock at the timm model boundary. It covers landmark
+alignment and crop fallback, precision, output normalization and rounding,
+record provenance, engine order and checkpoint round-trips. Run it in the
+`tool` or `full` test environment. A pretrained-model smoke test also needs
+the selected weights and a device supporting the configured dtype.
+
 ## Processing checkpoints
 
 `tests/test_checkpoints.py` uses ALTO/PAGE fixtures to check native Pickle persistence of OCR, source references, identities, receipts and images. It exercises per-engine saves, ordinary read/write failures, CLI precedence, copied pairs, resumed exports and selected inspection output.

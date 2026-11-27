@@ -57,7 +57,7 @@ flowchart TD
     SAVE --> XML
 ```
 
-The available engines perform text entity detection and clustering, face detection, LLM-assisted naming, and entity matching. See [Processing](PROCESSING.md).
+The available engines perform text entity detection and clustering, face detection, face embedding computation, LLM-assisted naming, and entity matching. See [Processing](PROCESSING.md).
 
 ### Processing implementation principles
 
@@ -108,7 +108,7 @@ flowchart TD
 | --- | --- |
 | Document | `id`, `name`, `library`, page layouts, text-entity clusters |
 | Page layout | Page ID, image size, regions, text-entity mentions |
-| Face region | Polygon, confidence, source-region reference |
+| Face region | Polygon, confidence, source-region reference, optional embedding records |
 | Face metadata | Five landmarks, MODS/tag identifiers, provenance, page identity |
 | Person identity | Proposed name, optional app entity ID, other identifiers |
 
@@ -126,6 +126,7 @@ The broader system design also includes occurrences of person names in OCR text.
 | `people_gator/engines/base.py` | Common processing-engine interfaces. |
 | `people_gator/text/` | Reusable OCR chunking, canonical page mappings, offset-preserving normalization and text validation; independent of processing engines. |
 | `people_gator/engines/face_detection.py` | YOLO detection in selected image regions; boxes and five landmarks. |
+| `people_gator/engines/embedding.py` | Face alignment, local timm inference and structured embedding records on original face regions. |
 | `people_gator/engines/face_assignment.py` | LLM-supported single/batch naming using images, captions and OCR text. |
 | `people_gator/engines/entity_matching.py` | Candidate-entity lookup, LLM disambiguation and creation through the app API. |
 | `people_gator/engines/llm.py` | Shared required-prompt validation, template/data key diagnostics, prompt assembly and structured LLM responses. |

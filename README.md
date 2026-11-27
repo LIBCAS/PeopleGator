@@ -5,6 +5,7 @@ PeopleGator is a **Python document-processing tool** for detecting faces on scan
 ## Key features
 
 - **Face detection:** detect faces in graphical regions of digitized pages using a configurable YOLO model, recording face coordinates, confidence and facial landmarks.
+- **Face embeddings:** optionally compute normalized 512-dimensional vectors for existing faces and retain them in the document and its processing checkpoints. See [configuration](docs/PROCESSING.md#face_embedding).
 - **Person identification:** use page imagery, nearby OCR text and available captions to propose person names with single-face or batch LLM processing.
 - **Text entity detection and clustering:** extract source-mapped OCR mentions and group them across a document using LLM-assisted detection and disambiguation before app linking. See [configuration and contracts](docs/PROCESSING.md#document-text-entity-clustering-text_entity_clustering).
 - **Entity matching:** resolve proposed names against person records through the PeopleGatorApp API and associate detected faces with identities.

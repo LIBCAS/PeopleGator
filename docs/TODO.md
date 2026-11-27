@@ -13,7 +13,8 @@ This roadmap lists processing-related development work identified from the curre
 - [ ] Implement ALTO face-annotation import and align PAGE face reader/writer formats.
 - [ ] Make repeated ALTO enrichment replace existing PeopleGator annotations consistently.
 - [ ] Test unknown, ambiguous and verified person-identity assignments.
-- [ ] Calculate face embeddings and integrate similarity-based entity matching.
+- [x] Calculate [face embeddings](PROCESSING.md#face_embedding) in an optional stage.
+- [ ] Integrate similarity-based entity matching.
 - [x] Detect and cluster OCR person mentions and link them to document/app identities (tracked under [#33](https://github.com/LIBCAS/PeopleGator/issues/33)).
 - [ ] Complete text-mention ALTO/PAGE import/export and cluster persistence ([#33](https://github.com/LIBCAS/PeopleGator/issues/33)).
 

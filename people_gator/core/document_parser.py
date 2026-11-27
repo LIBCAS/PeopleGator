@@ -4,7 +4,11 @@ from uuid import UUID, uuid4
 
 from people_gator.core.checkpoints import load_checkpoint, save_checkpoint
 from people_gator.core.layout import PeopleGatorDocument, PeopleGatorFaceRegionLayout
-from people_gator.engines import FaceDetectionYoloEngine, LLMFaceAssignmentEngine, LLMBatchFaceAssignmentEngine, EntityMatchingEngine, LLMTextEntityDetectionEngine, LLMTextEntityClusteringEngine
+from people_gator.engines import (
+    EntityMatchingEngine, FaceDetectionYoloEngine, FaceEmbeddingEngine,
+    LLMBatchFaceAssignmentEngine, LLMFaceAssignmentEngine,
+    LLMTextEntityClusteringEngine, LLMTextEntityDetectionEngine,
+)
 from people_gator.core.services import UuidService
 from people_gator.core.db import DatabaseApiService
 
@@ -105,6 +109,9 @@ def engine_factory(config, config_path, device, db_api_service=None):
     if method == "FACE_DETECTION_YOLO":
         logger.info("Creating FaceDetectionYoloEngine engine")
         engine = FaceDetectionYoloEngine(config, device, config_path=config_path)
+
+    elif method == "FACE_EMBEDDING":
+        engine = FaceEmbeddingEngine(config, device, config_path=config_path)
 
     elif method == "LLM_FACE_ASSIGNMENT":
         logger.info("Creating FaceAssignmentEngine engine")
